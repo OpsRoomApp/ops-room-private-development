@@ -1,4 +1,4 @@
-"""Real-World Flight Search pipeline – v0.25.50.
+"""Real-World Flight Search pipeline – v0.25.51.
 
 Provider-agnostic discovery, normalisation, ADSBDB enrichment, caching,
 search indexing, and diagnostics for the OPS ROOM Real World Schedules feature.
@@ -266,7 +266,7 @@ async def _discover_fr24(
                         params={"bounds": f"{bounds['lat']-1.5},{bounds['lat']+1.5},"
                                           f"{bounds['lon']-1.5},{bounds['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.50"},
+                                 "User-Agent": "OPS-ROOM/0.25.51"},
                     )
                     _update_provider_health("fr24", resp.status_code == 200,
                                             (time.monotonic() - t0) * 1000,
@@ -285,9 +285,6 @@ async def _discover_fr24(
             except Exception as exc:
                 _update_provider_health("fr24", False, error_type=type(exc).__name__)
                 _record_error("discovery", "fr24", type(exc).__name__, str(exc))
-            except Exception as exc:
-                _update_provider_health("fr24", False, error_type=type(exc).__name__)
-                _record_error("discovery", "fr24", type(exc).__name__, str(exc))
 
     # Fallback: zone sweep (if no bounds or FR24 returned nothing)
     if not raw:
@@ -301,7 +298,7 @@ async def _discover_fr24(
                         params={"bounds": f"{zone['lat']-1.5},{zone['lat']+1.5},"
                                           f"{zone['lon']-1.5},{zone['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.50"},
+                                 "User-Agent": "OPS-ROOM/0.25.51"},
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -375,7 +372,7 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cs = _clean_str(flight.get("callsign") or "")
         mode_s = _clean_str(flight.get("mode_s") or "")
 
-        # Track enrichment result per flight (v0.25.50)
+        # Track enrichment result per flight (v0.25.51)
         enrichment_attempted = True
         route_lookup = False
         route_success = False
@@ -451,7 +448,7 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not had_aircraft_before and flight.get("aircraft_type"):
             recovered_aircraft += 1
 
-        # ── Attach per-flight enrichment audit flags (v0.25.50) ──
+        # ── Attach per-flight enrichment audit flags (v0.25.51) ──
         flight["enrichment_attempted"] = enrichment_attempted
         flight["enrichment_success"] = route_success or aircraft_success
         flight["route_enriched"] = route_success
@@ -715,6 +712,15 @@ async def realworld_search(
         # Limit to top 100 results
         results = filtered[:100]
 
+        # v0.25.51: add origin/destination flat aliases for frontend compatibility
+        # The frontend reads flight.origin / flight.destination (flat strings)
+        # but the canonical model uses origin_icao / destination_icao.
+        for f in results:
+            if not f.get("origin") and f.get("origin_icao"):
+                f["origin"] = f["origin_icao"]
+            if not f.get("destination") and f.get("destination_icao"):
+                f["destination"] = f["destination_icao"]
+
         return JSONResponse({
             "status": "success",
             "count": len(results),
@@ -729,6 +735,153 @@ async def realworld_search(
             status_code=500,
             content={"status": "error", "error": "Internal search error", "detail": str(exc)},
         )
+
+
+# ── Debug enrichment endpoint (v0.25.51) ────────────────────────────────────
+# Traces a single callsign through the full enrichment pipeline to identify
+# exactly where data is lost.  Local-only; does not expose secrets.
+
+_DEBUG_ROUTER = APIRouter(prefix="/api/v1/realworld-debug", tags=["realworld-debug"])
+
+
+@_DEBUG_ROUTER.get("/enrichment/{callsign}")
+async def debug_enrichment_pipeline(callsign: str):
+    """Trace a single callsign through the enrichment pipeline.
+
+    Returns the state at each stage: raw ADSBDB → normalised → enriched → final.
+    """
+    cs = _clean_str(callsign)
+    if not cs:
+        return JSONResponse(status_code=400, content={"error": "Invalid callsign"})
+
+    result: dict[str, Any] = {
+        "callsign_requested": cs,
+        "adsbdb_raw": {},
+        "after_adsbdb_client_processing": {},
+        "after_normalization": {},
+        "after_enrichment_merge": {},
+        "final_api_output": {},
+        "pipeline_checks": {},
+    }
+
+    # ── Stage 1: ADSBDB raw lookup ──
+    t0 = time.monotonic()
+    try:
+        adsbdb_raw = await get_callsign(cs)
+        ad_time = round((time.monotonic() - t0) * 1000, 1)
+        if adsbdb_raw:
+            fr = adsbdb_raw.get("flightroute") or adsbdb_raw.get("route") or adsbdb_raw
+            result["adsbdb_raw"] = {
+                "available": True,
+                "latency_ms": ad_time,
+                "summary": {
+                    "has_flightroute": bool(adsbdb_raw.get("flightroute")),
+                    "has_route": bool(adsbdb_raw.get("route")),
+                    "origin_icao": (
+                        (fr.get("origin") or {}).get("icao_code", "")
+                        if isinstance(fr.get("origin"), dict) else str(fr.get("origin") or "")),
+                    "destination_icao": (
+                        (fr.get("destination") or {}).get("icao_code", "")
+                        if isinstance(fr.get("destination"), dict) else str(fr.get("destination") or "")),
+                    "airline": (
+                        (fr.get("airline") or {}).get("name", "")
+                        if isinstance(fr.get("airline"), dict) else ""),
+                },
+            }
+        else:
+            result["adsbdb_raw"] = {"available": False, "latency_ms": ad_time}
+    except Exception as exc:
+        result["adsbdb_raw"] = {"available": False, "error": str(exc)}
+
+    # ── Stage 2: Simulate a minimal FR24 flight + normalise ──
+    mock_fr24 = {"flight": cs, "orig": "EDDF"}
+    normalized = normalise_fr24(mock_fr24)
+    if normalized:
+        result["after_normalization"] = {
+            "callsign": normalized.get("callsign"),
+            "origin_icao": normalized.get("origin_icao"),
+            "destination_icao": normalized.get("destination_icao"),
+            "airline_name": normalized.get("airline_name"),
+            "aircraft_type": normalized.get("aircraft_type"),
+            "registration": normalized.get("registration"),
+            "tracking_source": normalized.get("tracking_source"),
+            "has_route": normalized.get("has_route"),
+            "can_dispatch": normalized.get("can_dispatch"),
+            "can_simbrief": normalized.get("can_simbrief"),
+        }
+
+    # ── Stage 3: Apply ADSBDB enrichment ──
+    if normalized and adsbdb_raw:
+        apply_adsbdb_route(normalized, adsbdb_raw)
+        apply_adsbdb_aircraft(normalized, adsbdb_raw)
+        result["after_enrichment_merge"] = {
+            "callsign": normalized.get("callsign"),
+            "origin_icao": normalized.get("origin_icao"),
+            "destination_icao": normalized.get("destination_icao"),
+            "origin_name": normalized.get("origin_name"),
+            "destination_name": normalized.get("destination_name"),
+            "airline_name": normalized.get("airline_name"),
+            "aircraft_type": normalized.get("aircraft_type"),
+            "aircraft_icao_type": normalized.get("aircraft_icao_type"),
+            "registration": normalized.get("registration"),
+            "route_source": normalized.get("route_source"),
+            "identity_source": normalized.get("identity_source"),
+            "has_route": normalized.get("has_route"),
+            "can_dispatch": normalized.get("can_dispatch"),
+            "can_simbrief": normalized.get("can_simbrief"),
+            "enrichment_attempted": normalized.get("enrichment_attempted"),
+            "enrichment_success": normalized.get("enrichment_success"),
+        }
+
+    # ── Stage 4: Frontend-compatible flat aliases ──
+    if normalized:
+        final = dict(normalized)
+        if not final.get("origin") and final.get("origin_icao"):
+            final["origin"] = final["origin_icao"]
+        if not final.get("destination") and final.get("destination_icao"):
+            final["destination"] = final["destination_icao"]
+        result["final_api_output"] = {
+            "callsign": final.get("callsign"),
+            "origin": final.get("origin"),
+            "destination": final.get("destination"),
+            "origin_icao": final.get("origin_icao"),
+            "destination_icao": final.get("destination_icao"),
+            "origin_name": final.get("origin_name"),
+            "destination_name": final.get("destination_name"),
+            "airline_name": final.get("airline_name"),
+            "aircraft_type": final.get("aircraft_type"),
+            "registration": final.get("registration"),
+            "can_dispatch": final.get("can_dispatch"),
+            "can_simbrief": final.get("can_simbrief"),
+        }
+
+    # ── Pipeline checks ──
+    merged = result["after_enrichment_merge"]
+    final_api = result["final_api_output"]
+    result["pipeline_checks"] = {
+        "destination_survived": bool(final_api.get("destination")),
+        "origin_survived": bool(final_api.get("origin")),
+        "aircraft_type_survived": bool(final_api.get("aircraft_type")),
+        "registration_survived": bool(final_api.get("registration")),
+        "airline_survived": bool(final_api.get("airline_name")),
+        "adsbdb_available": result["adsbdb_raw"].get("available", False),
+        "enrichment_applied": bool(merged.get("destination_icao")),
+        "frontend_alias_set": bool(final_api.get("destination")),
+    }
+
+    # Structured debug log
+    _log.debug(
+        "[RealWorld] debug enrichment cs=%s | "
+        "adsbdb_dest=%s normalized_dest=%s enriched_dest=%s serialized_dest=%s frontend_dest=%s",
+        cs,
+        result["adsbdb_raw"].get("summary", {}).get("destination_icao", "?"),
+        result.get("after_normalization", {}).get("destination_icao"),
+        result.get("after_enrichment_merge", {}).get("destination_icao"),
+        result.get("final_api_output", {}).get("destination_icao"),
+        result.get("final_api_output", {}).get("destination"),
+    )
+
+    return JSONResponse(result)
 
 
 @router.get("/diagnostics")
@@ -760,7 +913,7 @@ async def realworld_diagnostics(include_recent_errors: bool = False):
     response: dict[str, Any] = {
         "status": "ok",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "version": "0.25.50",
+        "version": "0.25.51",
         "last_successful_refresh_utc": stats.get("last_refresh_utc"),
         "last_refresh_status": stats.get("last_refresh_status"),
         "serving_stale_cache": is_stale and len(flights) > 0,

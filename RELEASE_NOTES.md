@@ -1,8 +1,8 @@
-# OPS ROOM 0.25.50
+# OPS ROOM 0.25.51
 
-OPS ROOM 0.25.50 is a public maintenance release that refines the surface of the application without changing how flights are recorded or replayed.
+OPS ROOM 0.25.51 is a public maintenance release that refines the surface of the application without changing how flights are recorded or replayed.
 
-## 0.25.50: Polish Pass
+## 0.25.51: Polish Pass
 
 Highlights in this build:
 
@@ -19,7 +19,7 @@ Behavioural compatibility:
 
 This build is a stable public release. Refresh the briefing charts, Black Box recordings and Settings pages after upgrading.
 
-## 0.25.50 verified scope
+## 0.25.51 verified scope
 
 - Public release identity and build channels (Polish Pass, stable).
 - Shipped README, release notes and acknowledgements kept in sync across .md and .txt.

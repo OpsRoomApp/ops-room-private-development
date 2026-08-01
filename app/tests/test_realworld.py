@@ -1,6 +1,6 @@
-"""Regression tests for Real World Search pipeline – v0.25.50.
+"""Regression tests for Real World Search pipeline – v0.25.51.
 
-Covers all v0.25.46 root-cause fixes and v0.25.50 hardening features.
+Covers all v0.25.46 root-cause fixes and v0.25.51 hardening features.
 Runs without external network access (pure unit tests).
 """
 
@@ -211,7 +211,7 @@ def test_seed_coords() -> None:
     check("KJFK in seed coords", "KJFK" in _SEED_AIRPORTS)
 
 
-# ── Test K: ADSBDB enrichment (v0.25.50) ─────────────────────────────────────
+# ── Test K: ADSBDB enrichment (v0.25.51) ─────────────────────────────────────
 
 def test_enrichment_route_recovery() -> None:
     """ADSBDB route enrichment recovers missing destination."""
@@ -310,7 +310,7 @@ def test_enrichment_field_name_variants() -> None:
     check("icao_code key accepted", flight2.get("destination_icao") == "EGLL")
 
 
-# ── Test L: FR24 list→dict conversion (v0.25.50) ────────────────────────────
+# ── Test L: FR24 list→dict conversion (v0.25.51) ────────────────────────────
 
 def test_normalise_fr24_from_list() -> None:
     """FR24 returns 16-element lists; verify normalise_fr24 handles dict input."""
