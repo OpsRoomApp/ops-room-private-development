@@ -103,7 +103,10 @@ def _direct_field_search(terms: list[str]) -> list[dict[str, Any]]:
     if not terms:
         return list(_flights)
     SEARCH_FIELDS = ("callsign", "origin_icao", "destination_icao",
-                     "airline_name", "aircraft_type", "registration")
+                     "origin_name", "destination_name",
+                     "airline_name", "airline_icao",
+                     "aircraft_type", "aircraft_icao_type",
+                     "registration", "mode_s")
     results: list[dict[str, Any]] = []
     for flight in _flights:
         flight_matches = True

@@ -3030,6 +3030,8 @@ function renderRealworldResults(flights){
   if(!container)return;
   container.innerHTML='';
   flights.forEach(function(flight){
+    // v0.25.52: temporary debug output to verify backend→frontend field contract
+    console.log("REALWORLD FLIGHT CARD DATA", flight);
     var card=document.createElement('div');
     card.className='rw-flight-card';
     var cs=flight.callsign||'';

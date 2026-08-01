@@ -814,14 +814,16 @@ async def debug_enrichment_pipeline(callsign: str):
     # ── Stage 3: Apply ADSBDB enrichment (route + aircraft identity) ──
     if normalized and adsbdb_raw:
         apply_adsbdb_route(normalized, adsbdb_raw)
-        # v0.25.52: also attempt aircraft identity enrichment via mode_s
+        # v0.25.52: also attempt aircraft identity enrichment via mode_s or registration
         ac_raw = None
         ms = normalized.get("mode_s")
-        if ms:
+        reg = normalized.get("registration")
+        ac_key = ms or (reg or "").strip().upper()
+        if ac_key:
             try:
-                ac_raw = await get_aircraft(ms)
-            except Exception:
-                pass
+                ac_raw = await get_aircraft(ac_key)
+            except Exception as exc:
+                _log.debug("[RealWorld] Debug enrichment: aircraft lookup failed for %s: %s", ac_key, exc)
         if ac_raw:
             apply_adsbdb_aircraft(normalized, ac_raw)
         result["after_enrichment_merge"] = {

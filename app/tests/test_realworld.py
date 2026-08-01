@@ -29,6 +29,7 @@ from app.flight_cache import (
     get_live_flights,
     set_live_flights,
 )
+from app.flight_search import build_search_index, search_index
 from app.realworld import _resolve_coords, _SEED_AIRPORTS
 
 PASS = 0
@@ -338,6 +339,126 @@ def test_normalise_fr24_rejects_list() -> None:
     check("FR24 list input returns None", result is None)
 
 
+# ── Test M: Multi-term search (v0.25.52) ────────────────────────────────────
+
+_SAMPLE_FLIGHTS: list[dict[str, Any]] = [
+    {"callsign": "DLH1304", "origin_icao": "EDDF", "destination_icao": "LTFM",
+     "airline_name": "Lufthansa", "aircraft_type": "Airbus A320",
+     "aircraft_icao_type": "A320", "registration": "D-AIXL",
+     "origin_name": "Frankfurt am Main Airport",
+     "destination_name": "Istanbul Airport",
+     "rank_score": 80},
+    {"callsign": "DLH400", "origin_icao": "EDDF", "destination_icao": "KJFK",
+     "airline_name": "Lufthansa", "aircraft_type": "Airbus A350-900",
+     "aircraft_icao_type": "A359", "registration": "D-AIXN",
+     "origin_name": "Frankfurt am Main Airport",
+     "destination_name": "John F Kennedy International Airport",
+     "rank_score": 90},
+    {"callsign": "WUK441", "origin_icao": "EGSS", "destination_icao": "LEPA",
+     "airline_name": "Wizz Air UK", "aircraft_type": "Airbus A321",
+     "aircraft_icao_type": "A321", "registration": "G-WUKX",
+     "rank_score": 70},
+]
+
+
+def test_search_exact_callsign() -> None:
+    """Search 'DLH1304' returns the exact flight."""
+    build_search_index(_SAMPLE_FLIGHTS)
+    results = search_index("DLH1304")
+    check("DLH1304 search returns at least 1 result (prefix tokens may also match DLH400)", len(results) >= 1)
+    callsigns = {r["callsign"] for r in results}
+    check("DLH1304 is among results", "DLH1304" in callsigns)
+
+
+def test_search_callsign_prefix() -> None:
+    """Search 'DLH' returns all DLH-prefix flights."""
+    build_search_index(_SAMPLE_FLIGHTS)
+    results = search_index("DLH")
+    check("DLH prefix returns 2 Lufthansa flights", len(results) == 2)
+    callsigns = {r["callsign"] for r in results}
+    check("DLH1304 included", "DLH1304" in callsigns)
+    check("DLH400 included", "DLH400" in callsigns)
+
+
+def test_search_origin_icao() -> None:
+    """Search 'EDDF' returns Frankfurt flights."""
+    build_search_index(_SAMPLE_FLIGHTS)
+    results = search_index("EDDF")
+    check("EDDF returns 2 flights", len(results) == 2)
+
+
+def test_search_aircraft_type() -> None:
+    """Search 'A320' returns A320 flights."""
+    build_search_index(_SAMPLE_FLIGHTS)
+    results = search_index("A320")
+    check("A320 returns at least 1 flight", len(results) >= 1)
+    types = {r.get("aircraft_icao_type") for r in results}
+    check("A320 type matches", "A320" in types)
+
+
+def test_search_multi_term_eddf_a320() -> None:
+    """Search 'EDDF A320' returns EDDF A320 flights (prefix 'a3' may also match A359)."""
+    build_search_index(_SAMPLE_FLIGHTS)
+    results = search_index("EDDF A320")
+    check("EDDF+A320 returns at least 1 flight", len(results) >= 1)
+    callsigns = {r["callsign"] for r in results}
+    check("DLH1304 (A320 from EDDF) in results", "DLH1304" in callsigns)
+    for r in results:
+        ok = r.get("origin_icao") == "EDDF" or r.get("destination_icao") == "EDDF"
+        check(f"{r['callsign']} has EDDF in route", ok)
+
+
+def test_search_multi_term_dlh_eddf() -> None:
+    """Search 'DLH EDDF' returns DLH Frankfurt flights."""
+    build_search_index(_SAMPLE_FLIGHTS)
+    results = search_index("DLH EDDF")
+    check("DLH+EDDF returns at least 1 flight", len(results) >= 1)
+    for r in results:
+        ok = "DLH" in (r.get("callsign") or "")
+        check(f"{r['callsign']} has DLH prefix", ok)
+        ok2 = r.get("origin_icao") == "EDDF" or r.get("destination_icao") == "EDDF"
+        check(f"{r['callsign']} has EDDF in route", ok2)
+
+
+def test_search_airline_name() -> None:
+    """Search 'Lufthansa' returns Lufthansa flights."""
+    build_search_index(_SAMPLE_FLIGHTS)
+    results = search_index("Lufthansa")
+    check("Lufthansa returns at least 1 flight", len(results) >= 1)
+    for r in results:
+        check(f"{r['callsign']} is Lufthansa", "Lufthansa" in (r.get("airline_name") or ""))
+
+
+def test_search_registration() -> None:
+    """Search 'D-AIXL' returns the matching aircraft (prefix tokens may also match D-AIXN)."""
+    build_search_index(_SAMPLE_FLIGHTS)
+    results = search_index("D-AIXL")
+    # D-AIXL and D-AIXN share prefix tokens "da", "dai", "daix" — expect at least 1
+    check("D-AIXL returns at least 1 flight", len(results) >= 1)
+    regs = {r.get("registration") for r in results}
+    check("D-AIXL among results", "D-AIXL" in regs)
+
+
+def test_search_multi_term_lufthansa_a320() -> None:
+    """Search 'Lufthansa A320' returns Lufthansa A320 flights (prefix 'a3' may also match A359)."""
+    build_search_index(_SAMPLE_FLIGHTS)
+    results = search_index("Lufthansa A320")
+    check("Lufthansa+A320 returns at least 1 flight", len(results) >= 1)
+    # DLH1304 (A320) must be present; DLH400 (A359) might also appear due to prefix 'a3'
+    callsigns = {r["callsign"] for r in results}
+    check("DLH1304 (A320) is among results", "DLH1304" in callsigns)
+    for r in results:
+        ok = "Lufthansa" in (r.get("airline_name") or "")
+        check(f"{r['callsign']} is Lufthansa", ok)
+
+
+def test_search_no_results() -> None:
+    """Search for something that doesn't exist returns empty."""
+    build_search_index(_SAMPLE_FLIGHTS)
+    results = search_index("ZZZZZZ")
+    check("ZZZZZZ returns empty", len(results) == 0)
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -367,6 +488,16 @@ if __name__ == "__main__":
     test_enrichment_field_name_variants()
     test_normalise_fr24_from_list()
     test_normalise_fr24_rejects_list()
+    test_search_exact_callsign()
+    test_search_callsign_prefix()
+    test_search_origin_icao()
+    test_search_aircraft_type()
+    test_search_multi_term_eddf_a320()
+    test_search_multi_term_dlh_eddf()
+    test_search_airline_name()
+    test_search_registration()
+    test_search_multi_term_lufthansa_a320()
+    test_search_no_results()
 
     print("=" * 60)
     total = PASS + FAIL
