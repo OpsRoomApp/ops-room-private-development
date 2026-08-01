@@ -2981,7 +2981,7 @@ function switchDispatchTab(tabName,evt){
   }
 }
 
-// v0.25.51: Real-world flight schedule search via admin.opsroom.live proxy
+// v0.25.51: Real-world flight search via local FR24 + ADSBDB enrichment pipeline
 function clearRealworldInputs(){
   var fields=['rw-origin','rw-dest','rw-callsign','rw-aircraft'];
   for(var i=0;i<fields.length;i++){
@@ -2998,11 +2998,11 @@ async function performRealworldSearch(){
   var includeGliders=$('rw-include-gliders')?$('rw-include-gliders').checked:false;
   var container=$('rw-results-container');
   if(!container)return;
-  container.innerHTML='<div class="rw-loading">Querying opsroom.live gateway...</div>';
+  container.innerHTML='<div class="rw-loading">Searching live flight data...</div>';
   try{
     var params=new URLSearchParams();
     if(origin)params.set('origin',origin);
-    if(dest)params.set('dest',dest);
+    if(dest)params.set('destination',dest);
     if(callsign)params.set('callsign',callsign);
     if(aircraft)params.set('aircraft',aircraft);
     if(includeGA)params.set('include_ga','true');
@@ -3021,7 +3021,7 @@ async function performRealworldSearch(){
   }catch(err){
     clearRealworldInputs();
     console.error('Real-World Search Error:',err);
-    container.innerHTML='<div class="rw-error">Error reaching opsroom.live: '+err.message+'</div>';
+    container.innerHTML='<div class="rw-error">Real-world search error: '+err.message+'</div>';
   }
 }
 
