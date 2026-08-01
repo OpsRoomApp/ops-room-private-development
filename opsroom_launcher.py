@@ -331,7 +331,7 @@ def main() -> int:
     url = f"http://{LOCAL_HOST}:{port}"
 
     print("\n" + "=" * 72)
-    print(f"Starting OPS ROOM 0.25.47 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Starting OPS ROOM 0.25.48 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Log file: {log_path}")
     print(f"Server bind: {'0.0.0.0' if lan_access else 'localhost'}:{port}")
 
