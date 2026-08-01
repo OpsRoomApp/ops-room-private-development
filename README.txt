@@ -1,4 +1,4 @@
-# OPS ROOM 0.25.52
+# OPS ROOM 0.25.53
 
 OPS ROOM is a desktop operations console for Microsoft Flight Simulator 2024. It bundles simulator telemetry, MSFS SimConnect/FSUIPC7 fallback, VATSIM data, SimBrief flight plans, GSX ground services, announceable cabin audio, Black Box recording and replay, and a public release.
 
@@ -22,4 +22,4 @@ The PMDG 777 SDK is bundled under its own EULA. OPS ROOM accepts the PMDG SDK EU
 
 OPS ROOM checks public GitHub releases on launch. New public releases appear as a notification; the in-app updater installs them with your confirmation. Old versions stay bootable while an update is staged.
 
-See `RELEASE_NOTES.md` for 0.25.52 highlights.
+See `RELEASE_NOTES.md` for 0.25.53 highlights.

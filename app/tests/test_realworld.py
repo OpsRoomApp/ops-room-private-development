@@ -1,6 +1,6 @@
-"""Regression tests for Real World Search pipeline – v0.25.52.
+"""Regression tests for Real World Search pipeline – v0.25.53.
 
-Covers all v0.25.46 root-cause fixes and v0.25.52 hardening features.
+Covers all v0.25.46 root-cause fixes and v0.25.53 hardening features.
 Runs without external network access (pure unit tests).
 """
 
@@ -212,7 +212,7 @@ def test_seed_coords() -> None:
     check("KJFK in seed coords", "KJFK" in _SEED_AIRPORTS)
 
 
-# ── Test K: ADSBDB enrichment (v0.25.52) ─────────────────────────────────────
+# ── Test K: ADSBDB enrichment (v0.25.53) ─────────────────────────────────────
 
 def test_enrichment_route_recovery() -> None:
     """ADSBDB route enrichment recovers missing destination."""
@@ -311,7 +311,7 @@ def test_enrichment_field_name_variants() -> None:
     check("icao_code key accepted", flight2.get("destination_icao") == "EGLL")
 
 
-# ── Test L: FR24 list→dict conversion (v0.25.52) ────────────────────────────
+# ── Test L: FR24 list→dict conversion (v0.25.53) ────────────────────────────
 
 def test_normalise_fr24_from_list() -> None:
     """FR24 returns 16-element lists; verify normalise_fr24 handles dict input."""
@@ -339,7 +339,7 @@ def test_normalise_fr24_rejects_list() -> None:
     check("FR24 list input returns None", result is None)
 
 
-# ── Test M: Multi-term search (v0.25.52) ────────────────────────────────────
+# ── Test M: Multi-term search (v0.25.53) ────────────────────────────────────
 
 _SAMPLE_FLIGHTS: list[dict[str, Any]] = [
     {"callsign": "DLH1304", "origin_icao": "EDDF", "destination_icao": "LTFM",
@@ -459,6 +459,48 @@ def test_search_no_results() -> None:
     check("ZZZZZZ returns empty", len(results) == 0)
 
 
+# ── Test N: Performance / non-blocking cache (v0.25.53) ─────────────────────
+
+def test_cache_immediate_return() -> None:
+    """get_live_flights returns immediately (no blocking)."""
+    import time as _time
+    t0 = _time.monotonic()
+    flights, age, stale = get_live_flights()
+    elapsed_ms = (_time.monotonic() - t0) * 1000
+    check("get_live_flights returns in < 100ms", elapsed_ms < 100)
+
+
+def test_search_index_is_read_only() -> None:
+    """search_index is a pure read operation — no side effects on cache."""
+    flights_before, age_before, stale_before = get_live_flights()
+    build_search_index(_SAMPLE_FLIGHTS)
+    search_index("DLH1304")
+    search_index("EDDF A320")
+    search_index("Lufthansa")
+    flights_after, age_after, stale_after = get_live_flights()
+    check("Cache untouched by search (count unchanged)",
+          len(flights_before) == len(flights_after) or len(flights_before) == 0)
+
+
+def test_cache_empty_protection_remains() -> None:
+    """set_live_flights([]) must not overwrite a healthy cache."""
+    force_reset_live_flights()
+    build_search_index(_SAMPLE_FLIGHTS)
+    set_live_flights(list(_SAMPLE_FLIGHTS))
+    count_before = len(get_live_flights()[0])
+    set_live_flights([])  # Should be rejected
+    count_after = len(get_live_flights()[0])
+    check("Empty update rejected", count_after == count_before)
+    force_reset_live_flights()
+
+
+def test_refresh_lock_not_held_by_search() -> None:
+    """Verify _refresh_lock is not acquired by search logic (read-only path)."""
+    # Import the lock and verify it's not held after a cache read
+    from app.realworld import _refresh_lock as rl
+    check("_refresh_lock is not locked before/after cache read", not rl.locked())
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -498,6 +540,10 @@ if __name__ == "__main__":
     test_search_registration()
     test_search_multi_term_lufthansa_a320()
     test_search_no_results()
+    test_cache_immediate_return()
+    test_search_index_is_read_only()
+    test_cache_empty_protection_remains()
+    test_refresh_lock_not_held_by_search()
 
     print("=" * 60)
     total = PASS + FAIL

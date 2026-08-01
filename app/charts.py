@@ -148,7 +148,7 @@ def _chartfox_metrics_snapshot() -> dict:
     }
 
 def _chartfox_reset_metrics() -> None:
-    """v0.25.52: reset all runtime metrics to zero. Called after successful
+    """v0.25.53: reset all runtime metrics to zero. Called after successful
     OAuth callback and on disconnect so stale failure counts don't persist
     across sessions and block the healthy/fresh calculation."""
     with _METRICS_LOCK:
@@ -610,7 +610,7 @@ def chartfox_diagnostics() -> dict:
 
 
 def chartfox_debug(chart_id: str = "", airport: str = "") -> dict:
-    """v0.25.52: enhanced debug endpoint with live API response inspection.
+    """v0.25.53: enhanced debug endpoint with live API response inspection.
 
     Pass ?chart_id=UUID to include the raw ChartFox API detail response,
     the proxy render-mode decision, and source_url/files[] inspection.
@@ -771,7 +771,7 @@ def chartfox_debug(chart_id: str = "", airport: str = "") -> dict:
             "Example: /api/charts/chartfox/debug?chart_id=6872384f-a9d3-4513-a1e5-d2e99e2b9dfb"
         ) if not api_inspection else None,
         "recent_errors": [c for c in runtime.get("recent_calls", []) if not c.get("ok")][-10:] if runtime.get("recent_calls") else [],
-        "version": "v0.25.52",
+        "version": "v0.25.53",
         "build": "public-release",
         "uptime_seconds": round(time.monotonic(), 1),
     }
@@ -1072,7 +1072,7 @@ def _chartfox_overlay_compute(georef, display_width_px, display_height_px):
             "ground_speed_kts": _number(tel.get("ground_speed_kts")) or 0,
             "page": georef.get("page"),
             "pdf_page_rotation": georef.get("pdf_page_rotation") or georef.get("pdf_rotation_angle") or 0,
-            "scope_warning": "v0.25.52: charts:geos scope not available (ChartFox returns 403); georefs still parsed from chart detail responses"}
+            "scope_warning": "v0.25.53: charts:geos scope not available (ChartFox returns 403); georefs still parsed from chart detail responses"}
 
 
 def ownship_overlay_status():
@@ -1084,7 +1084,7 @@ def ownship_overlay_status():
             "altitude_ft": tel.get("altitude_ft") or tel.get("indicated_altitude_ft"),
             "ground_speed_kts": tel.get("ground_speed_kts"),
             "overlay_available": False,
-            "message": "Live position available; chart overlay requires georef params per chart. v0.25.52: charts:geos scope not available from ChartFox."}
+            "message": "Live position available; chart overlay requires georef params per chart. v0.25.53: charts:geos scope not available from ChartFox."}
 
 
 # ---------------------------------------------------------------------------
@@ -1097,7 +1097,7 @@ def ownship_overlay_status():
 _AIRAC_EPOCH = date(2023, 1, 26)
 _CHARTFOX_CACHE_DIR = app_data_dir() / "chartfox_cache"
 _last_prune_cycle: int = -1
-# v0.25.52: file-cache read/write counters for debug endpoint.
+# v0.25.53: file-cache read/write counters for debug endpoint.
 _chartfox_cache_reads: int = 0
 _chartfox_cache_hits: int = 0
 _chartfox_cache_writes: int = 0
@@ -1129,7 +1129,7 @@ def _chartfox_cache_path(chart_id: str, ext: str) -> Path:
 def _chartfox_cache_get(chart_id: str) -> tuple[bytes | None, str | None, str | None]:
     """Try to read a cached chart file. Returns (body, content_type, filename) or (None, None, None).
 
-    v0.25.52 (round 2): iterates ALL cached chunks and sniffs bytes (with a
+    v0.25.53 (round 2): iterates ALL cached chunks and sniffs bytes (with a
     small BOM/whitespace tolerance) before returning. Mismatched chunks are
     QUARANTINED (renamed with a `.quarantine_` prefix) rather than silently
     unlinked — this preserves forensic data if a transient ChartFox bug
@@ -1236,7 +1236,7 @@ def _chartfox_cache_prune() -> None:
 
 
 def chartfox_force_cache_cleanup() -> dict:
-    """v0.25.52: delete ALL cached ChartFox temp files (chart PDFs, images, stale
+    """v0.25.53: delete ALL cached ChartFox temp files (chart PDFs, images, stale
     download artifacts from previous builds). Returns a summary dict."""
     try:
         if not _CHARTFOX_CACHE_DIR.is_dir():
@@ -1354,7 +1354,7 @@ def chartfox_chart_file_proxy(chart_id: str, use_cache: bool = True) -> dict:
             _LOGGER.warning("[CHARTFOX PROXY] download_failed cid=%s url=%s error=%s",
                             cid, url[:80], exc)
             return None
-        # v0.25.52 (round 2): the previous additive gate (reject if claimed
+        # v0.25.53 (round 2): the previous additive gate (reject if claimed
         # PDF but bytes weren't) is replaced with a sniff-and-set gate that
         # makes the BYTES the source of truth for ext/content_type. ChartFox
         # sometimes mis-types a JPEG as a PDF in files[].type, and we'd
