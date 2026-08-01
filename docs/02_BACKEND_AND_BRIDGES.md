@@ -1,6 +1,6 @@
 # OPS ROOM — Backend, Telemetry & Bridges
 
-**Version:** v0.25.51
+**Version:** v0.25.52
 **Last Updated:** 2026-07-31
 
 ---
@@ -11,7 +11,7 @@
 
 `app/main.py` (~2600 lines) is the FastAPI application factory. On startup, it:
 
-1. Creates the `FastAPI(title="OPS ROOM", version="0.25.51")` instance
+1. Creates the `FastAPI(title="OPS ROOM", version="0.25.52")` instance
 2. Adds middleware: `GZipMiddleware` (512-byte minimum), `CORSMiddleware` (explicit localhost origins)
 3. Mounts static directories: `/static` → `app/static/`, `/assets` → `app/assets/`
 4. Includes the `realworld_router` at `/api/v1/realworld`
@@ -380,7 +380,7 @@ Dual-channel auto-updater that polls two manifest URLs:
 PRIMARY_MANIFEST_URL = "https://opsroom.live/api/update.json"
 FALLBACK_MANIFEST_URL = "https://raw.githubusercontent.com/OpsRoomApp/ops-room-releases/main/update.json"
 DOWNLOAD_TIMEOUT = 25  # seconds per attempt
-DEFAULT_VERSION = "0.25.51"
+DEFAULT_VERSION = "0.25.52"
 ```
 
 The `Version` dataclass parses and compares semantic versions. `check_for_update()` tries primary first, falls back to GitHub on any error (DNS, timeout, HTTP error, invalid JSON). `prepare_update()` downloads and verifies the ZIP SHA-256 before staging.

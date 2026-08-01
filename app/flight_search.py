@@ -1,4 +1,4 @@
-"""Real-world flight search index – v0.25.51.
+"""Real-world flight search index – v0.25.52.
 
 Builds an in-memory searchable index from normalized flight records and
 provides a case-insensitive, partial-match search with direct-field fallback.
@@ -53,52 +53,73 @@ def build_search_index(records: list[dict[str, Any]]) -> None:
 def search_index(query: str) -> list[dict[str, Any]]:
     """Return flights matching the search query via the index.
 
+    Supports multi-term queries by splitting on whitespace and intersecting
+    per-term results.  For example, "EDDF A320" matches flights where any
+    indexed field contains "EDDF" AND any indexed field contains "A320".
+
     If the index is empty or the query is blank, returns all flights.
     If the index fails, falls back to direct field matching.
     """
-    q = str(query or "").strip().lower().replace("-", "").replace(" ", "")
-    if not q:
+    terms: list[str] = [t.strip() for t in str(query or "").strip().lower().split() if t.strip()]
+    if not terms:
         return list(_flights)
     if not _index:
-        return _direct_field_search(q)
+        return _direct_field_search(terms)
     try:
-        tokens = _tokenize(q)
-        if not tokens:
-            return list(_flights)
-        # Intersection of all token-matched index sets
-        matched: set[int] | None = None
-        for token in tokens:
-            idx_set = _index.get(token)
-            if idx_set is None:
-                return []
-            if matched is None:
-                matched = set(idx_set)
+        # Search each term independently by token-prefix union, then intersect across terms
+        all_matched: set[int] | None = None
+        for term in terms:
+            term_clean = term.replace("-", "").replace(" ", "")
+            tokens = _tokenize(term_clean)
+            term_matched: set[int] = set()
+            for token in tokens:
+                idx_set = _index.get(token)
+                if idx_set is not None:
+                    term_matched |= idx_set
+            if not term_matched:
+                return []  # No flight matched this term → empty result
+            if all_matched is None:
+                all_matched = term_matched
             else:
-                matched &= idx_set
-        if matched is None:
+                all_matched &= term_matched
+            if not all_matched:
+                return []  # Intersection empty — no flight matches all terms
+        if all_matched is None:
             return []
-        results = [_flights[i] for i in sorted(matched)]
-        # Sort by rank_score descending
+        results = [_flights[i] for i in sorted(all_matched)]
         results.sort(key=lambda f: -(f.get("rank_score") or 0))
         return results
     except Exception as exc:
         _log.warning("[SearchIndex] Index search failed, falling back to direct match: %s", exc)
-        return _direct_field_search(q)
+        return _direct_field_search(terms)
 
 
-def _direct_field_search(query: str) -> list[dict[str, Any]]:
-    """Direct substring match across key fields when the index is unavailable."""
-    q = str(query or "").strip().lower()
-    if not q:
+def _direct_field_search(terms: list[str]) -> list[dict[str, Any]]:
+    """Per-field substring match across key fields when the index is unavailable.
+
+    Each term must match at least one indexed field.  All terms must match for
+    a flight to be included (AND logic).
+    """
+    if not terms:
         return list(_flights)
+    SEARCH_FIELDS = ("callsign", "origin_icao", "destination_icao",
+                     "airline_name", "aircraft_type", "registration")
     results: list[dict[str, Any]] = []
     for flight in _flights:
-        for field in ("callsign", "origin_icao", "destination_icao",
-                       "airline_name", "aircraft_type", "registration"):
-            val = str(flight.get(field) or "").lower().replace("-", "").replace(" ", "")
-            if q in val:
-                results.append(flight)
+        flight_matches = True
+        for term in terms:
+            term_clean = term.replace("-", "").replace(" ", "")
+            term_found = False
+            for field in SEARCH_FIELDS:
+                val = str(flight.get(field) or "").lower().replace("-", "").replace(" ", "")
+                if term_clean in val:
+                    term_found = True
+                    break
+            if not term_found:
+                flight_matches = False
                 break
+        if flight_matches:
+            results.append(flight)
     results.sort(key=lambda f: -(f.get("rank_score") or 0))
     return results
 

@@ -1,4 +1,4 @@
-"""Real-World Flight Search pipeline – v0.25.51.
+"""Real-World Flight Search pipeline – v0.25.52.
 
 Provider-agnostic discovery, normalisation, ADSBDB enrichment, caching,
 search indexing, and diagnostics for the OPS ROOM Real World Schedules feature.
@@ -266,7 +266,7 @@ async def _discover_fr24(
                         params={"bounds": f"{bounds['lat']-1.5},{bounds['lat']+1.5},"
                                           f"{bounds['lon']-1.5},{bounds['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.51"},
+                                 "User-Agent": "OPS-ROOM/0.25.52"},
                     )
                     _update_provider_health("fr24", resp.status_code == 200,
                                             (time.monotonic() - t0) * 1000,
@@ -298,7 +298,7 @@ async def _discover_fr24(
                         params={"bounds": f"{zone['lat']-1.5},{zone['lat']+1.5},"
                                           f"{zone['lon']-1.5},{zone['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.51"},
+                                 "User-Agent": "OPS-ROOM/0.25.52"},
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -372,7 +372,7 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cs = _clean_str(flight.get("callsign") or "")
         mode_s = _clean_str(flight.get("mode_s") or "")
 
-        # Track enrichment result per flight (v0.25.51)
+        # Track enrichment result per flight (v0.25.52)
         enrichment_attempted = True
         route_lookup = False
         route_success = False
@@ -448,7 +448,7 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not had_aircraft_before and flight.get("aircraft_type"):
             recovered_aircraft += 1
 
-        # ── Attach per-flight enrichment audit flags (v0.25.51) ──
+        # ── Attach per-flight enrichment audit flags (v0.25.52) ──
         flight["enrichment_attempted"] = enrichment_attempted
         flight["enrichment_success"] = route_success or aircraft_success
         flight["route_enriched"] = route_success
@@ -712,7 +712,7 @@ async def realworld_search(
         # Limit to top 100 results
         results = filtered[:100]
 
-        # v0.25.51: add origin/destination flat aliases for frontend compatibility
+        # v0.25.52: add origin/destination flat aliases for frontend compatibility
         # The frontend reads flight.origin / flight.destination (flat strings)
         # but the canonical model uses origin_icao / destination_icao.
         for f in results:
@@ -737,7 +737,7 @@ async def realworld_search(
         )
 
 
-# ── Debug enrichment endpoint (v0.25.51) ────────────────────────────────────
+# ── Debug enrichment endpoint (v0.25.52) ────────────────────────────────────
 # Traces a single callsign through the full enrichment pipeline to identify
 # exactly where data is lost.  Local-only; does not expose secrets.
 
@@ -794,7 +794,8 @@ async def debug_enrichment_pipeline(callsign: str):
         result["adsbdb_raw"] = {"available": False, "error": str(exc)}
 
     # ── Stage 2: Simulate a minimal FR24 flight + normalise ──
-    mock_fr24 = {"flight": cs, "orig": "EDDF"}
+    # v0.25.52: include hex (mode_s) so aircraft identity enrichment is testable
+    mock_fr24 = {"flight": cs, "orig": "EDDF", "hex": "3c0000"}
     normalized = normalise_fr24(mock_fr24)
     if normalized:
         result["after_normalization"] = {
@@ -810,10 +811,19 @@ async def debug_enrichment_pipeline(callsign: str):
             "can_simbrief": normalized.get("can_simbrief"),
         }
 
-    # ── Stage 3: Apply ADSBDB enrichment ──
+    # ── Stage 3: Apply ADSBDB enrichment (route + aircraft identity) ──
     if normalized and adsbdb_raw:
         apply_adsbdb_route(normalized, adsbdb_raw)
-        apply_adsbdb_aircraft(normalized, adsbdb_raw)
+        # v0.25.52: also attempt aircraft identity enrichment via mode_s
+        ac_raw = None
+        ms = normalized.get("mode_s")
+        if ms:
+            try:
+                ac_raw = await get_aircraft(ms)
+            except Exception:
+                pass
+        if ac_raw:
+            apply_adsbdb_aircraft(normalized, ac_raw)
         result["after_enrichment_merge"] = {
             "callsign": normalized.get("callsign"),
             "origin_icao": normalized.get("origin_icao"),
@@ -913,7 +923,7 @@ async def realworld_diagnostics(include_recent_errors: bool = False):
     response: dict[str, Any] = {
         "status": "ok",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "version": "0.25.51",
+        "version": "0.25.52",
         "last_successful_refresh_utc": stats.get("last_refresh_utc"),
         "last_refresh_status": stats.get("last_refresh_status"),
         "serving_stale_cache": is_stale and len(flights) > 0,

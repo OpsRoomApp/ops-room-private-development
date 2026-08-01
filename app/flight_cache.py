@@ -1,4 +1,4 @@
-"""Real-world flight cache – v0.25.51.
+"""Real-world flight cache – v0.25.52.
 
 In-memory caches with TTL, empty-cache protection, and request deduplication.
 Separate stores for live flights, routes, and aircraft metadata.
