@@ -1,6 +1,6 @@
-"""Regression tests for Real World Search pipeline – v0.25.54.
+"""Regression tests for Real World Search pipeline – v0.25.55.
 
-Covers all v0.25.46 root-cause fixes and v0.25.54 hardening features.
+Covers all v0.25.46 root-cause fixes and v0.25.55 hardening features.
 Runs without external network access (pure unit tests).
 """
 
@@ -212,7 +212,7 @@ def test_seed_coords() -> None:
     check("KJFK in seed coords", "KJFK" in _SEED_AIRPORTS)
 
 
-# ── Test K: ADSBDB enrichment (v0.25.54) ─────────────────────────────────────
+# ── Test K: ADSBDB enrichment (v0.25.55) ─────────────────────────────────────
 
 def test_enrichment_route_recovery() -> None:
     """ADSBDB route enrichment recovers missing destination."""
@@ -311,7 +311,7 @@ def test_enrichment_field_name_variants() -> None:
     check("icao_code key accepted", flight2.get("destination_icao") == "EGLL")
 
 
-# ── Test L: FR24 list→dict conversion (v0.25.54) ────────────────────────────
+# ── Test L: FR24 list→dict conversion (v0.25.55) ────────────────────────────
 
 def test_normalise_fr24_from_list() -> None:
     """FR24 returns 16-element lists; verify normalise_fr24 handles dict input."""
@@ -339,7 +339,7 @@ def test_normalise_fr24_rejects_list() -> None:
     check("FR24 list input returns None", result is None)
 
 
-# ── Test M: Multi-term search (v0.25.54) ────────────────────────────────────
+# ── Test M: Multi-term search (v0.25.55) ────────────────────────────────────
 
 _SAMPLE_FLIGHTS: list[dict[str, Any]] = [
     {"callsign": "DLH1304", "origin_icao": "EDDF", "destination_icao": "LTFM",
@@ -459,7 +459,7 @@ def test_search_no_results() -> None:
     check("ZZZZZZ returns empty", len(results) == 0)
 
 
-# ── Test N: Performance / non-blocking cache (v0.25.54) ─────────────────────
+# ── Test N: Performance / non-blocking cache (v0.25.55) ─────────────────────
 
 def test_cache_immediate_return() -> None:
     """get_live_flights returns immediately (no blocking)."""

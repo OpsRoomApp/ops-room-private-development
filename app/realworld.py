@@ -1,4 +1,4 @@
-"""Real-World Flight Search pipeline – v0.25.54.
+"""Real-World Flight Search pipeline – v0.25.55.
 
 Provider-agnostic discovery, normalisation, ADSBDB enrichment, caching,
 search indexing, and diagnostics for the OPS ROOM Real World Schedules feature.
@@ -247,6 +247,7 @@ async def _discover_fr24(
     """
     raw: list[dict[str, Any]] = []
     discovery_strategy = "none"
+    _log.info("[RealWorld] FR24 DISCOVERY START")
 
     # FR24 list-index mapping — keys match what normalise_fr24() expects
     _FR24_IDX = {0: "hex", 1: "lat", 2: "lon", 3: "heading", 4: "altitude",
@@ -266,7 +267,7 @@ async def _discover_fr24(
                         params={"bounds": f"{bounds['lat']-1.5},{bounds['lat']+1.5},"
                                           f"{bounds['lon']-1.5},{bounds['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.54"},
+                                 "User-Agent": "OPS-ROOM/0.25.55"},
                     )
                     _update_provider_health("fr24", resp.status_code == 200,
                                             (time.monotonic() - t0) * 1000,
@@ -298,7 +299,7 @@ async def _discover_fr24(
                         params={"bounds": f"{zone['lat']-1.5},{zone['lat']+1.5},"
                                           f"{zone['lon']-1.5},{zone['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.54"},
+                                 "User-Agent": "OPS-ROOM/0.25.55"},
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -334,6 +335,8 @@ async def _discover_fr24(
     with _stats_lock:
         _pipeline_stats["discovery_strategy"] = discovery_strategy
 
+    _log.info("[RealWorld] FR24 DISCOVERY COMPLETE flights=%d strategy=%s",
+              len(raw), discovery_strategy)
     return raw
 
 
@@ -377,7 +380,7 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cs = _clean_str(flight.get("callsign") or "")
         mode_s = _clean_str(flight.get("mode_s") or "")
 
-        # Track enrichment result per flight (v0.25.54)
+        # Track enrichment result per flight (v0.25.55)
         enrichment_attempted = True
         route_lookup = False
         route_success = False
@@ -458,7 +461,7 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not had_aircraft_before and flight.get("aircraft_type"):
             recovered_aircraft += 1
 
-        # ── Attach per-flight enrichment audit flags (v0.25.54) ──
+        # ── Attach per-flight enrichment audit flags (v0.25.55) ──
         flight["enrichment_attempted"] = enrichment_attempted
         flight["enrichment_success"] = route_success or aircraft_success
         flight["route_enriched"] = route_success
@@ -559,7 +562,7 @@ def _filter_flights(
 async def _refresh_loop() -> None:
     """Full refresh cycle: discover → normalise → enrich → dedup → filter → cache → index.
 
-    v0.25.54: all stages instrumented with wall-clock timing.
+    v0.25.55: all stages instrumented with wall-clock timing.
     """
     global _refresh_running
     async with _refresh_lock:
@@ -712,11 +715,35 @@ async def realworld_search(
         t0 = time.monotonic()
         flights, cache_age, is_stale = get_live_flights()
 
-        # v0.25.54: never block on refresh.  Return cached data immediately;
-        # fire-and-forget a background refresh if the cache is stale or empty.
-        if is_stale or not flights:
+        _log.info(
+            "[RealWorld] SEARCH REQUEST origin=%s dest=%s cs=%s ac=%s ga=%s gl=%s | cache=%d age=%.1fs stale=%s",
+            origin_clean or "-", dest_clean or "-", callsign_clean or "-",
+            aircraft_clean or "-", include_ga_bool, include_gliders_bool,
+            len(flights), cache_age, is_stale)
+
+        # v0.25.55: cold-start bootstrap — call _refresh_loop() directly;
+        # it manages its own lock and _refresh_running flag internally.
+        if not flights:
+            _log.info("[RealWorld] Cold start - awaiting first refresh (max 30s)")
+            try:
+                await asyncio.wait_for(_refresh_loop(), timeout=30.0)
+            except asyncio.TimeoutError:
+                _log.warning("[RealWorld] First refresh timed out")
+            except Exception as exc:
+                _log.error("[RealWorld] First refresh failed: %s", exc, exc_info=True)
+            flights, cache_age, is_stale = get_live_flights()
+
+        # v0.25.55: stale cache - fire-and-forget with error callback
+        elif is_stale:
             if not _refresh_lock.locked():
-                _log.info("[RealWorld] Stale/empty cache (age=%.1fs) — triggering background refresh", cache_age)
+                _log.info("[RealWorld] Stale cache (age=%.1fs) - triggering background refresh", cache_age)
+                task = asyncio.create_task(_refresh_loop())
+                def _on_refresh_done(t):
+                    try:
+                        t.result()
+                    except Exception as exc:
+                        _log.error("[RealWorld] Background refresh crashed: %s", exc, exc_info=True)
+                task.add_done_callback(_on_refresh_done)
                 asyncio.create_task(_refresh_loop())
 
         # Filter by search params
@@ -735,7 +762,7 @@ async def realworld_search(
         # Limit to top 100 results
         results = filtered[:100]
 
-        # v0.25.54: add origin/destination flat aliases for frontend compatibility
+        # v0.25.55: add origin/destination flat aliases for frontend compatibility
         # The frontend reads flight.origin / flight.destination (flat strings)
         # but the canonical model uses origin_icao / destination_icao.
         for f in results:
@@ -762,7 +789,7 @@ async def realworld_search(
         )
 
 
-# ── Debug enrichment endpoint (v0.25.54) ────────────────────────────────────
+# ── Debug enrichment endpoint (v0.25.55) ────────────────────────────────────
 # Traces a single callsign through the full enrichment pipeline to identify
 # exactly where data is lost.  Local-only; does not expose secrets.
 
@@ -773,7 +800,7 @@ _DEBUG_ROUTER = APIRouter(prefix="/api/v1/realworld-debug", tags=["realworld-deb
 async def debug_enrichment_pipeline(callsign: str):
     """Trace a single callsign through the enrichment pipeline.
 
-    v0.25.54: instrumented with per-stage timing.  Never triggers refresh.
+    v0.25.55: instrumented with per-stage timing.  Never triggers refresh.
     Returns the state at each stage: raw ADSBDB → normalised → enriched → final.
     """
     t_total = time.monotonic()
@@ -821,7 +848,7 @@ async def debug_enrichment_pipeline(callsign: str):
         result["adsbdb_raw"] = {"available": False, "error": str(exc)}
 
     # ── Stage 2: Simulate a minimal FR24 flight + normalise ──
-    # v0.25.54: include hex (mode_s) so aircraft identity enrichment is testable
+    # v0.25.55: include hex (mode_s) so aircraft identity enrichment is testable
     mock_fr24 = {"flight": cs, "orig": "EDDF", "hex": "3c0000"}
     normalized = normalise_fr24(mock_fr24)
     if normalized:
@@ -841,7 +868,7 @@ async def debug_enrichment_pipeline(callsign: str):
     # ── Stage 3: Apply ADSBDB enrichment (route + aircraft identity) ──
     if normalized and adsbdb_raw:
         apply_adsbdb_route(normalized, adsbdb_raw)
-        # v0.25.54: also attempt aircraft identity enrichment via mode_s or registration
+        # v0.25.55: also attempt aircraft identity enrichment via mode_s or registration
         ac_raw = None
         ms = normalized.get("mode_s")
         reg = normalized.get("registration")
@@ -954,7 +981,7 @@ async def realworld_diagnostics(include_recent_errors: bool = False):
     response: dict[str, Any] = {
         "status": "ok",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "version": "0.25.54",
+        "version": "0.25.55",
         "last_successful_refresh_utc": stats.get("last_refresh_utc"),
         "last_refresh_status": stats.get("last_refresh_status"),
         "serving_stale_cache": is_stale and len(flights) > 0,
