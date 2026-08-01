@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>OPS ROOM Scoring Rules</title>
+  <style>
+    :root{color-scheme:dark;--bg:#070b0d;--panel:#101518;--line:#2b373d;--text:#f3f0e8;--muted:#aab4b8;--cyan:#89d8e6;--green:#81dc71;--amber:#f0bf58;--red:#ff7268}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 20% 0,#121a1e 0,#070b0d 44%,#050708 100%);color:var(--text);font-family:Inter,"Segoe UI",Arial,sans-serif;padding:34px clamp(18px,4vw,64px)}header{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:24px}h1{margin:0;font-size:clamp(30px,4vw,54px);letter-spacing:.09em}header p{margin:10px 0 0;color:var(--muted);max-width:980px}.model{color:var(--cyan);font-weight:800;letter-spacing:.12em}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}.card{grid-column:span 4;background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.01));border:1px solid var(--line);border-radius:10px;overflow:hidden}.card.wide{grid-column:span 8}.card.full{grid-column:1/-1}.card h2{margin:0;padding:17px 20px;border-bottom:1px solid var(--line);font-size:21px}.row{display:grid;grid-template-columns:1fr auto;gap:16px;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.07)}.row:last-child{border-bottom:0}.row b{font-size:17px}.row span:last-child{font-size:20px;font-weight:900}.row small{display:block;color:var(--muted);margin-top:6px;line-height:1.45}.good{color:var(--green)}.warn{color:var(--amber)}.bad{color:var(--red)}.formula{font-family:ui-monospace,Consolas,monospace;background:#070a0b;border:1px solid var(--line);padding:18px 20px;color:#dfe7e9;line-height:1.65}.note{color:var(--muted);line-height:1.55;padding:16px 20px}.pill{display:inline-block;border:1px solid var(--line);padding:4px 8px;border-radius:999px;margin:2px;color:var(--cyan);font-weight:800;font-size:12px}@media(max-width:1050px){.card,.card.wide{grid-column:1/-1}header{display:block}}
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>OPS ROOM SCORING RULES</h1><p>This page documents the actual PIREP PRO V1 calculation used by the current analysis engine. The final score is out of 100 and is the sum of five category scores after deductions.</p></div>
+    <div class="model">PIREP PRO V1 · 0.25.47</div>
+  </header>
+
+  <main class="grid">
+    <section class="card full">
+      <h2>Score Formula</h2>
+      <div class="formula">Overall = Departure + Enroute + Approach + Landing + Integrity<br>Maximum = 15 + 20 + 25 + 25 + 15 = 100<br>Grade bands: Excellent ?92 · Very Good ?84 · Good ?74 · Acceptable ?62 · Review Required &lt;62</div>
+      <p class="note">If advanced analysis cannot validate a metric, OPS ROOM should mark that metric unavailable instead of publishing fake zeroes or impossible values. Older fallback debrief scoring may still be used only when the advanced analysis result is unavailable.</p>
+    </section>
+
+    <section class="card">
+      <h2>Departure · 15 max</h2>
+      <div class="row"><div><b>Runway tracking</b><small>Departure runway path is analysed where runway geometry is valid.</small></div><span>15</span></div>
+      <div class="row"><div><b>Centreline deviation</b><small>Maximum departure runway deviation &gt; 50 ft.</small></div><span class="bad">?3</span></div>
+      <div class="row"><div><b>Liftoff bank</b><small>Bank angle at liftoff &gt; 5°.</small></div><span class="bad">?2</span></div>
+      <div class="row"><div><b>Long takeoff roll</b><small>Takeoff roll exceeds 80% of runway length estimate.</small></div><span class="bad">?2</span></div>
+    </section>
+
+    <section class="card">
+      <h2>Enroute · 20 max</h2>
+      <div class="row"><div><b>Clean enroute record</b><small>No major airborne speed or aircraft-state violations.</small></div><span>20</span></div>
+      <div class="row"><div><b>Overspeed</b><small>Simulator overspeed warning recorded.</small></div><span class="bad">?4</span></div>
+      <div class="row"><div><b>Stall warning</b><small>Simulator stall warning recorded.</small></div><span class="bad">?4</span></div>
+      <div class="row"><div><b>Speed below 10,000 ft</b><small>IAS above 255 kt when valid altitude/AGL data confirms the gate.</small></div><span class="bad">?4</span></div>
+    </section>
+
+    <section class="card">
+      <h2>Approach · 25 max</h2>
+      <div class="row"><div><b>Stable 1000 ft gate</b><small>Vertical speed, IAS, pitch/bank and configuration checks.</small></div><span class="bad">?8</span></div>
+      <div class="row"><div><b>Stable 500 ft gate</b><small>Landing configuration locked; no late gear/flap instability.</small></div><span class="bad">?10</span></div>
+      <div class="row"><div><b>Lateral path</b><small>Maximum lateral deviation on final approach &gt; 600 ft.</small></div><span class="bad">?3</span></div>
+      <div class="row"><div><b>Required data</b><small>Valid continuous final segment and AGL/radio-altitude crossings.</small></div><span>guard</span></div>
+    </section>
+
+    <section class="card wide">
+      <h2>Landing · 25 max</h2>
+      <div class="row"><div><b>Touchdown rate</b><small>0 to ?200 fpm.</small></div><span class="good">?0</span></div>
+      <div class="row"><div><b>Firm touchdown</b><small>?201 to ?350 fpm.</small></div><span class="warn">?3</span></div>
+      <div class="row"><div><b>Hard touchdown</b><small>?351 to ?500 fpm.</small></div><span class="warn">?7</span></div>
+      <div class="row"><div><b>Very hard touchdown</b><small>Below ?500 fpm.</small></div><span class="bad">?14</span></div>
+      <div class="row"><div><b>Bounce penalty</b><small>Minor/moderate/severe bounce deductions are capped at ?12.</small></div><span class="bad">up to ?12</span></div>
+      <div class="row"><div><b>Long touchdown</b><small>Touchdown point &gt; 3000 ft when landing geometry validates.</small></div><span class="bad">?3</span></div>
+      <div class="row"><div><b>Centreline at touchdown</b><small>Absolute touchdown cross-track deviation &gt; 40 ft when valid.</small></div><span class="bad">?2</span></div>
+    </section>
+
+    <section class="card">
+      <h2>Integrity · 15 max</h2>
+      <div class="row"><div><b>Slew mode</b><small>Slew was used during the recording.</small></div><span class="bad">?10</span></div>
+      <div class="row"><div><b>Simulation rate</b><small>Sim rate differed significantly from 1.0x.</small></div><span class="bad">?4</span></div>
+      <div class="row"><div><b>In-flight refuelling</b><small>Usable fuel increased while airborne.</small></div><span class="bad">?8</span></div>
+      <div class="row"><div><b>Paused/frozen sim</b><small>Pause or position freeze detected.</small></div><span class="bad">?1</span></div>
+    </section>
+
+    <section class="card full">
+      <h2>Displayed but not scoring</h2>
+      <p class="note"><span class="pill">GSX invoices</span><span class="pill">Virtual finances</span><span class="pill">Pilot salary</span><span class="pill">OBS overlay</span><span class="pill">Personal notes</span><span class="pill">Streamer mode</span> These are shown for debrief/career context and do not enter the flight-quality score calculation.</p>
+    </section>
+  </main>
+</body>
+</html>

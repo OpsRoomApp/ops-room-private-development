@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OPS ROOM HOST</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon-32.png" sizes="32x32" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/host.css?v=0-25-47" />
+</head>
+<body>
+  <main class="host-shell">
+    <header class="host-masthead">
+      <div class="host-title"><img class="brand-mark" src="/static/opsroom-brand-mark.svg" alt="" /><strong>OPS ROOM</strong><strong class="build">0.25.47</strong><span>HOST AND INTEGRATION CONSOLE</span></div>
+      <div class="host-clock"><b id="hostClock">00:00:00 UTC</b><span id="hostSystemLamp"><i class="lamp green"></i>SYSTEM NORMAL</span></div>
+    </header>
+
+    <nav class="host-tabs" aria-label="Host console positions">
+      <button class="host-tab active" type="button" data-host-page="status">01 STATUS</button>
+      <button class="host-tab" type="button" data-host-page="settings">02 SYSTEM SETUP</button>
+    </nav>
+
+    <section id="host-page-status" class="host-page active">
+      <section class="host-banner">
+        <div><span>LOCAL SERVICE</span><strong id="serverState">RUNNING</strong></div>
+        <div><span>VERSION</span><strong>0.25.47</strong></div>
+        <div><span>ROLE</span><strong>HOST / BRIDGE</strong></div>
+      </section>
+
+      <div class="host-grid">
+        <section class="host-panel">
+          <header><span>SYSTEM CONNECTIONS</span></header>
+          <div id="hostConnections" class="host-connections"></div>
+          <div class="panel-actions">
+            <button id="hostProbeMsfs" type="button">PROBE MSFS</button>
+            <button id="hostFetchOfp" type="button">FETCH OFP</button>
+          </div>
+        </section>
+
+        <section class="host-panel access-panel">
+          <header><span>TABLET AND LAN ACCESS</span><span id="hostLanState">CHECKING</span></header>
+          <div class="qr-zone">
+            <img id="hostQr" class="secret-qr concealed" src="/api/server/qr.png" alt="OPS ROOM LAN QR code" />
+            <div><span>PREFERRED ADDRESS</span><div class="address-reveal"><b id="preferredUrl">CHECKING...</b><button id="toggleIp" type="button">SHOW</button></div><p id="accessNote">Scan this code from a device connected to the same network.</p></div>
+          </div>
+          <div id="hostUrls" class="host-urls"></div>
+        </section>
+      </div>
+
+      <section class="host-actions">
+        <a href="/" target="_blank" rel="noreferrer">OPEN OPS ROOM</a>
+        <button id="openSetup" type="button">SYSTEM SETUP</button>
+        <a href="/vatsim-fids" target="opsroom-fids">OPEN VATSIM FIDS</a>
+        <button id="copyUrl" type="button">COPY LAN ADDRESS</button>
+      </section>
+    </section>
+
+    <section id="host-page-settings" class="host-page">
+      <div class="settings-heading">
+        <div><span>AUTHORITATIVE CONFIGURATION</span><h1>SYSTEM SETUP</h1></div>
+        <b id="hostSaveState">READY</b>
+      </div>
+
+      <form id="hostSettingsForm" class="settings-grid">
+        <section class="host-panel form-panel">
+          <header><span>IDENTIFICATION</span><span>ACCOUNTS</span></header>
+          <label>VATSIM CID<input id="hostVatsimCid" inputmode="numeric" autocomplete="off" placeholder="1234567" /></label>
+          <label>SIMBRIEF PILOT ID OR USERNAME<input id="hostSimbriefId" autocomplete="off" placeholder="Pilot ID or username" /></label>
+          <label class="check-line"><input id="hostSimbriefAuto" type="checkbox" /><i></i>AUTO LOAD LATEST OFP AT START</label>
+        </section>
+
+        <section class="host-panel form-panel">
+          <header><span>COMMUNICATIONS</span><span>PROTECTED STORAGE</span></header>
+          <label>HOPPIE LOGON CODE<input id="hostHoppieCode" type="password" autocomplete="new-password" placeholder="Leave blank to keep saved code" /></label>
+          <label>HOPPIE CALLSIGN OVERRIDE<input id="hostHoppieCallsign" autocomplete="off" maxlength="16" placeholder="Optional, uses vPilot or SimBrief" /></label>
+          <label class="check-line"><input id="hostHoppieAutoPoll" type="checkbox" /><i></i>AUTOMATICALLY POLL AFTER FIRST DATALINK MESSAGE</label>
+          <label class="check-line"><input id="hostClearHoppie" type="checkbox" /><i></i>CLEAR SAVED HOPPIE CODE</label>
+          <p>On Windows, the code is protected with the current Windows account through DPAPI. Use only one Hoppie client per callsign.</p>
+        </section>
+
+        <section class="host-panel form-panel wide-panel">
+          <header><span>VPILOT INTEGRATION</span><span id="hostVpilotInstallState">CHECKING</span></header>
+          <label>VPILOT INSTALLATION ROOT<input id="hostVpilotRoot" autocomplete="off" placeholder="%LOCALAPPDATA%\vPilot" /></label>
+          <div id="hostVpilotInstallDetail" class="integration-install-detail">OPS ROOM will use the official plugin API from the installed vPilot folder.</div>
+          <div class="panel-actions integration-install-actions"><button id="hostInstallVpilot" type="button">INSTALL / UPDATE BRIDGE</button><button id="hostRemoveVpilot" type="button">REMOVE BRIDGE</button></div>
+          <p>The bridge is compiled against the user's installed vPilot API and placed in the vPilot Plugins folder. vPilot must be restarted after installation.</p>
+        </section>
+
+
+        <section class="host-panel form-panel wide-panel">
+          <header><span>CABIN ANNOUNCER</span><span>USER-SUPPLIED AUDIO</span></header>
+          <label class="check-line"><input id="hostAnnouncementsEnabled" type="checkbox" /><i></i>ENABLE AUTOMATIC ANNOUNCEMENTS</label>
+          <label>ANNOUNCEMENTS ROOT<input id="hostAnnouncementsRoot" autocomplete="off" placeholder="D:\MSFS Addons\Announcements" /></label>
+          <div class="host-unit-grid announcer-override-grid">
+            <label>CALLSIGN OVERRIDE<input id="hostAnnouncementsCallsign" autocomplete="off" maxlength="16" placeholder="OPTIONAL, E.G. AIC102" /></label>
+            <label>AIRLINE FOLDER OVERRIDE<input id="hostAnnouncementsAirline" autocomplete="off" maxlength="4" placeholder="OPTIONAL, E.G. AIC" /></label>
+            <label>VOLUME (0-100)<input id="hostAnnouncementsVolume" type="number" min="0" max="100" step="1" /></label>
+            <label>PAUSE / RESUME HOTKEY<input id="hostAnnouncementsPauseHotkey" autocomplete="off" maxlength="32" placeholder="CTRL+ALT+P" /></label>
+            <label>MUTE HOTKEY<input id="hostAnnouncementsMuteHotkey" autocomplete="off" maxlength="32" placeholder="CTRL+ALT+M" /></label>
+          </div>
+          <label class="check-line"><input id="hostCameraVolumeEnabled" type="checkbox" /><i></i>ADAPT VOLUME TO CAMERA DISTANCE</label>
+          <div class="host-unit-grid announcer-camera-grid" id="hostCameraVolumeGrid">
+            <label>COCKPIT %<input id="hostCameraVolumeCockpit" type="number" min="0" max="100" step="5" /></label>
+            <label>CABIN AREA %<input id="hostCameraVolumeCabin" type="number" min="0" max="100" step="5" /></label>
+            <label>EXTERNAL %<input id="hostCameraVolumeExternal" type="number" min="0" max="100" step="5" /></label>
+          </div>
+          <label class="check-line"><input id="hostAnnouncementsHotkeysEnabled" type="checkbox" /><i></i>ENABLE GLOBAL ANNOUNCEMENT HOTKEYS</label>
+          <label class="check-line"><input id="hostAirlineTheme" type="checkbox" /><i></i>USE AIRLINE THEME FROM ANNOUNCEMENT BACKGROUND</label>
+          <div class="host-unit-grid announcer-theme-grid">
+            <label>AIRLINE THEME MODE<select id="hostAirlineThemeMode"><option value="full">FULL THEME</option><option value="accent">ACCENT ONLY</option><option value="off">OFF</option></select></label>
+            <label>AIRLINE THEME INTENSITY <span id="hostAirlineThemeIntensityLabel">38%</span><input id="hostAirlineThemeIntensity" type="range" min="0" max="100" step="1" value="38" /></label>
+          </div>
+          <p>Overrides are optional. OPS ROOM does not include announcement audio. When enabled, OPS ROOM looks for bg.png or bg.jpg in the selected airline announcement folder and uses it as a visual theme. Increase the intensity to let the airline background image show through more strongly.</p>
+        </section>
+
+        <section class="host-panel form-panel wide-panel">
+          <header><span>GROUND SERVICES</span><span>GSX PRO</span></header>
+          <label>FSDREAMTEAM ADDON MANAGER ROOT<input id="hostGsxRoot" autocomplete="off" placeholder="C:\Program Files (x86)\Addon Manager" /></label>
+          <label class="check-line"><input id="hostGsxAutomation" type="checkbox" /><i></i>ENABLE GSX SERVICE AUTOMATION</label>
+          <label class="check-line"><input id="hostGsxAutoPushback" type="checkbox" /><i></i>AUTO-PREPARE PUSHBACK AFTER DEPARTURE SERVICES</label>
+          <label class="check-line"><input id="hostGsxBeaconPushback" type="checkbox" /><i></i>PREPARE PUSHBACK WHEN BEACON TURNS ON</label>
+          <p>Use Departure Services at origin, Arrival Services after landing, and Full Turnaround when continuing to a next sector. Departure Catering and Potable Water are controlled directly from the Ground Control page.</p>
+        </section>
+<section class="host-panel form-panel">
+          <header><span>FLIGHT TELEMETRY</span><span>RECORDER SOURCE</span></header>
+          <label class="check-line"><input id="hostFsuipcEnabled" type="checkbox" /><i></i>PREFER FSUIPC7, FALL BACK TO SIMCONNECT</label>
+          <label class="check-line"><input id="hostFsuipcAutostart" type="checkbox" /><i></i>START FSUIPC7 AUTOMATICALLY IF INSTALLED</label>
+          <label>FSUIPC7 PATH<input id="hostFsuipcPath" autocomplete="off" placeholder="Optional, e.g. C:\FSUIPC7\FSUIPC7.exe" /></label>
+          <label>CRUISE SAMPLE INTERVAL (SECONDS)<input id="hostTelemetryInterval" type="number" min="0.2" max="5" step="0.1" /></label>
+          <div id="hostTelemetryStatus" class="integration-install-detail">FSUIPC7 is optional. OPS ROOM automatically continues through SimConnect when it is unavailable.</div>
+          <p>Takeoff, approach and landing automatically record at higher frequency.</p>
+        </section>
+
+
+        <section class="host-panel form-panel">
+          <header><span>CHARTS / MAP DATA</span><span>OPENAIP</span></header>
+          <label>OPENAIP API KEY<input id="hostOpenAipKey" type="password" autocomplete="new-password" placeholder="Paste OpenAIP API key" /></label>
+          <label class="check-line"><input id="hostAipChartsEnabled" type="checkbox" /><i></i>ENABLE PUBLIC AIP / FAA CHART VIEWER</label>
+          <label class="check-line"><input id="hostOpenAipMapEnabled" type="checkbox" /><i></i>ENABLE OPENAIP METADATA FOR LIVE MAP</label>
+          <label class="check-line"><input id="hostSurfaceAutoDetect" type="checkbox" /><i></i>AUTO-DETECT LOCAL AIRPORT SURFACE DATA</label>
+          <label>LOCAL SURFACE DATA FOLDER OR DB<input id="hostSurfaceDbPath" autocomplete="off" placeholder="Optional, e.g. %APPDATA%\ABarthel\local simulator database folder" /></label>
+          <div class="inline-actions"><button id="hostSurfaceRescan" type="button">RESCAN SURFACE DATA</button></div>
+          <div id="hostSurfaceStatus" class="integration-install-detail">Surface data is optional. If available, Live Map zoom-in shows taxiways, aprons and stands.</div>
+          <p>OPS ROOM ships a compact global aviation layer. Detailed airport surface geometry is read from your local simulator nav database when available and is not bundled globally.</p>
+        </section>
+
+        <!-- ChartFox OAuth and chart management now live in the Briefing > Charts tab. -->
+
+        <section class="host-panel form-panel">
+          <header><span>LOCAL SERVER</span><span>RESTART REQUIRED AFTER CHANGE</span></header>
+          <label class="check-line"><input id="hostLanAccess" type="checkbox" /><i></i>ALLOW LAN / TABLET ACCESS</label>
+          <label>SERVER PORT<input id="hostServerPort" type="number" min="1024" max="65535" /></label>
+          <div id="hostSettingsUrls" class="settings-urls"></div>
+        </section>
+
+
+        <section class="host-panel form-panel wide-panel">
+          <header><span>DEVICE SECURITY</span><span id="hostSecurityState">OPTIONAL</span></header>
+          <label class="check-line"><input id="hostDeviceSecurity" type="checkbox" /><i></i>REQUIRE PAIRING FOR LAN DEVICES</label>
+          <div class="security-pairing-row"><label>PAIRING CODE<input id="hostPairingCode" readonly /></label><button id="hostRotatePairing" type="button">ROTATE CODE</button><button id="hostRevokeDevices" type="button">REVOKE ALL DEVICES</button></div>
+          <div id="hostTrustedDevices" class="trusted-devices"><span>NO TRUSTED DEVICES</span></div>
+          <p>Localhost always remains available. The QR code pairs a tablet or another computer without exposing account credentials.</p>
+        </section>
+
+        <section class="host-panel form-panel">
+          <header><span>BROWSER CONSOLE</span><span>DEFAULTS</span></header>
+          <label>START PAGE
+            <select id="hostStartPage">
+              <option value="status">Status Board</option>
+              <option value="home">Modules</option>
+              <option value="fids">VATSIM FIDS</option>
+              <option value="dispatch">Dispatch</option>
+              <option value="briefing">Briefing</option>
+              <option value="watch">Flight Watch</option>
+              <option value="network">Network / Comms</option>
+              <option value="map">Live Map</option>
+              <option value="datalink">Datalink</option>
+              <option value="ground">Ground Control</option>
+              <option value="announcer">Announcer</option>
+              <option value="obs">OBS Tools</option>
+            </select>
+          </label>
+          <label class="check-line"><input id="hostNotifications" type="checkbox" /><i></i>IN-PAGE AND DESKTOP NOTIFICATIONS</label>
+          <label class="check-line"><input id="hostNotificationSound" type="checkbox" /><i></i>NOTIFICATION SOUND</label>
+          <label class="check-line"><input id="hostNativeNotifications" type="checkbox" /><i></i>NATIVE BROWSER / WINDOWS NOTIFICATIONS</label>
+          <label class="check-line"><input id="hostImportantNotifications" type="checkbox" /><i></i>ONLY ATC, HOPPIE AND CRITICAL NOTIFICATIONS</label>
+          <label class="check-line"><input id="hostStreamerMode" type="checkbox" /><i></i>STREAMER MODE - HIDE SENSITIVE INFORMATION</label>
+          <div class="host-module-visibility"><b>MODULE VISIBILITY</b><div id="hostModuleVisibilityGrid" class="host-module-grid"></div></div>
+          <p>Display size and the EFB/classic launcher choice remain device-specific and are adjusted from each browser terminal.</p>
+        </section>
+
+        <section class="host-panel form-panel wide-panel">
+          <header><span>MEASUREMENT UNITS</span><span>ALL OPS ROOM TERMINALS</span></header>
+          <div class="host-unit-grid">
+            <label>WEIGHT<select id="hostUnitWeight"><option value="kg">Kilograms (KG)</option><option value="lb">Pounds (LB)</option></select></label>
+            <label>DISTANCE<select id="hostUnitDistance"><option value="nm">Nautical Miles (NM)</option><option value="km">Kilometres (KM)</option></select></label>
+            <label>ALTITUDE<select id="hostUnitAltitude"><option value="ft">Feet (FT)</option><option value="m">Metres (M)</option></select></label>
+            <label>SPEED<select id="hostUnitSpeed"><option value="kt">Knots (KT)</option><option value="kmh">Kilometres per Hour (KM/H)</option></select></label>
+            <label>VERTICAL SPEED<select id="hostUnitVertical"><option value="fpm">Feet per Minute (FPM)</option><option value="mps">Metres per Second (M/S)</option></select></label>
+          </div>
+          <p>Unit changes are applied to Flight Watch, Dispatch, Status Board and SimBrief briefing values.</p>
+        </section>
+
+        <div class="settings-actions">
+          <button class="primary" type="submit">SAVE SYSTEM SETTINGS</button>
+          <button id="hostReloadSettings" type="button">RELOAD</button>
+          <button id="hostSetupProbe" type="button">PROBE MSFS</button>
+          <button id="hostSetupFetch" type="button">FETCH LATEST OFP</button>
+        </div>
+      </form>
+    </section>
+
+    <footer><span>The desktop host is the primary configuration and integration manager.</span><span>Flight operations remain available from browser, iPad, tablet, TV and OBS.</span></footer>
+  </main>
+  <script src="/static/host.js?v=0-25-47"></script>
+</body>
+</html>

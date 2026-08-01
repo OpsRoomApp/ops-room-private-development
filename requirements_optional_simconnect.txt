@@ -1,0 +1,3 @@
+# Optional: only needed if you want automatic current-location detection from MSFS.
+# Install this inside the same venv after requirements.txt.
+SimConnect>=0.4.26

@@ -1,0 +1,7 @@
+{
+  "version": "0.25.47",
+  "codename": "Release Migration",
+  "channel": "stable",
+  "build": "public-release",
+  "abi": 1
+}

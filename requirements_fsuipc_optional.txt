@@ -1,0 +1,2 @@
+# Optional Windows-only provider. The application falls back to SimConnect when unavailable.
+fsuipc==1.5.0; platform_system == "Windows"

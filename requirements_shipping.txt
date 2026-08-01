@@ -1,0 +1,14 @@
+fastapi>=0.115.0,<1.0
+uvicorn>=0.30.0,<1.0
+websockets>=12.0,<16.0
+requests>=2.31.0,<3.0
+SimConnect==0.4.26
+pywebview==6.2.1
+qrcode[pil]>=8.0,<9.0
+pygame>=2.5.2,<3.0
+reportlab>=4.2,<5.0
+pystray>=0.19.5,<1.0
+PyMuPDF>=1.24,<2.0
+tzdata>=2025.2,<2027.0
+FlightRadarAPI>=1.5.0
+httpx>=0.28.0,<1.0

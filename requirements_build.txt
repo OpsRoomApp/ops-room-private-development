@@ -1,0 +1,2 @@
+-r requirements_shipping.txt
+pyinstaller>=6.0,<7.0

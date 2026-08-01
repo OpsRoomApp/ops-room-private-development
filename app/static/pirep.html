@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon-32.png" sizes="32x32" />
+  <title>OPS ROOM PIREP</title>
+  <link rel="stylesheet" href="/static/pirep.css?v=0-25-47">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span>OPS ROOM</span><b>FLIGHT ANALYSIS</b></div>
+    <div id="airlineLogoTop" class="pirep-airline-top"></div>
+    <div class="flight-title">
+      <strong id="flightCallsign">LOADING</strong>
+      <span id="flightRoute">---- ? ----</span>
+    </div>
+    <div class="top-actions">
+      <a class="button ghost" href="/#logbook">BACK TO LOGBOOK</a>
+      <button class="button ghost" id="scoringRules" type="button">SCORING RULES</button>
+      <button class="button" id="pdfExport" type="button" disabled>SAVE PDF</button>
+    </div>
+  </header>
+
+  <nav class="section-nav" aria-label="PIREP sections">
+    <a href="#summary">SUMMARY</a>
+    <a href="#profile">FLIGHT PROFILE</a>
+    <a href="#departure">DEPARTURE</a>
+    <a href="#enroute">ENROUTE</a>
+    <a href="#approach">APPROACH</a>
+    <a href="#landing">LANDING</a>
+    <a href="#finance">FINANCE</a>
+    <a href="#events">EVENTS</a>
+  </nav>
+
+  <main id="report" class="report" aria-busy="true">
+    <section id="loading" class="loading-panel">
+      <div class="spinner"></div>
+      <h1>BUILDING FLIGHT DEBRIEF</h1>
+      <p>Loading telemetry and analysis.</p>
+    </section>
+
+    <section id="errorPanel" class="loading-panel error-panel" hidden>
+      <h1>PIREP UNAVAILABLE</h1>
+      <p id="errorText">The flight report could not be loaded.</p>
+    </section>
+
+    <div id="reportContent" hidden>
+      <section id="summary" class="panel hero-panel">
+        <div class="hero-main">
+          <div id="airlineHero" class="pirep-airline-hero"></div>
+          <div class="eyebrow">POST-FLIGHT ANALYSIS</div>
+          <h1><span id="originIcao">----</span><i>?</i><span id="destinationIcao">----</span></h1>
+          <p id="aircraftLine">AIRCRAFT NOT REPORTED</p>
+          <div id="flagStrip" class="flag-strip"></div>
+        </div>
+        <div class="score-card">
+          <span>OPS ROOM SCORE</span>
+          <strong id="overallScore">--</strong>
+          <b id="overallGrade">NOT GRADED</b>
+          <small id="geometrySource">TELEMETRY ANALYSIS</small>
+        </div>
+        <div id="summaryMetrics" class="metric-grid summary-metrics"></div>
+      </section>
+
+      <section id="profile" class="panel">
+        <div class="section-head">
+          <div><span class="eyebrow">WHOLE FLIGHT</span><h2>MAIN FLIGHT PROFILE</h2></div>
+          <div class="chart-key"><span class="key blue">ALTITUDE</span><span class="key red">GROUNDSPEED</span></div>
+        </div>
+        <div class="canvas-wrap profile-canvas"><canvas id="profileChart"></canvas></div>
+        <div class="event-toolbar"><b>EVENTS</b><div id="eventChips" class="event-chips"></div></div>
+        <div class="phase-strip" id="phaseStrip"></div>
+      </section>
+
+      <section id="departure" class="panel">
+        <div class="section-head">
+          <div><span class="eyebrow">RUNWAY AND INITIAL CLIMB</span><h2>DEPARTURE ANALYSIS</h2></div>
+          <strong id="departureRunway" class="runway-label">RWY ----</strong>
+        </div>
+        <div class="analysis-grid two">
+          <article class="chart-card"><h3>LATERAL PROFILE</h3><div class="canvas-wrap square"><canvas id="departureLateral"></canvas></div></article>
+          <article class="chart-card"><h3>CLIMB PROFILE</h3><div class="canvas-wrap square"><canvas id="departureClimb"></canvas></div></article>
+        </div>
+        <article class="chart-card runway-card"><h3>RUNWAY PROFILE</h3><div class="canvas-wrap runway"><canvas id="departureRunwayChart"></canvas></div></article>
+        <div id="departureMetrics" class="metric-grid"></div>
+      </section>
+
+      <section id="enroute" class="panel">
+        <div class="section-head"><div><span class="eyebrow">ROUTE, FUEL AND CRUISE</span><h2>ENROUTE ANALYSIS</h2></div></div>
+        <div class="analysis-grid two">
+          <article class="chart-card"><h3>ACTUAL TRACK / PLANNED ROUTE</h3><div class="canvas-wrap square"><canvas id="routeChart"></canvas></div></article>
+          <article class="chart-card"><h3>FUEL REMAINING</h3><div class="canvas-wrap square"><canvas id="fuelChart"></canvas></div></article>
+        </div>
+        <div id="enrouteMetrics" class="metric-grid"></div>
+        <article class="chart-card"><h3>SCORE BREAKDOWN</h3><div id="scoreBreakdown" class="score-breakdown"></div></article>
+      </section>
+
+      <section id="approach" class="panel">
+        <div class="section-head">
+          <div><span class="eyebrow">FINAL APPROACH AND STABILITY</span><h2>APPROACH ANALYSIS</h2></div>
+          <strong id="approachRunway" class="runway-label">RWY ----</strong>
+        </div>
+        <div class="analysis-grid two">
+          <article class="chart-card"><h3>LATERAL PROFILE</h3><div class="canvas-wrap square"><canvas id="approachLateral"></canvas></div></article>
+          <article class="chart-card"><h3>VERTICAL PROFILE</h3><div class="canvas-wrap square"><canvas id="approachVertical"></canvas></div></article>
+        </div>
+        <div id="stabilityGates" class="stability-grid"></div>
+        <div id="approachMetrics" class="metric-grid"></div>
+      </section>
+
+      <section id="landing" class="panel">
+        <div class="section-head">
+          <div><span class="eyebrow">TOUCHDOWN AND ROLLOUT</span><h2>LANDING ANALYSIS</h2></div>
+          <strong id="landingRunway" class="runway-label">RWY ----</strong>
+        </div>
+        <article class="chart-card runway-card landing-runway"><h3>RUNWAY PROFILE</h3><div class="canvas-wrap runway large"><canvas id="landingRunwayChart"></canvas></div><div class="runway-legend"><span class="dot green">TOUCHDOWN</span><span class="line blue">AIRCRAFT PATH</span><span class="box tdz">TOUCHDOWN ZONE</span><span class="box aim">AIMING POINT</span></div></article>
+        <div id="landingMetrics" class="metric-grid landing-metrics"></div>
+        <div class="analysis-grid two">
+          <article class="chart-card"><h3>LANDING ATTITUDE</h3><div class="canvas-wrap compact"><canvas id="landingAttitude"></canvas></div></article>
+          <article class="chart-card"><h3>G-FORCE / RADIO ALTITUDE</h3><div class="canvas-wrap compact"><canvas id="landingForce"></canvas></div></article>
+        </div>
+      </section>
+
+      <section id="finance" class="panel">
+        <div class="section-head"><div><span class="eyebrow">AIRLINE AND PILOT ECONOMY</span><h2>FLIGHT FINANCE</h2></div></div>
+        <div id="financeAirlineIdentity" class="pirep-finance-airline"></div>
+        <div id="financeReport" class="metric-grid finance-report"><div class="empty">No finance statement was stored for this PIREP.</div></div>
+      </section>
+
+      <section id="events" class="panel">
+        <div class="section-head"><div><span class="eyebrow">EVENTS, FLAGS AND NOTES</span><h2>FLIGHT REVIEW</h2></div></div>
+        <div class="review-grid">
+          <article class="chart-card"><h3>DEVIATIONS AND FLAGS</h3><div id="violationList" class="review-list"></div></article>
+          <article class="chart-card"><h3>EVENT TIMELINE</h3><div id="timelineList" class="review-list timeline"></div></article>
+        </div>
+        <article class="chart-card notes-card"><h3>PILOT NOTES</h3><p id="pilotNotes">No notes were added to this flight.</p></article>
+      </section>
+
+      <footer class="report-footer">
+        <span>OPS ROOM 0.25.47</span>
+        <span id="reportGenerated">OPS ROOM PIREP</span>
+        <span>OPS ROOM</span>
+      </footer>
+    </div>
+  </main>
+  <dialog id="scoringRulesDialog" style="max-width:620px;background:#0d0f11;color:#f3f1ea;border:1px solid #465059;border-radius:10px;padding:24px">
+    <form method="dialog"><h2 style="margin-top:0">OPS ROOM SCORING RULES</h2><p>OPS ROOM scores the recorded flight only; raw telemetry is retained for scoring.</p><ul><li>Departure: takeoff roll, runway centreline, liftoff attitude and initial climb.</li><li>Enroute: recorded deviations, simulation integrity and fuel/distance consistency.</li><li>Approach: 1000 ft/500 ft stability gates, lateral deviation and glidepath deviation.</li><li>Landing: touchdown rate, touchdown zone, centreline deviation and rollout.</li><li>Bounces: minor ?2, moderate ?5, severe/multiple ?8, capped at ?12. Small 1-2 ft radio-altimeter noise is ignored.</li></ul><button class="button" value="close">CLOSE</button></form>
+  </dialog>
+  <style>dialog::backdrop{background:rgba(0,0,0,.68)}dialog li{margin:.6em 0;color:#c7cdd1}dialog p{color:#b4bcc1;line-height:1.5}</style>
+  <script src="/static/pirep.js?v=0-25-47"></script>
+</body>
+</html>

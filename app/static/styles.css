@@ -1,0 +1,296 @@
+:root{
+  --bg:#010101;--panel:#020202;--metal:#080808;--grid:#1a1a1a;--slot:#060606;
+  --tile:#171717;--tile-hi:#292929;--tile-edge:#2d2d2d;--text:#f4f3e8;--muted:#8f8b7c;
+  --accent:#ffd044;--accent-soft:rgba(255,208,68,.16);
+  --font-board:'DIN Condensed','Bahnschrift Condensed','Arial Narrow','Roboto Condensed','Impact',sans-serif;
+  --font-mono:'OCR A Extended','Cascadia Mono','Consolas',monospace;
+  --flap-font-size:46px;--flap-small-size:40px;--flap-tiny-size:34px;--flap-big-size:70px;--row-gap:8px;
+  --cell-w:.72em;--cell-gap:3px;
+}
+*{box-sizing:border-box}html,body{min-height:100%}body{margin:0;background:#000;color:var(--text);font-family:var(--font-board);overflow-x:hidden}
+body:before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:
+  radial-gradient(circle at 30% -5%,rgba(255,255,255,.055),transparent 24%),
+  linear-gradient(90deg,rgba(255,255,255,.035),transparent 18%,transparent 82%,rgba(0,0,0,.8)),
+  repeating-linear-gradient(0deg,rgba(255,255,255,.020) 0 1px,transparent 1px 56px),
+  repeating-linear-gradient(90deg,rgba(255,255,255,.014) 0 1px,transparent 1px 42px),#010101;}
+.noise{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.038;mix-blend-mode:screen;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='130' height='130'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='130' height='130' filter='url(%23n)' opacity='.75'/%3E%3C/svg%3E")}
+.shell{position:relative;z-index:2;width:min(2060px,100%);margin:0 auto;padding:7px 9px 10px}.board-frame{background:#020202;border:1px solid #171717;border-radius:0;box-shadow:inset 0 1px rgba(255,255,255,.055),inset 0 -2px rgba(0,0,0,.92),0 14px 52px rgba(0,0,0,.48)}
+.topbar{padding:8px 10px 9px}.brand-row{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:5px;border-bottom:1px solid #161616;padding-bottom:5px}.brand-left{display:flex;gap:10px;align-items:center;min-width:0}.eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.28em;color:var(--accent);font-weight:900;text-transform:uppercase;white-space:nowrap}.clock-area{display:flex;align-items:center;gap:8px}.clock-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.18em;color:var(--muted);font-weight:900}.streamer-brand{display:flex;align-items:center;gap:8px;padding:3px 7px;border:1px solid #2a2a2a;background:#010101}.streamer-brand.hidden{display:none}.streamer-brand img{width:26px;height:26px;object-fit:contain}.streamer-brand span{font-family:var(--font-mono);font-weight:900;letter-spacing:.12em;color:#fff;text-transform:uppercase}
+.hero-board{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-bottom:6px}.airport-code{min-width:calc(var(--flap-big-size) * 3.4)}.airport-name-flap{min-width:0;max-width:100%;overflow:hidden}
+.top-info-row{display:grid;grid-template-columns:minmax(360px,1fr) 105px 120px 120px minmax(380px,520px);gap:6px;align-items:end}.weather-chip{min-width:0;background:#020202;border:1px solid #1c1c1c;padding:5px 7px;display:flex;gap:8px;align-items:baseline;box-shadow:inset 0 1px rgba(255,255,255,.05)}.weather-chip span{font-family:var(--font-mono);font-size:10px;letter-spacing:.18em;color:var(--accent);font-weight:900}.weather-chip strong{font-family:var(--font-mono);font-size:12px;color:#e7e4d5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metar-chip strong{font-size:11px}.airport-search{position:relative}.airport-search label{display:block;font-family:var(--font-mono);font-size:9px;letter-spacing:.22em;color:var(--accent);text-transform:uppercase;font-weight:900;margin-bottom:3px}.airport-input-row{display:grid;grid-template-columns:104px 1fr;border:1px solid #262626;background:#010101}#airportIcaoInput{background:#000;border:0;border-right:1px solid #262626;color:#fff;outline:none;padding:7px 10px;font-family:var(--font-mono);font-size:20px;font-weight:900;letter-spacing:.18em;text-transform:uppercase}#airportIcaoInput:focus{box-shadow:inset 0 -3px var(--accent)}.airport-name-badge{min-width:0;padding:9px 11px;font-family:var(--font-mono);font-weight:900;letter-spacing:.04em;color:#dedcd0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.suggestions{display:none;position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:50;max-height:390px;overflow:auto;background:#030303;border:1px solid #333;box-shadow:0 18px 60px rgba(0,0,0,.82);padding:5px}.suggestions.open{display:block}.suggestion{width:100%;display:grid;grid-template-columns:86px 1fr auto;gap:10px;align-items:center;text-align:left;border:0;background:transparent;color:var(--text);cursor:pointer;padding:10px 11px;font-family:var(--font-mono)}.suggestion:hover{background:#151515}.suggestion-code{font-weight:900;color:#fff;letter-spacing:.14em}.suggestion-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.suggestion-meta{color:var(--accent);font-size:12px;white-space:nowrap}
+.tabs{display:flex;gap:7px;margin:7px 0}.tab,.side-tab{border:1px solid #2b2b2b;background:#050505;color:#aaa28e;border-radius:0;padding:8px 15px;font-family:var(--font-mono);font-size:12px;font-weight:950;text-transform:uppercase;letter-spacing:.16em;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.06),0 3px 0 #000}.tab span{color:var(--accent);margin-left:9px}.tab.active,.side-tab.active{color:#fff;border-color:#4c4017;box-shadow:inset 0 -3px var(--accent),inset 0 1px rgba(255,255,255,.075),0 3px 0 #000}.layout{display:grid;grid-template-columns:1fr;gap:8px}.split-panel,.info-panel{overflow:hidden}.traffic-panel{background:#010101}.table-headline{display:flex;justify-content:space-between;align-items:center;padding:6px 9px;border-bottom:1px solid #1b1b1b;background:#030303}.table-headline h2{margin:0;font-family:var(--font-mono);font-size:18px;letter-spacing:.22em;text-transform:uppercase}.disclaimer-inline{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;color:#b6a868}
+.board-table-wrap{position:relative;height:calc(100vh - 258px);min-height:430px;overflow:auto;background:
+  repeating-linear-gradient(0deg,rgba(255,255,255,.028) 0 1px,transparent 1px 58px),
+  repeating-linear-gradient(90deg,rgba(255,255,255,.022) 0 1px,transparent 1px 38px),#010101;scrollbar-width:none;-ms-overflow-style:none}.board-table-wrap::-webkit-scrollbar,.atis-text::-webkit-scrollbar,.cards::-webkit-scrollbar{display:none}.board-table{width:100%;border-collapse:separate;border-spacing:0 var(--row-gap);table-layout:auto}th{position:sticky;top:0;z-index:3;background:#020202;color:var(--accent);font-family:var(--font-mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;text-align:left;padding:7px 4px;border-bottom:1px solid #242424}td{padding:0 3px;vertical-align:middle}tr.data-row{height:61px}tr.data-row td{background:rgba(1,1,1,.88);border-top:1px solid #1f1f1f;border-bottom:1px solid #0b0b0b}tr.data-row td:first-child{border-left:1px solid #171717}tr.data-row td:last-child{border-right:1px solid #171717}.logo-cell{width:62px}.logo-wrap{height:57px;display:flex;align-items:center;justify-content:center;background:#010101;border-right:1px solid #101010}.logo{max-width:54px;max-height:32px;object-fit:contain;filter:drop-shadow(0 0 5px rgba(255,255,255,.08))}.logo-fallback{font-family:var(--font-mono);font-size:12px;font-weight:900;color:var(--muted);letter-spacing:.06em}
+.flap-word{display:flex;gap:var(--cell-gap);align-items:center;min-height:55px;white-space:nowrap;overflow:hidden}.flap-char{position:relative;display:inline-grid;place-items:center;width:var(--cell-w);min-width:var(--cell-w);height:1.16em;padding:.02em 0;background:linear-gradient(180deg,#1b1b1b 0%,#161616 47%,#050505 49%,#0d0d0d 52%,#171717 100%);border:1px solid var(--tile-edge);border-radius:.035em;color:var(--text);font-family:var(--font-board);font-weight:900;font-size:var(--flap-font-size);line-height:1;letter-spacing:0;text-transform:uppercase;text-align:center;text-shadow:0 0 3px rgba(255,255,255,.10),0 1px #000;box-shadow:inset 0 1px rgba(255,255,255,.055),inset 0 -1px rgba(0,0,0,.92),inset 1px 0 rgba(255,255,255,.012),inset -1px 0 rgba(0,0,0,.24),0 2px 0 #000;transform-origin:center 50%;overflow:hidden;flex:0 0 var(--cell-w)}.flap-face{position:relative;z-index:2;width:100%;text-align:center;will-change:transform,filter}.flap-word.small .flap-char{font-size:var(--flap-small-size)}.flap-word.tiny .flap-char{font-size:var(--flap-tiny-size)}.flap-word.big .flap-char{font-size:var(--flap-big-size);width:.77em;min-width:.77em;flex-basis:.77em}.flap-word.clock .flap-char{font-size:38px;color:#fff;width:.70em;min-width:.70em;flex-basis:.70em}.airport-name-flap .flap-word .flap-char{font-size:26px;width:.67em;min-width:.67em;flex-basis:.67em}.flap-char.blank{opacity:.96;color:transparent;text-shadow:none}.flap-char.blank .flap-face{opacity:0}.flap-char.blank.spin .flap-face{opacity:1;color:var(--text)}.flap-char::after{content:"";position:absolute;left:0;right:0;top:50%;height:2px;background:rgba(255,255,255,.11);box-shadow:0 -1px rgba(0,0,0,.98),0 1px rgba(0,0,0,.88);z-index:3}.flap-char::before{content:"";position:absolute;inset:0;z-index:4;pointer-events:none;background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 39%,rgba(0,0,0,.62) 50%,rgba(255,255,255,.018) 53%,transparent)}body.animate .flap-char.spin .flap-face{animation:flapVertical .092s linear infinite}body.no-animations .flap-char.spin .flap-face{animation:none!important}@keyframes flapVertical{0%{transform:translateY(0) rotateX(0);filter:brightness(.95)}46%{transform:translateY(-.03em) rotateX(-76deg);filter:brightness(.46)}54%{transform:translateY(.03em) rotateX(74deg);filter:brightness(.50)}100%{transform:translateY(0) rotateX(0);filter:brightness(1)}}.status-flap .flap-char{color:#f3efdd}
+.info-panel{display:grid;grid-template-columns:360px minmax(0,1fr);align-items:stretch;background:#020202}.side-tabs{display:flex;flex-direction:column;gap:4px;padding:7px;background:#030303;border-right:1px solid #222}.side-tab{font-size:10px;padding:9px 6px}.cards{padding:8px;max-height:170px;overflow:auto}.card{border:1px solid #242424;background:#030303;margin-bottom:7px;padding:8px;box-shadow:inset 0 1px rgba(255,255,255,.035)}.card strong{font-family:var(--font-mono);letter-spacing:.07em;color:#fff}.freq,.key-info{font-family:var(--font-mono);font-weight:900;color:var(--accent)}.source-note{display:none}.atis-text,.metar-text{margin-top:7px;white-space:pre-wrap;color:#d8d6c8;font-family:var(--font-mono);font-size:12px;line-height:1.35;max-height:96px;overflow:auto;scrollbar-width:none;-ms-overflow-style:none}.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:7px 0}.info-tile{background:#010101;border:1px solid #242424;padding:6px}.info-tile span{display:block;color:var(--muted);font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase}.info-tile strong{display:block;color:var(--accent);margin-top:2px}.setting-row{display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:1px solid #242424;padding:8px 0}.setting-row label{font-weight:900;color:#ddd8c5}.setting-row select,.text-setting{background:#050505;color:var(--text);border:1px solid #333;padding:7px;min-width:190px}.setting-row input[type='checkbox'],.setting-row input[type='color']{accent-color:var(--accent)}.setting-row input[type='color']{width:68px;height:34px;background:#050505;border:1px solid #333;border-radius:0;padding:3px}.setting-actions{display:flex;justify-content:flex-end;padding-top:10px}.secondary-button{border:1px solid #444;background:#101010;color:#fff;padding:8px 12px;font-weight:900;cursor:pointer}.hidden{display:none!important}
+body.theme-white{--accent:#f1f1e8;--accent-soft:rgba(255,255,255,.16);--text:#f6f7ed}body.theme-green{--accent:#77ff77;--accent-soft:rgba(120,255,120,.14);--text:#e3ffe4}body.theme-orange{--accent:#ff9d2e;--accent-soft:rgba(255,157,46,.16)}body.size-normal{--flap-font-size:40px;--flap-small-size:35px;--flap-tiny-size:30px;--flap-big-size:62px}body.size-large{--flap-font-size:46px;--flap-small-size:40px;--flap-tiny-size:34px;--flap-big-size:70px}body.size-xlarge{--flap-font-size:52px;--flap-small-size:46px;--flap-tiny-size:39px;--flap-big-size:80px}.stand-hidden .stand-col{display:none!important}
+@media(max-width:1180px){.top-info-row{grid-template-columns:1fr 100px 100px 100px}.airport-search{grid-column:1/-1}.info-panel{grid-template-columns:1fr}.side-tabs{flex-direction:row;border-right:0;border-bottom:1px solid #222}.cards{max-height:260px}.board-table-wrap{height:calc(100vh - 305px)}}
+@media(max-width:760px){.shell{padding:6px}.brand-row{flex-direction:column;align-items:flex-start}.hero-board{display:flex}.airport-name-flap .flap-word .flap-char{font-size:20px}.flap-word.big .flap-char{font-size:52px}.logo-cell,th:first-child{display:none}.tabs{overflow-x:auto}.board-table-wrap{height:calc(100vh - 330px)}}
+
+/* v0.9 refinements */
+.clock-area{align-items:flex-end;gap:6px;min-width:360px}.top-atis-summary{display:grid;grid-template-columns:1.2fr .9fr 1.2fr 1.2fr;gap:6px;align-items:center;width:100%;border:1px solid #2c2c2c;background:#050505;color:var(--text);padding:6px 8px;cursor:pointer;box-shadow:inset 0 1px rgba(255,255,255,.03);font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-align:left}.top-atis-summary span{white-space:nowrap;color:var(--muted)}.top-atis-summary b{color:var(--accent);font-weight:900}.top-atis-summary:hover{border-color:var(--accent);background:#080808}.top-info-row{grid-template-columns:minmax(360px,1fr) minmax(390px,520px);gap:8px}.metar-chip{min-width:0}.weather-chip strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hero-board{grid-template-columns:auto 1fr}.airport-name-flap{align-self:end;margin-bottom:4px}.flap-char{background:linear-gradient(180deg,#1a1a1a 0%,#151515 48%,#050505 49%,#0a0a0a 52%,#151515 100%)!important;box-shadow:inset 0 1px rgba(255,255,255,.025),inset 0 -1px rgba(0,0,0,.84),0 1px 0 #000!important}.flap-char::before{background:linear-gradient(180deg,rgba(255,255,255,.008),transparent 43%,rgba(0,0,0,.56) 50%,rgba(255,255,255,.006) 53%,transparent)!important}.flap-char::after{background:rgba(255,255,255,.08)!important}.status-flap .flap-char{font-size:var(--flap-tiny-size);width:.72em;min-width:.72em;flex-basis:.72em}.board-table th:last-child,.board-table td:last-child{min-width:250px}.stand-col{min-width:150px}.atis-text,.metar-text,.board-table-wrap,.cards{scrollbar-width:none;-ms-overflow-style:none}.atis-text::-webkit-scrollbar,.metar-text::-webkit-scrollbar,.board-table-wrap::-webkit-scrollbar,.cards::-webkit-scrollbar{display:none}@media(max-width:1180px){.clock-area{min-width:260px}.top-atis-summary{grid-template-columns:1fr 1fr;font-size:10px}.top-info-row{grid-template-columns:1fr}.airport-search{grid-column:auto}}
+
+
+/* v0.10.2 placement-only fixes: keep v0.9 visual style/animation intact */
+.brand-row{align-items:flex-start;}
+.clock-area{display:flex;flex-direction:column;align-items:flex-end;gap:6px;min-width:430px;}
+.clock-line{display:flex;align-items:flex-end;gap:8px;}
+.top-atis-summary{
+  min-width:420px;
+  display:grid;
+  grid-template-columns:1fr;
+  gap:3px;
+  padding:8px 11px;
+  text-align:left;
+}
+.top-atis-summary .atis-main{
+  font-family:var(--font-mono);
+  font-size:12px;
+  letter-spacing:.16em;
+  color:var(--accent);
+  font-weight:950;
+}
+.top-atis-summary .atis-row{
+  font-family:var(--font-mono);
+  font-size:13px;
+  letter-spacing:.05em;
+  color:#e8e1ca;
+}
+.top-atis-summary .atis-row b{
+  color:var(--accent);
+  margin-right:8px;
+}
+.hero-board{
+  align-items:flex-start !important;
+  gap:5px;
+  margin-top:2px;
+  margin-bottom:7px;
+}
+.airport-code{
+  min-width:0 !important;
+}
+.airport-name-flap{
+  width:100%;
+  max-width:calc(100vw - 36px);
+  overflow:hidden;
+}
+.airport-name-flap .flap-word{
+  justify-content:flex-start;
+  flex-wrap:nowrap;
+}
+.top-info-row{
+  grid-template-columns:minmax(560px,1fr) minmax(390px,520px);
+  gap:8px;
+}
+.top-info-row > :not(.metar-chip):not(.airport-search){
+  display:none;
+}
+.weather-chip{
+  padding:7px 9px;
+}
+.weather-chip strong{
+  font-size:13px;
+}
+.metar-chip strong{
+  font-size:12px;
+}
+.board-table th:last-child,.board-table td:last-child{
+  min-width:300px;
+}
+.status-flap .flap-char{
+  min-width:.68em;
+}
+@media(max-width:1180px){
+  .clock-area{min-width:0;align-items:stretch;}
+  .top-atis-summary{min-width:0;}
+  .top-info-row{grid-template-columns:1fr;}
+}
+
+.selected-camera-row{outline:1px solid rgba(255,208,68,.45);background:rgba(255,208,68,.04)!important;}
+
+/* v0.10.3: ICAO + UTC clock on one row, name under ICAO; v0.9 flap style preserved */
+.airport-clock-row{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;border-bottom:1px solid #151515;padding:5px 0 7px;margin-bottom:6px;}
+.airport-clock-row .hero-board{flex:1 1 auto;min-width:0;margin:0;}
+.airport-clock-row .clock-area{flex:0 0 auto;}
+.airport-name-flap{margin-top:4px;}
+.airport-name-flap .flap-word{max-width:100%;}
+.topbar{padding-bottom:7px;}
+.top-info-row{margin-top:4px;}
+@media(max-width:920px){.airport-clock-row{flex-direction:column}.clock-area{align-items:flex-start!important}.top-atis-summary{min-width:0;width:100%;}}
+
+
+/* Requested FIDS header update: METAR panel matches the complete airport search control. */
+.top-info-row{
+  align-items:stretch;
+}
+.top-info-row .airport-search{
+  display:flex;
+  flex-direction:column;
+  min-height:58px;
+}
+.top-info-row .airport-input-row{
+  flex:1 1 auto;
+  min-height:42px;
+}
+.top-info-row .metar-chip{
+  min-height:58px;
+  height:auto;
+  padding:10px 12px;
+  align-items:center;
+  gap:12px;
+}
+.top-info-row .metar-chip > span{
+  font-size:12px;
+}
+.top-info-row .metar-chip > strong{
+  font-size:16px;
+  line-height:1.25;
+}
+@media(max-width:1180px){
+  .top-info-row .airport-search,
+  .top-info-row .metar-chip{
+    min-height:58px;
+  }
+}
+
+
+/* v0.10.9: delayed status uses the standard 10-cell block with muted amber text only. */
+.schedule-status-cell.show-delayed .flap-char{
+  color:#d6b254!important;
+  text-shadow:0 0 2px rgba(214,178,84,.18),0 1px #000;
+}
+.board-table th:last-child,.board-table td:last-child{
+  min-width:300px;
+}
+
+
+/* v0.11.0: packaged SimConnect status and explicit location retry control. */
+.airport-label-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:18px}
+.airport-label-row label{margin-bottom:3px}
+.location-button{border:0;background:transparent;color:var(--muted);font-family:var(--font-mono);font-size:9px;font-weight:900;letter-spacing:.12em;padding:0 0 3px;cursor:pointer;text-transform:uppercase}
+.location-button:hover{color:#fff}
+.location-button.connected{color:#77d777}
+.location-button.failed{color:#d6b254}
+.location-button.checking{color:var(--accent);cursor:progress}
+
+/* OPS ROOM 0.2.0 clarity and multi-screen rendering pass. */
+html{font-synthesis:none;text-rendering:optimizeLegibility;-webkit-text-size-adjust:100%}
+body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.noise{display:none!important}
+.flap-char{font-synthesis:none;-webkit-font-smoothing:antialiased;text-shadow:0 1px #000}
+.eyebrow,.clock-label,.weather-chip,.airport-search,.tabs,.table-headline,th,.disclaimer-inline{font-synthesis:none}
+@media(min-width:2300px) and (min-height:1200px){
+  :root{--flap-font-size:54px;--flap-small-size:47px;--flap-tiny-size:40px;--flap-big-size:82px;--row-gap:10px}
+  .shell{width:min(2500px,100%);padding:10px 13px 14px}.eyebrow{font-size:13px}.top-atis-summary .atis-row{font-size:15px}.top-info-row .metar-chip>strong{font-size:18px}.tab,.side-tab{font-size:14px}.table-headline h2{font-size:21px}th{font-size:13px}.board-table-wrap{height:calc(100vh - 304px)}tr.data-row{height:72px}
+}
+@media(max-width:900px){
+  :root{--flap-font-size:34px;--flap-small-size:31px;--flap-tiny-size:28px;--flap-big-size:54px;--cell-gap:2px}
+  .shell{padding:4px}.topbar{padding:7px}.airport-clock-row{gap:8px}.top-atis-summary .atis-row{font-size:11px}.top-info-row .metar-chip>strong{font-size:13px}.tabs{overflow-x:auto;scrollbar-width:none}.tab{min-height:44px;white-space:nowrap}.board-table-wrap{min-height:500px}.table-headline h2{font-size:16px}.disclaimer-inline{font-size:9px}
+}
+
+/* v0.2.0 embedded FIDS fit. The standalone board stays full-size; the in-app
+   frame uses layout zoom so the full board width fits without horizontal crop. */
+body.embedded-fids{overflow-x:hidden;background:#000}
+body.embedded-fids:before{display:none}
+body.embedded-fids .shell{width:1720px;max-width:none;margin:0;zoom:var(--embedded-fids-scale,1);padding:5px 7px 8px}
+body.embedded-fids .board-table-wrap{height:var(--embedded-fids-board-height,620px);min-height:570px}
+body.embedded-fids .info-panel{margin-bottom:8px}
+@supports not (zoom:1){body.embedded-fids .shell{transform:scale(var(--embedded-fids-scale,1));transform-origin:top left}body.embedded-fids{height:calc(100% * var(--embedded-fids-scale,1))}}
+body.embedded-fids{--flap-font-size:46px;--flap-small-size:40px;--flap-tiny-size:34px;--flap-big-size:70px;--row-gap:8px;--cell-w:.72em;--cell-gap:3px}
+body.embedded-fids .airport-clock-row{flex-direction:row;align-items:flex-start;gap:18px}
+body.embedded-fids .clock-area{align-items:center;min-width:auto}
+body.embedded-fids .top-atis-summary{width:auto;min-width:430px}
+body.embedded-fids .top-info-row{grid-template-columns:minmax(560px,1fr) minmax(390px,520px);gap:8px}
+
+/* v0.8.0 configurable movement windows and own-flight marker */
+tr.data-row.user-flight-row td{background:#111407!important;border-top-color:#d8ae37!important;border-bottom-color:#7b6728!important;box-shadow:inset 0 2px 0 rgba(255,215,78,.18),inset 0 -2px 0 rgba(255,215,78,.08)}
+tr.data-row.user-flight-row td:first-child{border-left:5px solid var(--accent)!important}
+tr.data-row.user-flight-row .flight-col{position:relative}
+tr.data-row.user-flight-row .flight-col::after{content:'YOUR FLIGHT';position:absolute;left:6px;bottom:2px;font:900 8px/1 var(--font-mono);letter-spacing:.12em;color:var(--accent);text-shadow:0 0 5px rgba(255,208,68,.5)}
+
+
+/* v0.8.0 MCDU labels and independent animation refresh */
+:root{--font-mono:"Consolas","Lucida Console","Courier New",monospace}
+html,body,button,input,select{font-synthesis:none;text-rendering:geometricPrecision;-webkit-font-smoothing:auto}
+.eyebrow,.clock-label,.weather-chip,.airport-search,.tabs,.table-headline,th,.disclaimer-inline,.settings-card,.side-tabs{font-family:var(--font-mono)!important;text-shadow:none!important}
+.setting-readonly{font-family:var(--font-mono);font-size:12px;color:#9fcf85;letter-spacing:.04em;text-align:right}
+
+/* v0.8.0 B612 FIDS typography */
+:root{--font-board:"B612","DIN Condensed","Bahnschrift Condensed","Arial Narrow",sans-serif;--font-mono:"B612 Mono","Cascadia Mono",Consolas,monospace}
+body,.tab,.side-tab,.suggestion,.setting-row select,.text-setting{font-family:var(--font-board)}
+
+/* OPS ROOM v0.9.0 classic terminal palette */
+:root{
+  --bg:#0a0907;
+  --panel:#15120e;
+  --panel2:#1a1610;
+  --line:#5f503b;
+  --text:#eee4cf;
+  --muted:#a99c87;
+  --accent:#d99b37;
+  --font-board:"Avitype Semi-Round","DIN 1451 Mittelschrift","Bahnschrift Condensed","B612","Arial Narrow",sans-serif;
+  --font-mono:"B612 Mono","Cascadia Mono",Consolas,monospace;
+}
+body{background:#080706!important;color:var(--text)!important;background-image:linear-gradient(rgba(217,155,55,.015) 1px,transparent 1px),linear-gradient(90deg,rgba(217,155,55,.01) 1px,transparent 1px)!important;background-size:4rem 4rem!important}
+.topbar,.info-panel,.board-panel,.settings-card,.airport-search,.metar-chip{background:#12100c!important;border-color:var(--line)!important;box-shadow:none!important}
+.eyebrow,.clock-label,.weather-chip,.airport-search,.tabs,.table-headline,th,.disclaimer-inline,.settings-card,.side-tabs{color:var(--muted)!important}
+.tab,.side-tab,.location-button,.settings-button{background:#17130e!important;border-color:#6d5a40!important;color:var(--text)!important;border-radius:0!important}.tab.active,.side-tab.active{background:#2a2115!important;color:#f1cf88!important;border-color:var(--accent)!important}
+.board-table th{background:#1b1711!important;color:#f1cf88!important;border-color:var(--line)!important}.board-table td{border-color:#30281e!important}.board-table-wrap{background:#080706!important}.flap-char{color:#ede6d8!important}.schedule-status-cell.show-delayed .flap-char{color:#d9a14c!important}
+tr.data-row.user-flight-row td{background:#261d11!important;border-top-color:#dcaa50!important;border-bottom-color:#7b5f34!important}
+.location-button.connected{color:#6bd27b!important}.location-button.failed,.location-button.checking{color:#d9a14c!important}
+
+/* OPS ROOM v0.10.0 charcoal FIDS palette */
+:root{--bg:#101214;--panel:#191c1f;--panel2:#121416;--line:#4c595e;--text:#e2e2dc;--muted:#a6adae;--accent:#69adbc;--font-board:"B612","Segoe UI",Arial,sans-serif;--font-mono:"B612 Mono","Cascadia Mono",Consolas,monospace}
+body{background:#101214!important;color:var(--text)!important;background-image:linear-gradient(rgba(108,146,155,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(108,146,155,.014) 1px,transparent 1px)!important;background-size:4rem 4rem!important}.topbar,.info-panel,.board-panel,.settings-card,.airport-search,.metar-chip{background:#171b1d!important;border-color:#536167!important}.tab,.side-tab,.location-button,.settings-button{background:#1a1f22!important;border-color:#617076!important;color:#dfe1dd!important}.tab.active,.side-tab.active{background:repeating-linear-gradient(135deg,rgba(92,153,166,.18) 0,rgba(92,153,166,.18) 2px,transparent 2px,transparent 8px)!important;color:#d4edf2!important;border-color:#70b3c1!important}.board-table th{background:#202528!important;color:#b6d7de!important;border-color:#536167!important}.board-table td{border-color:#2b3438!important}.board-table-wrap{background:#0f1214!important}.flap-char{color:#e4e4de!important}.schedule-status-cell.show-delayed .flap-char{color:#d58a50!important}tr.data-row.user-flight-row td{background:#1b292d!important;border-top-color:#6db0be!important;border-bottom-color:#3e6871!important}tr.data-row.user-flight-row td:first-child{border-left-color:#75b8c6!important}tr.data-row.user-flight-row .flight-col::after{color:#8bc8d3!important;text-shadow:none!important}.location-button.connected{color:#6bd47b!important}.location-button.failed,.location-button.checking{color:#d88a52!important}
+
+/* v0.20.0 return control */
+.back-to-ops{display:inline-flex;align-items:center;justify-content:center;margin-top:.55rem;min-height:2.05rem;padding:0 .85rem;border:1px solid var(--line,#59676d);background:rgba(12,16,18,.9);color:var(--text,#e8e6df);text-decoration:none;font-weight:800;font-size:.68rem;letter-spacing:.08em}.back-to-ops:hover{border-color:var(--amber,#71b4c3);color:var(--amber-pale,#d3edf2)}
+
+/* v0.20.0 split-flap clipping hardening */
+.flap-char{height:1.24em!important;padding:.04em 0 .08em!important;line-height:1!important;overflow:visible!important}.flap-word{min-height:64px!important;align-items:center!important;overflow:visible!important}tr.data-row{height:70px!important}.logo-wrap{height:64px!important}.flap-face{transform:translateY(-.01em)}.airport-name-flap .flap-word .flap-char{font-size:24px!important}.flap-word.clock .flap-char{font-size:36px!important}@media(max-width:1100px){:root{--flap-font-size:38px;--flap-small-size:32px;--flap-tiny-size:24px}.flap-word{min-height:58px!important}tr.data-row{height:64px!important}}@media(max-width:820px){:root{--flap-font-size:32px;--flap-small-size:27px;--flap-tiny-size:20px}.board-table-wrap{height:calc(100dvh - 238px)!important}.top-info-row{gap:6px!important}}
+
+
+/* v0.20.0 embedded FIDS frame mode */
+body:has(.shell) {}
+@media(max-width:1024px){
+  body{overflow:auto}
+}
+
+body.embedded-board{min-width:0!important}
+body.embedded-board .shell{width:100%!important;max-width:none!important;padding:.55rem!important}
+body.embedded-board .topbar{padding:.65rem!important}
+body.embedded-board .airport-clock-row{grid-template-columns:1fr!important;gap:.6rem!important}
+body.embedded-board .airport-code{font-size:clamp(2.2rem,8vw,5rem)!important}
+body.embedded-board .top-info-row{grid-template-columns:1fr!important}
+body.embedded-board .board-table{font-size:clamp(.6rem,1.15vw,.9rem)!important}
+body.embedded-board .split-board{overflow:auto!important}
+body.embedded-board .back-to-ops{display:none!important}
+
+
+/* v0.23.1 hotfix 5 FIDS camera release control */
+.mini-action{border:1px solid rgba(239,189,71,.55);background:rgba(239,189,71,.08);color:#ffe09a;border-radius:.35rem;padding:.18rem .45rem;font:800 .58rem var(--mono,monospace);letter-spacing:.07em;cursor:pointer}
+.mini-action:hover{background:rgba(239,189,71,.16)}
+
+/* v0.23.1 public beta Buy me a coffee link */
+.mini-action-link{display:inline-flex;align-items:center;text-decoration:none;vertical-align:middle}.mini-action-link:visited{color:#ffe09a}
+
+
+/* v0.23.4 standalone FIDS Camera Bridge floating controls */
+.standalone-camera-panel{position:fixed;right:18px;top:128px;z-index:80;width:min(420px,calc(100vw - 28px));max-height:calc(100vh - 150px);overflow:auto;background:rgba(5,7,8,.96);border:1px solid #3d555d;box-shadow:0 18px 70px rgba(0,0,0,.72),inset 0 1px rgba(255,255,255,.05)}
+.standalone-camera-panel.hidden{display:none!important}
+.standalone-camera-panel>header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #234037;background:#101719;color:#dce8eb;font-family:var(--font-mono);font-size:11px;font-weight:900;letter-spacing:.15em;text-transform:uppercase}
+.standalone-camera-panel .card{margin:10px;background:#030506;border-color:#26373d}
+.standalone-camera-panel .setting-actions{display:grid;grid-template-columns:1fr;gap:8px}
+@media(max-width:760px){.standalone-camera-panel{left:10px;right:10px;top:96px;width:auto;max-height:calc(100vh - 112px)}}
+
+/* v0.23.4 camera panel correction: standalone FIDS uses the same full camera controls as the OPS ROOM FIDS module. */
+.standalone-camera-panel{width:min(700px,calc(100vw - 28px));top:112px;right:18px;max-height:calc(100vh - 132px)}
+.standalone-camera-panel .card{margin:0}
+.fids-camera-full-panel{display:grid;gap:12px;padding:12px;background:rgba(4,7,8,.97);border:1px solid #2d454c;color:#e9eef0}
+.fids-camera-status-head{display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:1px solid rgba(255,208,68,.55);padding-bottom:10px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.13em}
+.fids-camera-status-head span{display:block;color:#9ebbc4;font-size:10px}.fids-camera-status-head b{font-size:24px}.fids-camera-status-head strong{font-size:12px;color:#d4dadd}
+.camera-bridge-status-box{border:1px solid #31574c;background:#060b0b;padding:14px 16px;font-family:var(--font-mono);line-height:1.55}.camera-bridge-status-box b{display:block;font-size:18px;margin-bottom:6px}.camera-bridge-status-box p{margin:0 0 4px;color:#b8c0c4}.camera-bridge-status-box.fault{border-color:#7b302c}.camera-bridge-status-box.ready{border-color:#2c7a52}
+.fids-camera-mode-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.fids-camera-slider-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px 18px}.fids-camera-slider-grid label{display:grid;gap:7px;color:#b8c5c9;font-family:var(--font-mono);font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}.fids-camera-slider-grid input[type=range]{width:100%}
+.fids-camera-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;border-top:1px solid rgba(255,208,68,.5);padding-top:12px}.fids-camera-actions .danger{border-color:#71332f;color:#ffd7d2}.fids-camera-log{max-height:180px;overflow:auto;margin:0;background:#020303;border:1px solid #263238;color:#c9d3d7;padding:10px;white-space:pre-wrap}
+@media(max-width:760px){.standalone-camera-panel{left:10px;right:10px;width:auto}.fids-camera-mode-grid,.fids-camera-slider-grid,.fids-camera-actions{grid-template-columns:1fr 1fr}}@media(max-width:520px){.fids-camera-mode-grid,.fids-camera-slider-grid,.fids-camera-actions{grid-template-columns:1fr}}

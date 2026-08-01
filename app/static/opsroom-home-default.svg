@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="g" cx="50%" cy="42%" r="70%"><stop offset="0" stop-color="#1B222A"/><stop offset=".55" stop-color="#0F1318"/><stop offset="1" stop-color="#05080B"/></radialGradient>
+    <pattern id="grid" width="96" height="96" patternUnits="userSpaceOnUse"><path d="M96 0H0V96" fill="none" stroke="#A8D7E2" stroke-opacity=".035" stroke-width="1"/></pattern>
+    <filter id="blur"><feGaussianBlur stdDeviation="18"/></filter>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#g)"/>
+  <rect width="1920" height="1080" fill="url(#grid)"/>
+  <circle cx="1540" cy="120" r="420" fill="#6FB8D1" opacity=".07" filter="url(#blur)"/>
+  <circle cx="360" cy="910" r="380" fill="#E0A12A" opacity=".04" filter="url(#blur)"/>
+  <g transform="translate(760 255) scale(3.1)" opacity=".16"><defs>
+  <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000" flood-opacity=".45"/></filter>
+  <linearGradient id="ring" x1="14" y1="14" x2="114" y2="114" gradientUnits="userSpaceOnUse"><stop stop-color="#A8D7E2"/><stop offset="1" stop-color="#6FB8D1"/></linearGradient>
+  <linearGradient id="body" x1="44" y1="42" x2="84" y2="96" gradientUnits="userSpaceOnUse"><stop stop-color="#F5F2EB"/><stop offset="1" stop-color="#D8D5CE"/></linearGradient>
+</defs>
+<path d="M52 18 A46 46 0 0 0 52 110" fill="none" stroke="#E6E4DF" stroke-width="6" stroke-linecap="butt"/>
+<path d="M76 18 A46 46 0 0 1 76 110" fill="none" stroke="#E6E4DF" stroke-width="6" stroke-linecap="butt"/>
+<path d="M64 11 L64 43" fill="none" stroke="#E6E4DF" stroke-width="4" stroke-linecap="butt" stroke-dasharray="6 9" opacity=".72"/>
+<g filter="url(#softShadow)">
+  <path d="M61.7 43.5 L30.5 91.5 L60.2 76.8 L64 83.5 L64 43.5 Z" fill="#E6E4DF"/>
+  <path d="M66.3 43.5 L97.5 91.5 L67.8 76.8 L64 83.5 L64 43.5 Z" fill="#E6E4DF"/>
+  <path d="M64 47 L56.2 94.5 L64 88.5 L71.8 94.5 Z" fill="#E6E4DF" opacity=".92"/>
+  <path d="M64 90 L75 107 L64 101 L53 107 Z" fill="#E6E4DF"/>
+</g></g>
+  <g opacity=".22" fill="#E6E4DF" font-family="Arial Narrow, Bahnschrift Condensed, sans-serif" text-anchor="middle">
+    <text x="960" y="760" font-size="120" letter-spacing="32" font-weight="700">OPS ROOM</text>
+    <rect x="615" y="797" width="690" height="4" fill="#E6E4DF" opacity=".75"/>
+    <text x="960" y="850" font-size="30" letter-spacing="18" fill="#A8D7E2">OPERATIONS CONTROL CENTRE</text>
+  </g>
+</svg>

@@ -1,0 +1,13 @@
+OPS ROOM - PRIVACY POLICY & TERMS OF SERVICE (v0.25.34)
+
+1. LOCAL STORAGE & DATA PRIVACY
+All flight logs, kneeboard notes, custom charts, and aircraft profile settings are saved locally on your personal machine. OPS ROOM does not harvest or sell personal identifying information.
+
+2. NETWORK SERVICES
+OPS ROOM connects to external APIs (SimBrief, VATSIM, ChartFox, and opsroom.live) strictly to fetch flight plans, METAR weather, and active schedules.
+
+3. SIMULATOR INTEGRATION
+Local flight data is read directly from your simulator via SimConnect / FSUIPC solely to render live flight instrumentation.
+
+4. DISCLAIMER
+OPS ROOM IS INTENDED FOR FLIGHT SIMULATION USE ONLY. DO NOT USE FOR REAL-WORLD AVIATION NAVIGATION.

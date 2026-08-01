@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+*.pyo
+
+.env
+
+venv/
+.venv/
+
+dist/
+build/
+
+*.log
+*.tmp
+
+.idea/
+.vscode/
+
+.DS_Store
+Thumbs.db
+
+# Build outputs
+dist_installer/
+dist/
+build/
+
+# Navigation databases
+app/data/navigation/*.sqlite

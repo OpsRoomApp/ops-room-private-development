@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon-32.png" sizes="32x32" />
+  <title>OPS ROOM | VATSIM FIDS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css?v=opsroom-board-0-24-16" />
+</head>
+<body>
+  <div class="noise"></div>
+  <div class="shell">
+    <header class="topbar board-frame">
+      <div class="brand-row">
+        <div class="brand-left">
+          <div id="streamerBrand" class="streamer-brand hidden">
+            <img id="streamerLogo" alt="Streamer logo" />
+            <span id="streamerName"></span>
+          </div>
+          <div class="eyebrow">OPS ROOM / VATSIM FIDS</div><button id="backToOps" class="back-to-ops" type="button" title="Return to OPS ROOM">BACK TO OPS ROOM</button>
+        </div>
+      </div>
+
+      <div class="airport-clock-row">
+        <div class="hero-board">
+        <div class="airport-code" id="airportCodeFlap"></div>
+          <div class="airport-name-flap" id="airportNameFlap"></div>
+        </div>
+        <div class="clock-area">
+          <div class="clock-line">
+            <span class="clock-label">UTC</span>
+            <div class="time-block" id="clockFlap"></div>
+          </div>
+          <button id="topAtisSummary" class="top-atis-summary" type="button" title="Open ATIS details">
+            <span class="atis-main"><b id="atisSourceLine">ATIS SUMMARY</b></span>
+            <span class="atis-row"><b>DEP</b> <span id="atisDepLine">INFO --- &nbsp; RWY IN USE --- &nbsp; QNH --- &nbsp; VISIBILITY ---</span></span>
+            <span class="atis-row"><b>ARR</b> <span id="atisArrLine">INFO --- &nbsp; RWY IN USE --- &nbsp; QNH --- &nbsp; VISIBILITY ---</span></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="top-info-row">
+        <div class="weather-chip metar-chip"><span>METAR</span><strong id="metarLine">fetching...</strong></div>
+        <div class="airport-search" id="airportComboBox">
+          <div class="airport-label-row">
+            <label for="airportIcaoInput">Airport</label>
+            <button id="detectLocationBtn" class="location-button" type="button" title="Read the user aircraft position from MSFS via SimConnect">MSFS LOCATION</button>
+          </div>
+          <div class="airport-input-row">
+            <input id="airportIcaoInput" autocomplete="off" spellcheck="false" maxlength="4" placeholder="ICAO" />
+            <div id="airportNameBadge" class="airport-name-badge" aria-live="polite">Airport name</div>
+          </div>
+          <div id="airportSuggestions" class="suggestions" role="listbox"></div>
+        </div>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="Traffic tabs">
+      <button class="tab active" data-tab="departures">Departures <span id="depCount">0</span></button>
+      <button class="tab" data-tab="arrivals">Arrivals <span id="arrCount">0</span></button>
+      <button class="tab" data-tab="prefiles">Prefiles <span id="preCount">0</span></button>
+    </nav>
+
+    <main class="layout">
+      <section class="split-panel traffic-panel board-frame">
+        <div class="table-headline">
+          <h2 id="tableTitle">Departures</h2>
+          <div class="disclaimer-inline"><span id="cameraTargetStatus">CLICK A FLIGHT TO SEND CAMERA TARGET</span> · <button id="standaloneCameraPanelBtn" class="mini-action" type="button">CAMERA PANEL</button> · <button id="cameraReleaseBtn" class="mini-action" type="button">STOP WATCHING</button> · <a id="buyCoffeeBoard" class="mini-action mini-action-link" href="https://buymeacoffee.com/exzonom" target="_blank" rel="noopener noreferrer">BUY ME A COFFEE</a> · SIMULATION USE ONLY</div>
+        </div>
+        <div class="board-table-wrap">
+          <table class="board-table">
+            <thead id="trafficHead"></thead>
+            <tbody id="trafficBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside class="info-panel board-frame">
+        <nav class="side-tabs" aria-label="Information tabs">
+          <button class="side-tab active" data-side="vatsim">VATSIM ATIS</button>
+          <button class="side-tab" data-side="realworld">Real ATIS</button>
+          <button class="side-tab" data-side="settings">Settings</button>
+          <button class="side-tab" data-side="camera">Camera Bridge</button>
+        </nav>
+        <div id="sideContent" class="cards"></div>
+      </aside>
+    </main>
+
+    <aside id="standaloneCameraPanel" class="standalone-camera-panel hidden" aria-label="Camera Bridge controls">
+      <header><span>MSFS 2024 CAMERA BRIDGE</span><button id="standaloneCameraClose" class="mini-action" type="button">CLOSE</button></header>
+      <div id="standaloneCameraPanelContent"></div>
+    </aside>
+  </div>
+
+  <script src="/static/app.js?v=opsroom-board-0-24-16"></script>
+<script>
+document.getElementById('backToOps')?.addEventListener('click', () => {
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.focus();
+      window.close();
+      setTimeout(() => { if (!window.closed) location.href = '/'; }, 150);
+      return;
+    }
+  } catch {}
+  history.length > 1 ? history.back() : location.assign('/');
+});
+</script>
+</body>
+</html>

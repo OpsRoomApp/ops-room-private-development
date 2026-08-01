@@ -1,0 +1,29 @@
+Third-Party Notices
+
+OPS ROOM includes or interacts with open-source and third-party components. Their respective licences and terms remain applicable.
+
+Examples may include:
+- FastAPI and related Python packages
+- OpenLayers
+- Optional FSUIPC7 integration
+- SimConnect integration provided by the user environment
+- VATSpy-derived data where applicable
+
+Before any public distribution, please review the final packaged dependencies and provide the required notices and attributions for the exact build contents.
+
+PERF data/model adapted with permission from galeair: https://flightsim.to/profile/galeair | https://flightsim.to/addon/24722/aircraft-runway-performance-spreadsheet
+
+Black Box design references and acknowledgements
+-------------------------------------------------
+OPS ROOM's Black Box code is an original implementation. Its workflow and design were informed by:
+
+SkyDolly (Sky Dolly) — Copyright (c) 2020-2024 Oliver Knoll — MIT License
+https://github.com/till213/SkyDolly
+
+MSFS2020 PilotPathRecorder — Copyright (c) 2020 Stephen Adam Horowitz — MIT License
+https://github.com/SAHorowitz/MSFS2020-PilotPathRecorder
+
+MSFS Landing Inspector — Copyright (c) 2020 mracko — MIT License
+https://github.com/mracko/MSFS-Landing-Inspector
+
+No GPL-licensed source from the related Flight Recorder, SaltyReplay, FS Tool, or msfs_logger_replay projects is included in OPS ROOM.

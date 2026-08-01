@@ -1,0 +1,4 @@
+icao,stand,lat,lon,type
+# Copy this file to stands.csv and add real stand coordinates if you want gate/stand estimates.
+# Example format only; do not use these placeholder coordinates.
+# EHAM,D02,52.309000,4.763000,gate

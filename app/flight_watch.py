@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import Any
+import time
+
+from .data_loader import haversine_nm, load_airports, nearest_airport
+from .settings_store import load_settings
+from .simbrief_client import cached_plan
+from .telemetry_provider import read_telemetry
+
+_LAST_LIVE: dict[str, Any] | None = None
+_LAST_LIVE_TIME = 0.0
+
+
+def _number(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _altitude_reliable(telemetry: dict[str, Any]) -> bool:
+    if telemetry.get("altitude_unreliable") is True:
+        return False
+    if str(telemetry.get("altitude_confidence") or "").lower() in {"invalid", "unreliable"}:
+        return False
+    alt = _number(telemetry.get("indicated_altitude_ft")) or _number(telemetry.get("altitude_ft"))
+    agl = _number(telemetry.get("radio_altitude_ft")) or _number(telemetry.get("agl_ft"))
+    gs = _number(telemetry.get("ground_speed_kts")) or 0.0
+    ias = _number(telemetry.get("indicated_speed_kts")) or 0.0
+    if alt is None:
+        return False
+    if agl is not None and agl > 1000 and (gs > 100 or ias > 100) and (abs(alt) < 500 or alt + 1000 < agl):
+        return False
+    return True
+
+
+def _gsx_pushback_active() -> bool:
+    try:
+        from .gsx_remote import status as gsx_status
+        gsx = gsx_status(force=False)
+    except Exception:
+        return False
+    if not gsx.get("ok") or not gsx.get("connected"):
+        return False
+    services = gsx.get("services") or {}
+    for key in ("pushback", "departure"):
+        row = services.get(key) or {}
+        try:
+            raw = int(row.get("raw") or 0)
+        except Exception:
+            raw = 0
+        state = str(row.get("state") or row.get("label") or "").upper()
+        if raw not in {0, 1, 6} or any(word in state for word in ("ACTIVE", "REQUEST", "PROGRESS", "PUSH")):
+            return True
+    return False
+
+
+def _phase(telemetry: dict[str, Any], plan: dict[str, Any] | None) -> str:
+    on_ground = bool(telemetry.get("on_ground"))
+    gs = _number(telemetry.get("ground_speed_kts")) or 0.0
+    vs = _number(telemetry.get("vertical_speed_fpm")) or 0.0
+    agl = _number(telemetry.get("agl_ft"))
+    altitude = (_number(telemetry.get("indicated_altitude_ft")) or _number(telemetry.get("altitude_ft")) or 0.0) if _altitude_reliable(telemetry) else 0.0
+    cruise = _number((plan or {}).get("cruise_altitude_ft")) or 0.0
+
+    if on_ground:
+        if gs > 5.0:
+            return "TAXI" if gs < 35 else "TAKEOFF ROLL"
+        if _gsx_pushback_active():
+            return "PUSHBACK"
+        if gs < 2:
+            return "PARKED"
+        if gs < 35:
+            return "TAXI"
+        return "TAKEOFF ROLL"
+    if agl is not None and agl < 1500 and vs > 150:
+        return "INITIAL CLIMB"
+    if agl is not None and agl < 2500 and vs < -150:
+        return "APPROACH"
+    if cruise and altitude < cruise - 1500 and vs > 250:
+        return "CLIMB"
+    if vs < -300:
+        return "DESCENT" if agl is None or agl > 3500 else "APPROACH"
+    if altitude > 10000 and abs(vs) < 350:
+        return "CRUISE"
+    if vs > 250:
+        return "CLIMB"
+    return "ENROUTE"
+
+
+def build_flight_watch(force: bool = False) -> dict[str, Any]:
+    global _LAST_LIVE, _LAST_LIVE_TIME
+    telemetry = read_telemetry(force=force)
+    settings = load_settings()
+    user_ref = str(settings.get("identity", {}).get("simbrief_user_id") or "")
+    plan = cached_plan(user_ref) if user_ref else None
+    if not telemetry.get("ok"):
+        age = time.monotonic() - _LAST_LIVE_TIME if _LAST_LIVE_TIME else 999.0
+        if _LAST_LIVE is not None and age <= 8.0:
+            held = dict(_LAST_LIVE)
+            held["state"] = "stale"
+            held["stale"] = True
+            held["stale_seconds"] = round(age, 1)
+            held["reason"] = telemetry.get("reason", "Brief SimConnect interruption")
+            held["updated_utc"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            return held
+        return {
+            "ok": False,
+            "state": "standby",
+            "reason": telemetry.get("reason", "SimConnect is not available"),
+            "telemetry": telemetry,
+        "telemetry_quality": {"altitude_reliable": _altitude_reliable(telemetry), "altitude_source": telemetry.get("altitude_source"), "altitude_confidence": telemetry.get("altitude_confidence")},
+            "plan": plan,
+            "updated_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+
+    lat = float(telemetry["lat"])
+    lon = float(telemetry["lon"])
+    airports = load_airports()
+    origin_code = str((plan or {}).get("origin", {}).get("icao") or "").upper()
+    destination_code = str((plan or {}).get("destination", {}).get("icao") or "").upper()
+    origin = airports.get(origin_code)
+    destination = airports.get(destination_code)
+    direct_nm = None
+    remaining_nm = None
+    progress = None
+    eta_utc = None
+    gs = _number(telemetry.get("ground_speed_kts")) or 0.0
+
+    if origin and destination:
+        direct_nm = haversine_nm(origin.lat, origin.lon, destination.lat, destination.lon)
+        remaining_nm = haversine_nm(lat, lon, destination.lat, destination.lon)
+        if direct_nm > 1:
+            progress = max(0.0, min(1.0, 1.0 - remaining_nm / direct_nm))
+        if gs >= 50:
+            eta_utc = (datetime.now(timezone.utc) + timedelta(hours=remaining_nm / gs)).isoformat().replace("+00:00", "Z")
+
+    nearest = nearest_airport(lat, lon)
+    phase = _phase(telemetry, plan)
+    result = {
+        "ok": True,
+        "state": "live",
+        "stale": False,
+        "phase": phase,
+        "telemetry": telemetry,
+        "telemetry_quality": {"altitude_reliable": _altitude_reliable(telemetry), "altitude_source": telemetry.get("altitude_source"), "altitude_confidence": telemetry.get("altitude_confidence")},
+        "nearest_airport": {"icao": nearest[0].ident, "distance_nm": round(nearest[1], 1)} if nearest else None,
+        "flight": {
+            "callsign": (plan or {}).get("callsign"),
+            "origin": origin_code or None,
+            "destination": destination_code or None,
+            "cruise_altitude_ft": (plan or {}).get("cruise_altitude_ft"),
+            "planned_distance_nm": (plan or {}).get("distance_nm"),
+            "direct_distance_nm": round(direct_nm, 1) if direct_nm is not None else None,
+            "remaining_nm": round(remaining_nm, 1) if remaining_nm is not None else None,
+            "progress": round(progress, 4) if progress is not None else None,
+            "eta_utc": eta_utc,
+        },
+        "updated_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    _LAST_LIVE = result
+    _LAST_LIVE_TIME = time.monotonic()
+    return result
