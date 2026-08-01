@@ -40,7 +40,7 @@ def main() -> int:
     digest = sha256(zip_path)
     sha_path = zip_path.with_suffix(zip_path.suffix + ".sha256")
     sha_path.write_text(f"{digest}  {zip_path.name}\n", encoding="ascii")
-    # version already includes the 'v' prefix (e.g. '0.25.53')
+    # version already includes the 'v' prefix (e.g. '0.25.54')
     download_url = f"{args.repo}/releases/download/{version}/{zip_path.name}"
     manifest = {
         "latest_version": version,

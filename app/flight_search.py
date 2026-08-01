@@ -1,4 +1,4 @@
-"""Real-world flight search index – v0.25.53.
+"""Real-world flight search index – v0.25.54.
 
 Builds an in-memory searchable index from normalized flight records and
 provides a case-insensitive, partial-match search with direct-field fallback.
@@ -87,6 +87,8 @@ def search_index(query: str) -> list[dict[str, Any]]:
         if all_matched is None:
             return []
         results = [_flights[i] for i in sorted(all_matched)]
+        # v0.25.54: exact-match ranking boost
+        _boost_exact_matches(results, terms)
         results.sort(key=lambda f: -(f.get("rank_score") or 0))
         return results
     except Exception as exc:
@@ -125,6 +127,27 @@ def _direct_field_search(terms: list[str]) -> list[dict[str, Any]]:
             results.append(flight)
     results.sort(key=lambda f: -(f.get("rank_score") or 0))
     return results
+
+
+def _boost_exact_matches(results: list[dict[str, Any]], terms: list[str]) -> None:
+    """v0.25.54: boost rank_score for exact-match results so they sort above
+    prefix-only matches.
+
+    For each search term, if a flight has an exact field match (after
+    normalization), add +50 to its rank_score.
+    """
+    for term in terms:
+        term_norm = term.lower().replace("-", "").replace(" ", "")
+        for f in results:
+            matched_exact = False
+            for field in ("callsign", "origin_icao", "destination_icao",
+                          "aircraft_icao_type", "registration", "mode_s"):
+                val = str(f.get(field) or "").lower().replace("-", "").replace(" ", "")
+                if val == term_norm:
+                    matched_exact = True
+                    break
+            if matched_exact:
+                f["rank_score"] = (f.get("rank_score") or 0) + 50
 
 
 def index_count() -> int:

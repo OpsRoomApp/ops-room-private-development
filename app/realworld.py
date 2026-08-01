@@ -1,4 +1,4 @@
-"""Real-World Flight Search pipeline – v0.25.53.
+"""Real-World Flight Search pipeline – v0.25.54.
 
 Provider-agnostic discovery, normalisation, ADSBDB enrichment, caching,
 search indexing, and diagnostics for the OPS ROOM Real World Schedules feature.
@@ -266,7 +266,7 @@ async def _discover_fr24(
                         params={"bounds": f"{bounds['lat']-1.5},{bounds['lat']+1.5},"
                                           f"{bounds['lon']-1.5},{bounds['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.53"},
+                                 "User-Agent": "OPS-ROOM/0.25.54"},
                     )
                     _update_provider_health("fr24", resp.status_code == 200,
                                             (time.monotonic() - t0) * 1000,
@@ -298,7 +298,7 @@ async def _discover_fr24(
                         params={"bounds": f"{zone['lat']-1.5},{zone['lat']+1.5},"
                                           f"{zone['lon']-1.5},{zone['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.53"},
+                                 "User-Agent": "OPS-ROOM/0.25.54"},
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -352,11 +352,16 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
     missing_aircraft_before = 0
     recovered_aircraft = 0
 
+    route_ok = 0
+    aircraft_ok = 0
+    identity_ok = 0
+
     async def _enrich_one(flight: dict[str, Any]) -> dict[str, Any]:
         nonlocal attempted, succeeded, failed
         nonlocal missing_dest_before, recovered_dest
         nonlocal missing_origin_before, recovered_origin
         nonlocal missing_aircraft_before, recovered_aircraft
+        nonlocal route_ok, aircraft_ok, identity_ok
 
         # Count missing fields before enrichment (save state for accurate recovery)
         had_dest_before = bool(flight.get("destination_icao"))
@@ -372,7 +377,7 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cs = _clean_str(flight.get("callsign") or "")
         mode_s = _clean_str(flight.get("mode_s") or "")
 
-        # Track enrichment result per flight (v0.25.53)
+        # Track enrichment result per flight (v0.25.54)
         enrichment_attempted = True
         route_lookup = False
         route_success = False
@@ -406,7 +411,11 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         cache_set_aircraft(ac_key, ac_data)
                         apply_adsbdb_aircraft(flight, ac_data)
                         aircraft_success = True
+                        aircraft_ok += 1
                         succeeded += 1
+                        _log.info("[RealWorld] AIRCRAFT ENRICH cs=%%s hex=%%s key=%%s type=%%s reg=%%s",
+                                  cs, mode_s, ac_key,
+                                  flight.get("aircraft_type"), flight.get("registration"))
                     _update_provider_health("adsbdb", True)
                 except Exception as exc:
                     failed += 1
@@ -429,6 +438,7 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if route_data:
                     cache_set_route(variant, route_data)
                     route_success = True
+                    route_ok += 1
                     succeeded += 1
                     break
                 _update_provider_health("adsbdb", True)
@@ -448,11 +458,13 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not had_aircraft_before and flight.get("aircraft_type"):
             recovered_aircraft += 1
 
-        # ── Attach per-flight enrichment audit flags (v0.25.53) ──
+        # ── Attach per-flight enrichment audit flags (v0.25.54) ──
         flight["enrichment_attempted"] = enrichment_attempted
         flight["enrichment_success"] = route_success or aircraft_success
         flight["route_enriched"] = route_success
         flight["aircraft_enriched"] = aircraft_success
+        if route_success and aircraft_success:
+            identity_ok += 1
 
         # Structured log per lookup
         if route_lookup or aircraft_lookup:
@@ -547,7 +559,7 @@ def _filter_flights(
 async def _refresh_loop() -> None:
     """Full refresh cycle: discover → normalise → enrich → dedup → filter → cache → index.
 
-    v0.25.53: all stages instrumented with wall-clock timing.
+    v0.25.54: all stages instrumented with wall-clock timing.
     """
     global _refresh_running
     async with _refresh_lock:
@@ -700,7 +712,7 @@ async def realworld_search(
         t0 = time.monotonic()
         flights, cache_age, is_stale = get_live_flights()
 
-        # v0.25.53: never block on refresh.  Return cached data immediately;
+        # v0.25.54: never block on refresh.  Return cached data immediately;
         # fire-and-forget a background refresh if the cache is stale or empty.
         if is_stale or not flights:
             if not _refresh_lock.locked():
@@ -723,7 +735,7 @@ async def realworld_search(
         # Limit to top 100 results
         results = filtered[:100]
 
-        # v0.25.53: add origin/destination flat aliases for frontend compatibility
+        # v0.25.54: add origin/destination flat aliases for frontend compatibility
         # The frontend reads flight.origin / flight.destination (flat strings)
         # but the canonical model uses origin_icao / destination_icao.
         for f in results:
@@ -750,7 +762,7 @@ async def realworld_search(
         )
 
 
-# ── Debug enrichment endpoint (v0.25.53) ────────────────────────────────────
+# ── Debug enrichment endpoint (v0.25.54) ────────────────────────────────────
 # Traces a single callsign through the full enrichment pipeline to identify
 # exactly where data is lost.  Local-only; does not expose secrets.
 
@@ -761,7 +773,7 @@ _DEBUG_ROUTER = APIRouter(prefix="/api/v1/realworld-debug", tags=["realworld-deb
 async def debug_enrichment_pipeline(callsign: str):
     """Trace a single callsign through the enrichment pipeline.
 
-    v0.25.53: instrumented with per-stage timing.  Never triggers refresh.
+    v0.25.54: instrumented with per-stage timing.  Never triggers refresh.
     Returns the state at each stage: raw ADSBDB → normalised → enriched → final.
     """
     t_total = time.monotonic()
@@ -809,7 +821,7 @@ async def debug_enrichment_pipeline(callsign: str):
         result["adsbdb_raw"] = {"available": False, "error": str(exc)}
 
     # ── Stage 2: Simulate a minimal FR24 flight + normalise ──
-    # v0.25.53: include hex (mode_s) so aircraft identity enrichment is testable
+    # v0.25.54: include hex (mode_s) so aircraft identity enrichment is testable
     mock_fr24 = {"flight": cs, "orig": "EDDF", "hex": "3c0000"}
     normalized = normalise_fr24(mock_fr24)
     if normalized:
@@ -829,7 +841,7 @@ async def debug_enrichment_pipeline(callsign: str):
     # ── Stage 3: Apply ADSBDB enrichment (route + aircraft identity) ──
     if normalized and adsbdb_raw:
         apply_adsbdb_route(normalized, adsbdb_raw)
-        # v0.25.53: also attempt aircraft identity enrichment via mode_s or registration
+        # v0.25.54: also attempt aircraft identity enrichment via mode_s or registration
         ac_raw = None
         ms = normalized.get("mode_s")
         reg = normalized.get("registration")
@@ -942,7 +954,7 @@ async def realworld_diagnostics(include_recent_errors: bool = False):
     response: dict[str, Any] = {
         "status": "ok",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "version": "0.25.53",
+        "version": "0.25.54",
         "last_successful_refresh_utc": stats.get("last_refresh_utc"),
         "last_refresh_status": stats.get("last_refresh_status"),
         "serving_stale_cache": is_stale and len(flights) > 0,
@@ -971,10 +983,14 @@ async def realworld_diagnostics(include_recent_errors: bool = False):
                 "missing_aircraft_before": stats.get("enrichment_missing_aircraft_before", 0),
                 "recovered_aircraft": stats.get("enrichment_recovered_aircraft", 0),
             },
+            "enrichment_route_ok": stats.get("enrichment_route_ok", 0),
+            "enrichment_aircraft_ok": stats.get("enrichment_aircraft_ok", 0),
+            "enrichment_identity_ok": stats.get("enrichment_identity_ok", 0),
             "dedup_before": stats.get("before_dedup", 0),
             "dedup_after": stats.get("after_dedup", 0),
             "dedup_removed": stats.get("dedup_removed", 0),
             "final_available_count": stats.get("final_available", 0),
+            "last_refresh_timings_ms": stats.get("last_refresh_timings_ms", {}),
         },
     }
     if include_recent_errors:

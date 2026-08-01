@@ -164,15 +164,15 @@ let briefingChartOwnshipTimer=null;
 let cfPdfState = { pageNum: 1, pageRendering: false, pageNumPending: null,
   scale: 1.0, rotation: 0, darkMode: false,
   canvas: null, ctx: null, container: null,
-  nativeWidth: 595, nativeHeight: 842,  // v0.25.53: PDF page native dims for annotation anchoring
+  nativeWidth: 595, nativeHeight: 842,  // v0.25.54: PDF page native dims for annotation anchoring
   isPanning: false, panStart: {x:0,y:0}, panOffset: {x:0,y:0}, panMoved: false };
 // v0.25.16 ChartFox charts browser implementation (list + preview with ownship overlay and pin, ~1500 lines). Legacy openChartFoxChart/briefingChart* block remains for export-to-PIREP step. Do not regress.
 let cfState = { airport: null, items: [], groups: [], activeChartId: null,
   promoteTab: null,                // v0.25.16: tabs are sort-promotion, not filter toggle
   pins: [], previewTimer: null,
-  _fetchingAirports: {},           // v0.25.53: in-flight dedup map cleared on every loadCharts()
+  _fetchingAirports: {},           // v0.25.54: in-flight dedup map cleared on every loadCharts()
   };
-// v0.25.53 — Chart Viewer Annotation/Scratchpad overlay state (pen matches Scratchpad)
+// v0.25.54 — Chart Viewer Annotation/Scratchpad overlay state (pen matches Scratchpad)
 let cfAnnotation = { canvas: null, ctx: null, active: false,
   tool: 'pen', color: '#ff3333', width: 3.5, opacity: 0.85,
   strokes: [], undoStack: [], currentStroke: null,
@@ -184,7 +184,7 @@ const RAIL_COLLAPSED_KEY = 'opsroom-classic-rail-collapsed-v1815';
 
 const $ = id => document.getElementById(id);
 
-// v0.25.53: minimal showToast replacement — uses browser Notification API
+// v0.25.54: minimal showToast replacement — uses browser Notification API
 // when available with permission, falls back to console logging.
 // Previously rendered a bottom-left badge that was removed per user request.
 // The 34 existing call sites now route through this no-DOM logger.
@@ -198,7 +198,7 @@ function showToast(title, subtitle, detail, level){
   }else{
     console.info(prefix, msg);
   }
-  // v0.25.53: attempt browser Notification API for user-visible toast.
+  // v0.25.54: attempt browser Notification API for user-visible toast.
   // Fails gracefully on permission denied, not-supported, or http origins.
   try{
     if(typeof Notification !== 'undefined' && Notification.permission === 'granted'){
@@ -418,7 +418,7 @@ async function safeJsonResponse(response){
 
 function reportFrontendError(source, detail){
   try{
-    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.53', ts:new Date().toISOString()};
+    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.54', ts:new Date().toISOString()};
     lastFrontendError = payload.detail;
     navigator.sendBeacon?.('/api/frontend/log', new Blob([JSON.stringify(payload)], {type:'application/json'})) || fetch('/api/frontend/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true}).catch(()=>{});
   }catch(_){ }
@@ -1168,7 +1168,7 @@ function renderBriefing(plan){
     <div class="briefing-section-panel" data-briefing-section="notams" hidden><section class="panel briefing-panel"><header><span>Route-relevant NOTAMs</span><span>Structured SimBrief OFP data</span></header><div id="briefingNotams"></div></section></div>
     <div class="briefing-section-panel" data-briefing-section="hazards" hidden><section class="panel briefing-panel"><header><span>Aviation weather hazards</span><span>AIRMET · SIGMET · TC · VA</span></header><div id="briefingHazards"></div></section></div>
     <div class="briefing-section-panel" data-briefing-section="sigwx" hidden><section class="panel briefing-panel"><header><span>SIGWX</span><span>Separate SimBrief chart images</span></header><div id="briefingSigwx"></div></section></div>
-    <div class="briefing-section-panel" data-briefing-section="charts" hidden><section class="panel briefing-panel" id="briefingChartFoxSection"><header><span>ChartFox charts</span><span>ChartFox API</span></header><div id="briefingChartFoxPanel" class="bridge-charts-panel"><b>LOADING CHARTFOX...</b></div></section><section class="panel briefing-panel"><header><span>SimBrief briefing charts</span><span>Route · winds · vertical profile</span></header><div id="briefingSimbriefCharts"></div></section><!-- v0.25.53 RC: legacy briefingChartViewer + briefingChartFrame iframe removed (was a hidden dead block that confused users who saw "chartfox.org refused to connect"). ChartFox charts render exclusively through cfRenderPreview (img via proxy + PDF.js canvas). --></div>
+    <div class="briefing-section-panel" data-briefing-section="charts" hidden><section class="panel briefing-panel" id="briefingChartFoxSection"><header><span>ChartFox charts</span><span>ChartFox API</span></header><div id="briefingChartFoxPanel" class="bridge-charts-panel"><b>LOADING CHARTFOX...</b></div></section><section class="panel briefing-panel"><header><span>SimBrief briefing charts</span><span>Route · winds · vertical profile</span></header><div id="briefingSimbriefCharts"></div></section><!-- v0.25.54 RC: legacy briefingChartViewer + briefingChartFrame iframe removed (was a hidden dead block that confused users who saw "chartfox.org refused to connect"). ChartFox charts render exclusively through cfRenderPreview (img via proxy + PDF.js canvas). --></div>
     <div class="briefing-section-panel" data-briefing-section="ofp" hidden><section id="briefingOfpPanel" class="panel briefing-panel ofp-embed-panel"><header><span>Operational flight plan</span><span></span></header>${(()=>{const pdf=plan.files?.pdf_local||plan.files?.pdf;const src=`/api/simbrief/ofp-view?theme=${encodeURIComponent(briefingOfpTheme)}`;return `<div class="briefing-ofp-actions"><div class="ofp-theme-buttons"><button id="ofpThemeDark" class="${briefingOfpTheme==='dark'?'active':''}" type="button">DARK</button><button id="ofpThemeLight" class="${briefingOfpTheme==='light'?'active':''}" type="button">LIGHT</button></div><div class="ofp-reader-actions"><span class="page-readout">OFP reader</span>${pdf?`<a class="control-button" href="${escapeHtml(pdf)}" target="opsroom-ofp-pdf" rel="noopener">Open SimBrief PDF</a>`:''}</div></div><iframe id="briefingOfpFrame" class="briefing-ofp-frame" src="${escapeHtml(src)}" title="Operational Flight Plan"></iframe>`;})()}</section></div>
     <div id="briefingImageViewer" class="briefing-image-viewer" hidden><div class="briefing-image-viewer-head"><strong id="briefingImageViewerTitle">SIMBRIEF CHART</strong><div><span id="briefingImageZoomReadout">100%</span><button id="briefingImageZoomOut" type="button">?</button><button id="briefingImageZoomIn" type="button">+</button><button id="briefingImageZoomReset" type="button">RESET</button><a id="briefingImageViewerDownload" href="#" download>DOWNLOAD</a><button id="briefingImageViewerClose" type="button">CLOSE</button></div></div><div id="briefingImageViewerStage" class="briefing-image-viewer-stage"><img id="briefingImageViewerImg" alt="Expanded SimBrief chart"></div></div>`;
   document.querySelectorAll('[data-briefing-tab]').forEach(button=>button.addEventListener('click',()=>setBriefingSection(button.dataset.briefingTab)));
@@ -1240,10 +1240,10 @@ async function chartfox_open_authorization_window(){
       if(status && status.has_token){
         clearInterval(chartfoxOAuthPollTimer);
         chartfoxOAuthPollTimer = null;
-        // v0.25.53: clear stale in-flight dedup entries so loadCharts()
+        // v0.25.54: clear stale in-flight dedup entries so loadCharts()
         // makes fresh API calls instead of returning cached failures.
         cfState._fetchingAirports = {};
-        // v0.25.53: do NOT auto-close the OAuth popup. The callback page
+        // v0.25.54: do NOT auto-close the OAuth popup. The callback page
         // now shows a DONE button the user must click to close it. The
         // chart list still refreshes as soon as the token is available.
         // fire-and-forget toast: must never block loadCharts().
@@ -1390,7 +1390,7 @@ async function loadCharts(){
   cfPanel=$('briefingChartFoxPanel');
   if(!cfPanel)return;
   chartfoxAirportPanels={};
-  // v0.25.53: clear stale in-flight dedup entries before any fresh API call.
+  // v0.25.54: clear stale in-flight dedup entries before any fresh API call.
   // Stale failed promises from a previous (pre-auth) run otherwise block
   // cfInitAirportCharts from making a new API call after reconnect.
   cfState._fetchingAirports = {};
@@ -1428,7 +1428,7 @@ async function loadCharts(){
       </div>
     </div>
   </div>`;
-  // v0.25.53: search wiring is the sole responsibility of cfWireSearchBox() which properly
+  // v0.25.54: search wiring is the sole responsibility of cfWireSearchBox() which properly
   // handles debounce, keyboard ArrowDown/ArrowUp/Escape/Enter navigation, click-outside
   // dismissal, and focus re-fetch. Duplicate listeners here cause double-firing per keystroke.
   // The loadCharts shell rebuild is async; cfInitAirportCharts wires cfWireSearchBox after it.
@@ -1508,7 +1508,7 @@ async function loadChartFoxGrouped(container, icao){
 // v0.25.9: Drive the new cf-* sidebar / preview / pin / overlay UI.
 function cfInitAirportCharts(container, icao){
   var cleanIcao = String(icao || '').trim().toUpperCase().slice(0, 4);
-  // v0.25.53: in-flight dedup — if a grouped fetch is already in progress
+  // v0.25.54: in-flight dedup — if a grouped fetch is already in progress
   // for this airport, return the existing promise instead of starting a
   // duplicate.  This guards direct callers (loadChartFoxGrouped, search) as
   // well as cfLoadAirport.
@@ -1517,7 +1517,7 @@ function cfInitAirportCharts(container, icao){
     console.warn('[OPS ROOM][chartfox-dedup-hit]', {icao: cleanIcao, returning: 'stale in-flight promise — this may be a failed promise from before auth'});
     return cfState._fetchingAirports[cleanIcao];
   }
-  // v0.25.53 diagnostic: log pre-call state to diagnose SESSION EXPIRED false positives.
+  // v0.25.54 diagnostic: log pre-call state to diagnose SESSION EXPIRED false positives.
   console.info('[OPS ROOM][chartfox-pre-call]', {
     icao: cleanIcao,
     fetchingAirportsKeys: Object.keys(cfState._fetchingAirports),
@@ -1539,7 +1539,7 @@ function cfInitAirportCharts(container, icao){
   cfRenderQuickPicks();
   cfRenderPinnedStrip();
   cfWireSearchBox();
-  // v0.25.53 diagnostic: perform a real OAuth status check. Runs synchronously
+  // v0.25.54 diagnostic: perform a real OAuth status check. Runs synchronously
   // before the fetch so cfState.chartfox_oauth_connected is accurate for the API call.
   var _cfOauthCheckDone = chartfox_oauth_status_direct().then(function(st){
     console.info('[OPS ROOM][chartfox-oauth-check]', {icao: cleanIcao, hasToken: st.has_token});
@@ -1561,7 +1561,7 @@ function cfInitAirportCharts(container, icao){
           oauthMatch: String((data && data.error) || '').toLowerCase().includes('oauth'),
           cfFetchingAirports: Object.keys(cfState._fetchingAirports || {}),
         });
-        // v0.25.53: render errors into the SIDEBAR, not the outer container.
+        // v0.25.54: render errors into the SIDEBAR, not the outer container.
         // Destroying the outer container (cfPanel.innerHTML='') was destroying
         // the entire shell — search bar, tabs, connect bar, preview — leaving
         // nothing but the error message even after OAuth reconnect succeeded.
@@ -1585,7 +1585,7 @@ function cfInitAirportCharts(container, icao){
           );
         }
         cfState.groups = []; cfState.items = [];
-        // v0.25.53: do NOT call cfRenderSidebar() here — the sidebar already
+        // v0.25.54: do NOT call cfRenderSidebar() here — the sidebar already
         // shows the SESSION EXPIRED / error message. Calling cfRenderSidebar()
         // would overwrite it with a generic "NO CHARTS AVAILABLE" placeholder
         // since cfState.groups is empty.
@@ -1603,7 +1603,7 @@ function cfInitAirportCharts(container, icao){
         preview.innerHTML = `<div class="cf-preview-message">SELECT A CHART TO PREVIEW<br><small>OWN POSITION WILL APPEAR HERE WHEN CHART HAS GEO REFERENCE</small></div><div class="cf-preview-overlay" id="cfPreviewOverlay" hidden><svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><polygon points="20,4 30,32 20,26 10,32" fill="#aaa98d" stroke="#1a2016" stroke-width="2.4" stroke-linejoin="round"/></svg></div>`;
       }
     }))      .catch(error => {
-        // v0.25.53: render catch-block errors into sidebar, preserving outer shell.
+        // v0.25.54: render catch-block errors into sidebar, preserving outer shell.
         const sidebar = $('cfSidebar');
         if (sidebar) {
           sidebar.innerHTML = `<div class="cf-empty">FAILED TO LOAD CHARTFOX CHARTS<br><small>${escapeHtml((error && error.message) || '')}</small></div>`;
@@ -1704,7 +1704,7 @@ function cfRenderRow(chart, isPinned){
     const typeKey = chart.type_key || '';
     const type = chart.type != null ? String(chart.type) : '';
     const runways = Array.isArray(chart.runways) ? chart.runways.filter(Boolean).map(escapeHtml).join(' / ') : '';    const meta = JSON.stringify({ title: chart.title || '', type: chart.type, type_key: chart.type_key, category: chart.category || chart.group_name || chart.type_key }).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');    const isActive = id && id === cfState.activeChartId;
-    // v0.25.53: outer is a div role="button" so the inner pin <button> is valid HTML;
+    // v0.25.54: outer is a div role="button" so the inner pin <button> is valid HTML;
     // browsers would otherwise hoist the inner button out of the outer one and break layout.
     return `<div role="button" tabindex="0" class="cf-row${isActive ? ' cf-row-active' : ''}" data-cf-chart-id="${escapeHtml(id)}" data-cf-chart-meta="${meta}" aria-current="${isActive ? 'true' : 'false'}"><div class="cf-row-info"><div class="cf-row-title">${escapeHtml(titleRaw)}${code}</div><div class="cf-row-meta">${escapeHtml(icao)} &middot; ${escapeHtml(typeKey || type)}${runways?` &middot; RWY ${runways}`:''}</div></div><button type="button" class="cf-pin-btn${isPinned ? ' cf-pin-btn-active' : ''}" data-cf-chart-id="${escapeHtml(id)}" data-cf-chart-meta="${meta}" title="${isPinned ? 'Unpin' : 'Pin'}" aria-label="${isPinned ? 'Unpin chart' : 'Pin chart'}" aria-pressed="${isPinned ? 'true' : 'false'}">${isPinned ? '\u2605' : '\u2606'}</button></div>`;
   }
@@ -1852,7 +1852,7 @@ function cfRenderPinnedStrip() {
   });
 
   // Click handler for unpin buttons
-  // v0.25.53: preventDefault prevents chip click from bubbling to chart load handler
+  // v0.25.54: preventDefault prevents chip click from bubbling to chart load handler
   Array.from(scroll.querySelectorAll('.cf-pinned-unpin')).forEach(function(btn) {
     btn.addEventListener('click', function(e) {
       e.stopPropagation();
@@ -2052,7 +2052,7 @@ async function cfRenderPdfPage(pdfDoc, pageNum, canvas, scale) {
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     cfPdfState.viewport = viewport;
-    // v0.25.53: capture native page dimensions at scale=1.0 for annotation anchoring
+    // v0.25.54: capture native page dimensions at scale=1.0 for annotation anchoring
     cfPdfState.nativeWidth = viewport.width / scale;
     cfPdfState.nativeHeight = viewport.height / scale;
     const ctx = canvas.getContext('2d');
@@ -2060,7 +2060,7 @@ async function cfRenderPdfPage(pdfDoc, pageNum, canvas, scale) {
     await page.render({ canvasContext: ctx, viewport }).promise;
   } catch(e){ cfPdfState.pageRendering = false; /* render error, silently handled */ }
   cfPdfState.pageRendering = false;
-  // v0.25.53: resize annotation canvas to match new PDF dimensions and redraw
+  // v0.25.54: resize annotation canvas to match new PDF dimensions and redraw
   if (cfAnnotation.canvas) {
     cfAnnotation.canvas.width = canvas.width;
     cfAnnotation.canvas.height = canvas.height;
@@ -2158,7 +2158,7 @@ function cfInitPdfCanvas(container, canvas, pdfDoc, chartName, viewUrl, proxyUrl
     origTop = cfPdfState.panOffset.y;
     canvas.style.cursor = 'grabbing';
   });
-  var panWrap = wrap; // v0.25.53: pan the wrapper so both PDF + annotation canvases move together
+  var panWrap = wrap; // v0.25.54: pan the wrapper so both PDF + annotation canvases move together
   window.addEventListener('mousemove', (e) => {
     if (!isPanning) return;
     var dx = e.clientX - startX;
@@ -2253,7 +2253,7 @@ async function cfRenderPreview(chartId, icao, meta){
       isPdf = (Number(chart.source_url_type) === 0);
     }
 
-    // v0.25.53: removed endsWith('.pdf') extension guessing — use source_url_type
+    // v0.25.54: removed endsWith('.pdf') extension guessing — use source_url_type
     // when available. When unavailable, fall through to view_url (unsafe to guess file type).
     if (!targetUrl && chart.url) {
       if (chart.source_url_type != null) {
@@ -2283,7 +2283,7 @@ async function cfRenderPreview(chartId, icao, meta){
       : '<div class="cf-attribution" style="font-size:0.65rem;color:var(--muted, #aaa98d);padding:0.3rem 0.5rem;text-align:right">Charts via ChartFox</div>';
 
     // Guard: source_url_type=2 is HTML (interactive viewer).
-    // v0.25.53: if allows_iframe && !requires_preauth, embed in iframe.
+    // v0.25.54: if allows_iframe && !requires_preauth, embed in iframe.
     // Otherwise show an external link.
     var isHtml = targetUrl && Number(chart.source_url_type) === 2;
     var canIframeHtml = isHtml && chart.allows_iframe && !chart.requires_preauth;
@@ -2316,7 +2316,7 @@ async function cfRenderPreview(chartId, icao, meta){
       }
     } else if (isHtml && canIframeHtml) {
       // --- HTML interactive viewer: embed in iframe (allows_iframe=true, no preauth) ---
-      // v0.25.53: iframe may be blocked by X-Frame-Options on external AIP sites.
+      // v0.25.54: iframe may be blocked by X-Frame-Options on external AIP sites.
       // If load fails, the onerror handler replaces the iframe with an external link.
       var iframeId = 'cfHtmlIframe_' + chartId.replace(/[^a-zA-Z0-9]/g, '');
       var iframeHtml = '<iframe id="' + iframeId + '" class="cf-preview-iframe" src="' + escapeAttr(targetUrl) + '" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" referrerpolicy="no-referrer" title="' + escapeHtml(chartName) + '" onerror="var f=document.getElementById(\'' + iframeId + '\');if(f){f.style.display=\'none\';var fb=f.nextElementSibling;if(fb)fb.hidden=false;}"></iframe>';
@@ -2374,7 +2374,7 @@ function cfStartOverlayTimer(img, georef){
       overlay.style.top = `${(data.y_px * scaleY).toFixed(1)}px`;
       const h = typeof data.heading_deg === 'number' ? data.heading_deg : 0;
       overlay.style.transform = `translate(-50%,-50%) rotate(${h.toFixed(1)}deg)`;
-      // v0.25.53: also plot client-side ownship dot when georef data is present
+      // v0.25.54: also plot client-side ownship dot when georef data is present
       if (georef && typeof data.lat === 'number' && typeof data.lon === 'number') {
         cfPlotOwnship(georef, data.lon, data.lat, h);
       }
@@ -2403,7 +2403,7 @@ function cfLoadPins(){
   } catch (_) {}
 }
 
-// v0.25.53 — Geo-Reference Engine: WGS84→EPSG:3857→Chart Canvas Point
+// v0.25.54 — Geo-Reference Engine: WGS84→EPSG:3857→Chart Canvas Point
 /** Transforms WGS84 (Lat/Lon) to EPSG:3857 (Spherical Mercator) */
 function wgs84ToEPSG3857(lon, lat) {
   const x = (lon * 20037508.34) / 180;
@@ -2431,7 +2431,7 @@ function worldToChartPoint(coord, geoMeta, renderedHeight) {
 }
 
 /**
- * v0.25.53: Plot ownship position on geo-referenced chart.
+ * v0.25.54: Plot ownship position on geo-referenced chart.
  * Called by cfStartOverlayTimer when georef data + live telemetry are available.
  */
 function cfPlotOwnship(georef, lon, lat, heading) {
@@ -2698,7 +2698,7 @@ async function loadFlight(force=false){
     const response = await fetch(`/api/simbrief/latest?force_refresh=${force?'true':'false'}&sync_fenix=false`,{cache:'no-store'});
     if(!response.ok) throw new Error(`HTTP ${response.status}`);
     flightPlan = await response.json();
-    // v0.25.53: wrap every downstream render + side-effect with _safeRender so a
+    // v0.25.54: wrap every downstream render + side-effect with _safeRender so a
     // single throwing helper surfaces the actual culprit via the on-page trace
     // badge + /api/frontend/log, instead of aborting loadFlight and leaving the
     // Status Board showing the generic JS error message.
@@ -2967,7 +2967,7 @@ async function selectDispatchRoute(route){
   }catch(error){$('dispatchResultCount').textContent=`SELECT FAILED: ${friendlyError(error.message)}`}
 }
 
-// v0.25.53: Dispatch tab switching
+// v0.25.54: Dispatch tab switching
 function switchDispatchTab(tabName,evt){
   document.querySelectorAll('.dispatch-tab-btn').forEach(function(btn){btn.classList.remove('active');});
   if(evt&&evt.currentTarget)evt.currentTarget.classList.add('active');
@@ -2981,7 +2981,7 @@ function switchDispatchTab(tabName,evt){
   }
 }
 
-// v0.25.53: Real-world flight search via local FR24 + ADSBDB enrichment pipeline
+// v0.25.54: Real-world flight search via local FR24 + ADSBDB enrichment pipeline
 function clearRealworldInputs(){
   var fields=['rw-origin','rw-dest','rw-callsign','rw-aircraft'];
   for(var i=0;i<fields.length;i++){
@@ -3007,7 +3007,7 @@ async function performRealworldSearch(){
     if(aircraft)params.set('aircraft',aircraft);
     if(includeGA)params.set('include_ga','true');
     if(includeGliders)params.set('include_gliders','true');
-    // v0.25.53: use local pipeline (full ADSBDB enrichment) and fall back to VPS
+    // v0.25.54: use local pipeline (full ADSBDB enrichment) and fall back to VPS
     var apiUrl=window.location.origin+'/api/v1/realworld/search?'+params.toString();
     var resp=await fetch(apiUrl,{method:'GET',headers:{'Accept':'application/json'}});
     if(!resp.ok)throw new Error('HTTP '+resp.status+': '+resp.statusText);
@@ -3030,7 +3030,7 @@ function renderRealworldResults(flights){
   if(!container)return;
   container.innerHTML='';
   flights.forEach(function(flight){
-    // v0.25.53: temporary debug output to verify backend→frontend field contract
+    // v0.25.54: temporary debug output to verify backend→frontend field contract
     console.log("REALWORLD FLIGHT CARD DATA", flight);
     var card=document.createElement('div');
     card.className='rw-flight-card';
@@ -3538,7 +3538,7 @@ function initPrinterSettings(){
   loadPrinterStatus();
 }
 
-// v0.25.53: Virtual thermal receipt preview
+// v0.25.54: Virtual thermal receipt preview
 async function previewPrinterReceipt(){
   const btn = $('printerPreviewBtn');
   if (btn) btn.textContent = 'GENERATING...';
@@ -6336,7 +6336,7 @@ document.addEventListener('fullscreenchange',()=>{
 });
 
 function bg(fn){try{const p=fn();if(p&&p.catch)p.catch(()=>{})}catch(_){}}
-// v0.25.53: global runtime-error trap. Any synchronous throw anywhere in a
+// v0.25.54: global runtime-error trap. Any synchronous throw anywhere in a
 // render path is caught by _safeRender, logged with kind+stack to console,
 // shipped to /api/frontend/log via sendBeacon, and surfaces a clickable red
 // badge in the bottom-left of the page that copies the full trace. This is
@@ -6357,7 +6357,7 @@ function _captureError(kind, err){
     try{
       let badge = document.getElementById('__opsroomErrBadge');
       if(badge){ try{ badge.remove(); }catch(_){} }
-      // v0.25.53: bottom-left error badge rendering removed per user request.
+      // v0.25.54: bottom-left error badge rendering removed per user request.
       // Errors are still logged to console and stored in window.__opsroomErrors__
       // for developer diagnostics via the browser console.
     }catch(_){}
@@ -6382,7 +6382,7 @@ function _isOpsroomError(e){
     return true;
   }catch(_){ return true; }
 }
-// v0.25.53: unhandledrejection and window.error listeners disabled —
+// v0.25.54: unhandledrejection and window.error listeners disabled —
 // bottom-left error badge removed from user-facing production build.
 // Errors are still captured via _captureError for console logging.
 // if(typeof window !== 'undefined'){
@@ -6517,13 +6517,13 @@ document.addEventListener('click', function(e) {
 // -- PDF.js Canvas Chart Renderer (v0.25.16) ---------------------------------
 let cfPdfRenderer = null;
 async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUrl, _cfPdfRetries) {
-  // v0.25.53: retry guard for zero-width container (max 10 frames)
+  // v0.25.54: retry guard for zero-width container (max 10 frames)
   _cfPdfRetries = _cfPdfRetries || 0;
   if (!window.pdfjsLib) {
     container.innerHTML = `<div class="cf-empty">PDF RENDERER UNAVAILABLE<br><small>PDF.js library did not load</small></div>`;
     return;
   }
-  // v0.25.53: retry guard for zero-width container (max 30 frames, ~500ms).
+  // v0.25.54: retry guard for zero-width container (max 30 frames, ~500ms).
   // Also check parent preview — if the whole ChartFox panel is hidden,
   // don't waste frames retrying.
   var _pw = 0;
@@ -6545,7 +6545,7 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
     return;
   }
   try {
-    // v0.25.53: fetch the proxy URL, validate HTTP + content-type + PDF magic,
+    // v0.25.54: fetch the proxy URL, validate HTTP + content-type + PDF magic,
     // then pass ArrayBuffer to PDF.js -- prevents "Invalid PDF structure"
     // when the backend returns JSON errors instead of PDF bytes.
     const resp = await fetch(proxyUrl);
@@ -6558,7 +6558,7 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
     }
     var ct = String(resp.headers.get('content-type') || '');
     var buf = await resp.arrayBuffer();
-    // v0.25.53: detect JSON iframe redirect before rejecting as error
+    // v0.25.54: detect JSON iframe redirect before rejecting as error
     if (ct.includes('json')) {
       try {
         var decoder = new TextDecoder();
@@ -6612,7 +6612,7 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
     // Calculate scale to fit width
     const wrapRect = wrap.getBoundingClientRect();
     const vp = page.getViewport({scale: 1.0});
-    // v0.25.53: multiply by devicePixelRatio (minimum 2.0x) for crisp rendering on HiDPI/Retina displays.
+    // v0.25.54: multiply by devicePixelRatio (minimum 2.0x) for crisp rendering on HiDPI/Retina displays.
     // CSS sizes remain at logical pixels; canvas backing store scales to physical pixels.
     const dpr = Math.max(window.devicePixelRatio || 1, 3.0);
     const logicalScale = (wrapRect.width - 20) / vp.width;
@@ -6629,7 +6629,7 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
     let zoom = 1.0, panX = 0, panY = 0;
     let isDragging = false, dragStartX = 0, dragStartY = 0, dragPanX = 0, dragPanY = 0;
     let darkMode = true;
-    // v0.25.53: apply dark mode CSS class immediately to prevent white flash
+    // v0.25.54: apply dark mode CSS class immediately to prevent white flash
     wrap.classList.add('dark-mode');
 
     function applyTransform() {
@@ -6695,7 +6695,7 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
       const lbl = document.getElementById('cfPdfZoomLevel');
       if (lbl) lbl.textContent = Math.round(zoom * 100) + '%';
     }
-    // v0.25.53: wire annotation tools integrated into PDF toolbar
+    // v0.25.54: wire annotation tools integrated into PDF toolbar
     var annotPen = tb.querySelector('#cfAnnotPen');
     var annotHighlighter = tb.querySelector('#cfAnnotHighlighter');
     var annotEraser = tb.querySelector('#cfAnnotEraser');
@@ -6734,9 +6734,9 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
     }
 
     cfPdfRenderer = { pdf, page, canvas, wrap, zoom, panX, panY, darkMode, destroy: () => { container.innerHTML = ''; } };
-    // v0.25.53: init annotation overlay after successful render
+    // v0.25.54: init annotation overlay after successful render
     cfInitAnnotationOverlay(container, chartId);
-    // v0.25.53: auto-fit chart to fill expanded viewer
+    // v0.25.54: auto-fit chart to fill expanded viewer
     setTimeout(function(){ cfAutoFitToScreen(); }, 100);
   } catch (e) {
     const openLink = viewUrl ? '<a class="cf-pdf-link" href="' + escapeHtml(viewUrl) + '" target="_blank" rel="noopener noreferrer">OPEN CHART ON CHARTFOX</a>' : '';
@@ -6744,14 +6744,14 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
   }
 }
 
-// v0.25.53 — Annotation/Scratchpad Overlay (ported from Scratchpad module)
+// v0.25.54 — Annotation/Scratchpad Overlay (ported from Scratchpad module)
 // Transparent canvas overlay for pen/highlighter/eraser on top of chart viewer
 function cfInitAnnotationOverlay(previewContainer, chartId) {
   if (!previewContainer || !chartId) return;
   // Remove previous overlay if any
   var oldOverlay = document.getElementById('cfAnnotOverlay');
   if (oldOverlay) oldOverlay.remove();
-  // v0.25.53: toolbar is now integrated into PDF toolbar — only create canvas overlay here
+  // v0.25.54: toolbar is now integrated into PDF toolbar — only create canvas overlay here
   // Reset state for new chart
   cfAnnotation.lastChartId = chartId;
   cfAnnotation.strokes = cfLoadAnnotations(chartId);
@@ -6769,7 +6769,7 @@ function cfInitAnnotationOverlay(previewContainer, chartId) {
     pdfWrap.style.position = 'relative';
     pdfWrap.appendChild(canvas);
   } else {
-    // v0.25.53: create wrapper for pan sync if not present
+    // v0.25.54: create wrapper for pan sync if not present
     var autoWrap = document.createElement('div');
     autoWrap.id = 'cfPdfCanvasWrap';
     autoWrap.style.cssText = 'position:relative;overflow:hidden';
@@ -6790,7 +6790,7 @@ function cfInitAnnotationOverlay(previewContainer, chartId) {
   cfAnnotation.ctx = canvas.getContext('2d');
   cfAnnotation.active = false;
   cfRedrawAnnotations();
-  // v0.25.53: toolbar wiring is now in cfRenderPdfCanvas; only mouse drawing events here
+  // v0.25.54: toolbar wiring is now in cfRenderPdfCanvas; only mouse drawing events here
   // Mouse drawing events
   canvas.addEventListener('mousedown', cfAnnotStart);
   canvas.addEventListener('mousemove', cfAnnotMove);
@@ -6798,7 +6798,7 @@ function cfInitAnnotationOverlay(previewContainer, chartId) {
   canvas.addEventListener('mouseleave', cfAnnotEnd);
 }
 
-// v0.25.53: Convert pointer event to chart canvas internal-pixel and normalised coordinates.
+// v0.25.54: Convert pointer event to chart canvas internal-pixel and normalised coordinates.
 // Accounts for CSS display scale vs actual canvas pixel resolution.
 function getChartCanvasCoordinates(e, canvas) {
   var rect = canvas.getBoundingClientRect();
@@ -6914,7 +6914,7 @@ function cfSaveAnnotations(chartId, strokes) {
   } catch (_) {}
 }
 
-// v0.25.53 — Auto-fit chart to screen on load and window resize
+// v0.25.54 — Auto-fit chart to screen on load and window resize
 function cfAutoFitToScreen() {
   var canvas = document.getElementById('cfPdfCanvas');
   if (!canvas || !cfPdfRenderer) return;

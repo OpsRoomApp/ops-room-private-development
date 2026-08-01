@@ -1,6 +1,6 @@
 # OPS ROOM — Frontend Engine, State Management & DOM Mechanics
 
-**Version:** v0.25.53
+**Version:** v0.25.54
 **Last Updated:** 2026-07-31
 
 ---
@@ -416,7 +416,7 @@ Footer status bar showing:
 - **Hoppie status:** CONNECTED / DISCONNECTED
 - **RAAS status:** ACTIVE / STBY / FAULT
 - **GSX status:** RUNNING / IDLE (with current service)
-- **Version:** `OPS ROOM v0.25.53`
+- **Version:** `OPS ROOM v0.25.54`
 
 Status updates flow from WebSocket messages and REST polling every 30 seconds. Banners use CSS class toggling: `.status-ok` (green), `.status-warn` (amber), `.status-err` (red).
 

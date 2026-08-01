@@ -1,14 +1,14 @@
-# OPS ROOM v0.25.53 — POST-JULY 30 RECONSTRUCTION AUDIT
+# OPS ROOM v0.25.54 — POST-JULY 30 RECONSTRUCTION AUDIT
 
 ## Audit Date: 2026-08-01
 ## Backup Baseline: July 30, 2026 (v0.25.35)
-## Target: v0.25.53 final state
+## Target: v0.25.54 final state
 
 ---
 
 ## Critical Caveat: Version Comments Are Misleading
 
-During recovery, `sed` replaced ALL occurrences of `0.25.35` with `0.25.53` across the codebase — including in code comments. Comments like `// v0.25.53: resize annotation canvas` were originally `// v0.25.35: resize...` and do NOT indicate post-July 30 work. **Only code structure and features — not version strings in comments — are reliable evidence.**
+During recovery, `sed` replaced ALL occurrences of `0.25.35` with `0.25.54` across the codebase — including in code comments. Comments like `// v0.25.54: resize annotation canvas` were originally `// v0.25.35: resize...` and do NOT indicate post-July 30 work. **Only code structure and features — not version strings in comments — are reliable evidence.**
 
 ---
 
@@ -23,7 +23,7 @@ During recovery, `sed` replaced ALL occurrences of `0.25.35` with `0.25.53` acro
 | v0.25.44 | Jul 31–Aug 1 | Restore separate search fields, fix origin/dest data, FL display fix, EOBT integration, ChartFox pen offset fix, SimBrief button logic |
 | v0.25.45 | Aug 1 | **Massive overhaul**: new architecture (provider abstraction, ADSBDB enrichment, cache, search index), new card design with airline/aircraft/telemetry/source fields, aircraft classification, ranking, GA/glider filtering, deduplication |
 | v0.25.46 | Aug 1 | Zero-results regression fixes (ADSB fallback URL, UNKNOWN visibility, blank dedup keys, empty-cache protection), diagnostics endpoint, pipeline stats framework |
-| v0.25.53 | Aug 1 | Built-in seed coordinates, zone sweep fallback, per-record normalization isolation, populated pipeline stats, search index fallback, discovery strategy tracking, structured logging, regression tests |
+| v0.25.54 | Aug 1 | Built-in seed coordinates, zone sweep fallback, per-record normalization isolation, populated pipeline stats, search index fallback, discovery strategy tracking, structured logging, regression tests |
 
 ---
 
@@ -31,7 +31,7 @@ During recovery, `sed` replaced ALL occurrences of `0.25.35` with `0.25.53` acro
 
 ### 1. Real-World Search — Backend
 
-| Aspect | Expected (v0.25.53) | Actual (Restored) | Status |
+| Aspect | Expected (v0.25.54) | Actual (Restored) | Status |
 |--------|---------------------|-------------------|--------|
 | `realworld.py` | ~548 lines, provider abstraction, FR24+ADSBDB+OpenSky | NOT PRESENT locally | ✅ VPS-DEPLOYED |
 | `flight_model.py` | ~342 lines, classification, ranking, normalization | NOT PRESENT locally | ✅ VPS-DEPLOYED |
@@ -46,7 +46,7 @@ During recovery, `sed` replaced ALL occurrences of `0.25.35` with `0.25.53` acro
 
 ### 2. Real-World Search — Frontend UI
 
-| Feature | Expected (v0.25.53) | Actual (Restored) | Status |
+| Feature | Expected (v0.25.54) | Actual (Restored) | Status |
 |---------|---------------------|-------------------|--------|
 | Search tab in Dispatch | Present | ✅ Present (`dispatch-tab-realworld-search`) | MATCH |
 | Separate search fields (origin, dest, callsign, aircraft) | Present | ✅ Present (4 fields) | MATCH |
@@ -95,7 +95,7 @@ During recovery, `sed` replaced ALL occurrences of `0.25.35` with `0.25.53` acro
 | Annotation canvas (`cfAnnotation`) | Present with drawing support | ✅ Present (state: canvas, ctx, active) | MATCH |
 | Annotation event handlers | pointerdown/move/up for drawing | ❌ NOT PRESENT — no handlers found | **UNCERTAIN** |
 | Canvas coordinate conversion | `getBoundingClientRect()` + `clientX - rect.left` | ✅ Present in scratchpad (line 5785) | MATCH (scratchpad) |
-| PDF + annotation pan together | `v0.25.53 comment about panWrap` | ✅ Present (line 2161) | MATCH |
+| PDF + annotation pan together | `v0.25.54 comment about panWrap` | ✅ Present (line 2161) | MATCH |
 | `cfRedrawAnnotations()` | Redraw function | Referenced (line 2066) but not found | **UNCERTAIN** |
 
 **Verdict**: The `cfAnnotation` canvas infrastructure exists but has no visible drawing event handlers. The scratchpad canvas already uses proper `getBoundingClientRect()` coordinate conversion. The specific v0.25.44 pen offset bug may be in annotation drawing code that either exists but wasn't found by my grep, or was in a later version that was lost. **Confidence: MEDIUM.** The restored code appears to have a working ChartFox viewer with annotation canvas but possibly incomplete drawing implementation.
@@ -142,12 +142,12 @@ During recovery, `sed` replaced ALL occurrences of `0.25.35` with `0.25.53` acro
 
 | Aspect | Expected | Actual | Status |
 |--------|----------|--------|--------|
-| `version.json` | 0.25.53 | ✅ 0.25.53 | MATCH |
-| `main.py` FastAPI version | 0.25.53 | ✅ 0.25.53 | MATCH |
-| `updater.py` DEFAULT_VERSION | 0.25.53 | ✅ 0.25.53 | MATCH |
-| Build scripts | 0.25.53 | ✅ 0.25.53 | MATCH |
-| UI labels (index.html, host.html) | 0.25.53 | ✅ 0.25.53 | MATCH |
-| Cache-busters (`v=0-25-47`) | 0.25.53 | ✅ Correct counts | MATCH |
+| `version.json` | 0.25.54 | ✅ 0.25.54 | MATCH |
+| `main.py` FastAPI version | 0.25.54 | ✅ 0.25.54 | MATCH |
+| `updater.py` DEFAULT_VERSION | 0.25.54 | ✅ 0.25.54 | MATCH |
+| Build scripts | 0.25.54 | ✅ 0.25.54 | MATCH |
+| UI labels (index.html, host.html) | 0.25.54 | ✅ 0.25.54 | MATCH |
+| Cache-busters (`v=0-25-47`) | 0.25.54 | ✅ Correct counts | MATCH |
 | Release validator | 77/77 pass | ✅ 77/77 pass | MATCH |
 
 **Verdict**: All version references are correct. **MATCH.**
@@ -161,7 +161,7 @@ During recovery, `sed` replaced ALL occurrences of `0.25.35` with `0.25.53` acro
 | `opsroom_launcher.py` | 16 KB, imports from `app.*` | ✅ Intact | MATCH |
 | `opsroom_updater.py` | 16 KB | ✅ Intact | MATCH |
 | `OPS_ROOM.spec` | PyInstaller one-folder | ✅ Intact | MATCH |
-| `BUILD *.bat` | 0.25.53 outputs | ✅ Correct | MATCH |
+| `BUILD *.bat` | 0.25.54 outputs | ✅ Correct | MATCH |
 | `installer_script.iss` | Inno Setup | ✅ Present | MATCH |
 
 **Verdict**: Build infrastructure is complete and at correct version. **MATCH.**
@@ -231,11 +231,11 @@ During recovery, `sed` replaced ALL occurrences of `0.25.35` with `0.25.53` acro
 | 4 | `importToActiveDispatch()` | `opsroom.js` lines 3051–3058 |
 | 5 | Full `.rw-*` CSS styling | `opsroom.css` lines 104–106 |
 | 6 | SimBrief dispatch URL (`dispatch.simbrief.com/options/custom`) | `opsroom.js` line 2896 |
-| 7 | FastAPI 0.25.53, 239 routes | `main.py` |
+| 7 | FastAPI 0.25.54, 239 routes | `main.py` |
 | 8 | Flight Watch, FIDS, VATSIM, all bridges | Various |
 | 9 | ChartFox viewer with annotation canvas, pan | `opsroom.js` lines 2060–2175 |
 | 10 | Scratchpad with proper coordinate math | `opsroom.js` lines 5783–5790 |
-| 11 | All build infrastructure at 0.25.53 | `*.bat`, `*.spec`, `*.iss` |
+| 11 | All build infrastructure at 0.25.54 | `*.bat`, `*.spec`, `*.iss` |
 | 12 | 77/77 release validator pass | — |
 
 ### VPS-DEPLOYED (Not Local — Cannot Verify)
