@@ -1,8 +1,8 @@
-# OPS ROOM v0.25.49 — Build, Packaging, Cleanup & CI/CD
+# OPS ROOM v0.25.50 — Build, Packaging, Cleanup & CI/CD
 
 > **Exhaustive reference** for the complete build pipeline, destructive cleanup routines, release validation, installer generation, and packaging security rules.
 
-**Version:** v0.25.49
+**Version:** v0.25.50
 **Last Updated:** 2026-07-31
 
 ---
@@ -99,7 +99,7 @@ Generates the `update.json` manifest consumed by the dual-channel auto-updater.
 
 ```bash
 python tools/write_update_manifest.py \
-  --version "0.25.49" \
+  --version "0.25.50" \
   --zip "dist/OPS_ROOM_v0_25_00_Public_Windows_x64.zip" \
   --out "update.json" \
   --repo "https://github.com/OpsRoomApp/ops-room-releases" \
@@ -110,14 +110,14 @@ python tools/write_update_manifest.py \
 
 ```json
 {
-  "version": "0.25.49",
+  "version": "0.25.50",
   "channel": "stable",
   "codename": "Release Migration",
   "release_date": "2026-07-31",
   "download_url": "https://opsroom.live/downloads/OPS_ROOM_v0_25_00_Public_Windows_x64.zip",
-  "fallback_download_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/download/v0.25.49/OPS_ROOM_v0_25_00_Public_Windows_x64.zip",
+  "fallback_download_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/download/v0.25.50/OPS_ROOM_v0_25_00_Public_Windows_x64.zip",
   "sha256": "AFA80454495CEE29F4CB92856F73EBB2C633DB46A4EA493F467365F0987CAC3D",
-  "release_notes": "OPS ROOM v0.25.49 is available."
+  "release_notes": "OPS ROOM v0.25.50 is available."
 }
 ```
 
@@ -137,14 +137,14 @@ The manifest generator computes SHA-256 of the entire ZIP file using streaming b
 
 | Category | Count | Examples |
 |---|---|---|
-| **Version Consistency** | ~12 | All Python/JS/HTML/CSS/batch files reference `0.25.49`, no stale version strings |
+| **Version Consistency** | ~12 | All Python/JS/HTML/CSS/batch files reference `0.25.50`, no stale version strings |
 | **Source Manifest** | ~4 | Manifest targets exact GitHub release, build placeholder present |
 | **Static File Integrity** | ~6 | JavaScript syntax passes, CSS valid, HTML well-formed, no mojibake |
 | **Black Box Renderers** | ~6 | Engines + Systems use HTML/SVG views, not canvas; drawBlackBox routes correctly |
 | **Friendly Error Routing** | ~4 | Operational advisories route through `friendlyError`, raw exceptions excluded |
 | **Recording Schema** | ~4 | Recording schema v2, FO stick fields appended, frontend Controls wired |
 | **PMDG EULA Gate** | ~4 | PMDG SDK enforces EULA acceptance before snapshot/start |
-| **Route Surface** | ~1 | **SKIP** — hardcoded route count assertion removed per 0.25.49 policy |
+| **Route Surface** | ~1 | **SKIP** — hardcoded route count assertion removed per 0.25.50 policy |
 | **Build Script** | ~4 | Package name matches, manifest channel correct |
 | **README Integrity** | ~4 | Public user guidance, no developer handoff text |
 | **Python Compilation** | ~1 | `python -m compileall` passes |
@@ -156,9 +156,9 @@ The manifest generator computes SHA-256 of the entire ZIP file using streaming b
 ### Example Output
 
 ```
-PASS: version metadata is the stable v0.25.49 public release
-PASS: source manifest targets the exact v0.25.49 GitHub release
-PASS: runtime, launcher, diagnostics and system status target v0.25.49
+PASS: version metadata is the stable v0.25.50 public release
+PASS: source manifest targets the exact v0.25.50 GitHub release
+PASS: runtime, launcher, diagnostics and system status target v0.25.50
 ...
 SKIP: FastAPI route/OpenAPI surface check DISABLED
 PASS: Python compileall passes
@@ -176,23 +176,23 @@ When bumping the version, update **every** location — a single inconsistency f
 
 | File | Key / Pattern | Example Value |
 |---|---|---|
-| `app/main.py` | FastAPI version, diagnostics version, updater fallback | `"0.25.49"` |
-| `app/charts.py` | ChartFox diagnostics version | `"0.25.49"` |
-| `app/realworld.py` | Search engine version comment | `"0.25.49"` |
-| `app/system_status.py` | System summary version | `"0.25.49"` |
-| `app/updater.py` | `DEFAULT_VERSION` | `"0.25.49"` |
-| `app/static/opsroom.js` | In-app version stamp | `"0.25.49"` |
-| `app/static/opsroom.css` | Cache-buster comment | `/* v0.25.49 */` |
+| `app/main.py` | FastAPI version, diagnostics version, updater fallback | `"0.25.50"` |
+| `app/charts.py` | ChartFox diagnostics version | `"0.25.50"` |
+| `app/realworld.py` | Search engine version comment | `"0.25.50"` |
+| `app/system_status.py` | System summary version | `"0.25.50"` |
+| `app/updater.py` | `DEFAULT_VERSION` | `"0.25.50"` |
+| `app/static/opsroom.js` | In-app version stamp | `"0.25.50"` |
+| `app/static/opsroom.css` | Cache-buster comment | `/* v0.25.50 */` |
 | `app/static/index.html` | Script/link cache-buster | `?v=0-25-00` |
-| `app/static/service-worker.js` | SW version | `"0.25.49"` |
-| `version.json` | Build manifest version | `"0.25.49"` |
-| `update.json` | Update manifest version | `"0.25.49"` |
-| `opsroom_launcher.py` | Launcher version | `"0.25.49"` |
-| `README.md` | Public readme version | `v0.25.49` |
+| `app/static/service-worker.js` | SW version | `"0.25.50"` |
+| `version.json` | Build manifest version | `"0.25.50"` |
+| `update.json` | Update manifest version | `"0.25.50"` |
+| `opsroom_launcher.py` | Launcher version | `"0.25.50"` |
+| `README.md` | Public readme version | `v0.25.50` |
 | `BUILD OPS ROOM COMPLETE.bat` | Package name, version stamps | `OPS_ROOM_v0_25_00_Public` |
 | `BUILD WINDOWS APP ONLY.bat` | Package name, version stamps | `OPS_ROOM_v0_25_00_Public` |
-| `tools/validate_*.py` | Validation target version | `"0.25.49"` |
-| `tools/write_update_manifest.py` | Manifest version | `"0.25.49"` |
+| `tools/validate_*.py` | Validation target version | `"0.25.50"` |
+| `tools/write_update_manifest.py` | Manifest version | `"0.25.50"` |
 | `installer_script.iss` | Installer output name | `OPS_ROOM_Setup_v0_25_00.exe` |
 
 ### Cache-Busting
@@ -311,7 +311,7 @@ grep -r "OPSROOM_VPS_USER" opsroom-app/    # Must return 0 matches
 grep -r "OPSROOM_VPS_PASS" opsroom-app/    # Must return 0 matches
 
 # Version consistency
-grep -r "0.25.49" --include="*.py" --include="*.js" --include="*.bat" --include="*.json" --include="*.html" --include="*.css"
+grep -r "0.25.50" --include="*.py" --include="*.js" --include="*.bat" --include="*.json" --include="*.html" --include="*.css"
 # Must find all expected entries, with no stale version strings
 ```
 

@@ -1,6 +1,6 @@
 # OPS ROOM — Security & Secrets Management
 
-**Version:** v0.25.49
+**Version:** v0.25.50
 **Last Updated:** 2026-07-31
 
 ---

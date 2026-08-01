@@ -1,6 +1,6 @@
 # OPS ROOM — Database, Cache & Storage Schemas
 
-**Version:** v0.25.49
+**Version:** v0.25.50
 **Last Updated:** 2026-07-31
 
 ---
@@ -62,7 +62,7 @@ def app_data_dir() -> Path:
 |---|---|---|---|
 | `settings.json` | JSON | Full settings object | `{ identity: {vatsim_cid, simbrief_user_id}, integrations: {hoppie_configured, announcements_enabled, ...}, server: {port, lan_enabled, ...}, interface: {setup_completed, ...} }` |
 | `chartfox_token.json` | JSON | OAuth2 token | `{ access_token, refresh_token, expires_at, scope, token_type }` |
-| `version.json` | JSON | Build version manifest | `{ version: "0.25.49", build: "public-release" }` |
+| `version.json` | JSON | Build version manifest | `{ version: "0.25.50", build: "public-release" }` |
 | `update.json` | JSON | Latest fetched update manifest | `{ version, download_url, sha256, release_notes }` |
 | `update_state.json` | JSON | Staged update state | `{ staged_version, staged_path, ready: bool }` |
 | `opsroom.log` | Plain text | Rotating application log | Timestamped log lines (UTF-8, errors=replace) |
@@ -284,7 +284,7 @@ General-purpose frontend cache. Keys are arbitrary; values have `ts` (timestamp)
 
 ```json
 [
-  { "ts": 1785360000, "entry": "OPS ROOM v0.25.49 started" },
+  { "ts": 1785360000, "entry": "OPS ROOM v0.25.50 started" },
   { "ts": 1785360000, "entry": "SimConnect connected: MSFS 2024" }
 ]
 ```

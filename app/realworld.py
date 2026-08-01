@@ -1,4 +1,4 @@
-"""Real-World Flight Search pipeline – v0.25.49.
+"""Real-World Flight Search pipeline – v0.25.50.
 
 Provider-agnostic discovery, normalisation, ADSBDB enrichment, caching,
 search indexing, and diagnostics for the OPS ROOM Real World Schedules feature.
@@ -240,9 +240,19 @@ async def _discover_fr24(
     callsign: str = "",
 ) -> list[dict[str, Any]]:
     """Discover flights via FR24 bounding-box search, with fallback to
-    ADSB.lol and zone sweep."""
+    ADSB.lol and zone sweep.
+
+    FR24 returns lists (16-element arrays); this function normalises them
+    to dicts compatible with normalise_fr24().
+    """
     raw: list[dict[str, Any]] = []
     discovery_strategy = "none"
+
+    # FR24 list-index mapping — keys match what normalise_fr24() expects
+    _FR24_IDX = {0: "hex", 1: "lat", 2: "lon", 3: "heading", 4: "altitude",
+                 5: "speed", 6: "squawk", 7: "radar", 8: "type", 9: "reg",
+                 10: "timestamp", 11: "orig", 12: "dest", 13: "flight",
+                 14: "vrate", 15: "track"}
 
     bounds_list = _build_fr24_bounds(origin_clean, dest_clean)
     if bounds_list:
@@ -256,7 +266,7 @@ async def _discover_fr24(
                         params={"bounds": f"{bounds['lat']-1.5},{bounds['lat']+1.5},"
                                           f"{bounds['lon']-1.5},{bounds['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.49"},
+                                 "User-Agent": "OPS-ROOM/0.25.50"},
                     )
                     _update_provider_health("fr24", resp.status_code == 200,
                                             (time.monotonic() - t0) * 1000,
@@ -266,7 +276,15 @@ async def _discover_fr24(
                         if isinstance(data, dict):
                             for _k, v in data.items():
                                 if isinstance(v, list) and len(v) >= 10:
-                                    raw.append(v)
+                                    # Convert FR24 list to dict for normalise_fr24
+                                    flight_dict: dict[str, Any] = {}
+                                    for idx, key in _FR24_IDX.items():
+                                        if idx < len(v):
+                                            flight_dict[key] = v[idx]
+                                    raw.append(flight_dict)
+            except Exception as exc:
+                _update_provider_health("fr24", False, error_type=type(exc).__name__)
+                _record_error("discovery", "fr24", type(exc).__name__, str(exc))
             except Exception as exc:
                 _update_provider_health("fr24", False, error_type=type(exc).__name__)
                 _record_error("discovery", "fr24", type(exc).__name__, str(exc))
@@ -283,14 +301,18 @@ async def _discover_fr24(
                         params={"bounds": f"{zone['lat']-1.5},{zone['lat']+1.5},"
                                           f"{zone['lon']-1.5},{zone['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.49"},
+                                 "User-Agent": "OPS-ROOM/0.25.50"},
                     )
                     if resp.status_code == 200:
                         data = resp.json()
                         if isinstance(data, dict):
                             for _k, v in data.items():
                                 if isinstance(v, list) and len(v) >= 10:
-                                    raw.append(v)
+                                    flight_dict = {}
+                                    for idx, key in _FR24_IDX.items():
+                                        if idx < len(v):
+                                            flight_dict[key] = v[idx]
+                                    raw.append(flight_dict)
                 await asyncio.sleep(0.2)
             except Exception:
                 continue
@@ -353,6 +375,13 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cs = _clean_str(flight.get("callsign") or "")
         mode_s = _clean_str(flight.get("mode_s") or "")
 
+        # Track enrichment result per flight (v0.25.50)
+        enrichment_attempted = True
+        route_lookup = False
+        route_success = False
+        aircraft_lookup = False
+        aircraft_success = False
+
         # Try variants: exact + leading-zero variants
         cs_variants = [cs]
         if cs and cs[-1].isdigit():
@@ -369,13 +398,17 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
             cached_ac = cache_get_aircraft(ac_key)
             if cached_ac:
                 apply_adsbdb_aircraft(flight, cached_ac)
+                aircraft_lookup = True
+                aircraft_success = True
             else:
+                aircraft_lookup = True
                 attempted += 1
                 try:
                     ac_data = await get_aircraft(ac_key)
                     if ac_data:
                         cache_set_aircraft(ac_key, ac_data)
                         apply_adsbdb_aircraft(flight, ac_data)
+                        aircraft_success = True
                         succeeded += 1
                     _update_provider_health("adsbdb", True)
                 except Exception as exc:
@@ -387,15 +420,18 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for variant in cs_variants:
             if not variant:
                 continue
+            route_lookup = True
             cached_route = cache_get_route(variant)
             if cached_route:
                 route_data = cached_route
+                route_success = True
                 break
             try:
                 attempted += 1
                 route_data = await get_callsign(variant)
                 if route_data:
                     cache_set_route(variant, route_data)
+                    route_success = True
                     succeeded += 1
                     break
                 _update_provider_health("adsbdb", True)
@@ -414,6 +450,18 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 recovered_origin += 1
         if not had_aircraft_before and flight.get("aircraft_type"):
             recovered_aircraft += 1
+
+        # ── Attach per-flight enrichment audit flags (v0.25.50) ──
+        flight["enrichment_attempted"] = enrichment_attempted
+        flight["enrichment_success"] = route_success or aircraft_success
+        flight["route_enriched"] = route_success
+        flight["aircraft_enriched"] = aircraft_success
+
+        # Structured log per lookup
+        if route_lookup or aircraft_lookup:
+            _log.debug(
+                "[RealWorld] enrichment cs=%s route=%s/%s ac=%s/%s",
+                cs, route_lookup, route_success, aircraft_lookup, aircraft_success)
 
         if not flight.get("category") or flight.get("category") == "UNKNOWN":
             flight["category"] = classify_aircraft(
@@ -640,9 +688,13 @@ async def realworld_search(
                 if not _refresh_running:
                     _refresh_running = True
                     try:
-                        await asyncio.wait_for(_refresh_loop(), timeout=12.0)
+                        # Timeout scales with estimated flight count + enrichment time
+                        # At 0.22s rate-limit per ADSBDB call, 100 flights = ~22s
+                        await asyncio.wait_for(_refresh_loop(), timeout=45.0)
                     except asyncio.TimeoutError:
                         _log.warning("[RealWorld] Refresh timed out — serving stale cache")
+                    except asyncio.CancelledError:
+                        _log.warning("[RealWorld] Refresh cancelled — serving stale cache")
                     finally:
                         _refresh_running = False
             flights, cache_age, is_stale = get_live_flights()
@@ -708,7 +760,7 @@ async def realworld_diagnostics(include_recent_errors: bool = False):
     response: dict[str, Any] = {
         "status": "ok",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "version": "0.25.49",
+        "version": "0.25.50",
         "last_successful_refresh_utc": stats.get("last_refresh_utc"),
         "last_refresh_status": stats.get("last_refresh_status"),
         "serving_stale_cache": is_stale and len(flights) > 0,

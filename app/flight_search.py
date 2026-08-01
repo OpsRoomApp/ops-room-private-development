@@ -1,4 +1,4 @@
-"""Real-world flight search index – v0.25.49.
+"""Real-world flight search index – v0.25.50.
 
 Builds an in-memory searchable index from normalized flight records and
 provides a case-insensitive, partial-match search with direct-field fallback.

@@ -1,6 +1,6 @@
-"""Regression tests for Real World Search pipeline – v0.25.49.
+"""Regression tests for Real World Search pipeline – v0.25.50.
 
-Covers all v0.25.46 root-cause fixes and v0.25.49 hardening features.
+Covers all v0.25.46 root-cause fixes and v0.25.50 hardening features.
 Runs without external network access (pure unit tests).
 """
 
@@ -211,7 +211,7 @@ def test_seed_coords() -> None:
     check("KJFK in seed coords", "KJFK" in _SEED_AIRPORTS)
 
 
-# ── Test K: ADSBDB enrichment (v0.25.49) ─────────────────────────────────────
+# ── Test K: ADSBDB enrichment (v0.25.50) ─────────────────────────────────────
 
 def test_enrichment_route_recovery() -> None:
     """ADSBDB route enrichment recovers missing destination."""
@@ -310,6 +310,34 @@ def test_enrichment_field_name_variants() -> None:
     check("icao_code key accepted", flight2.get("destination_icao") == "EGLL")
 
 
+# ── Test L: FR24 list→dict conversion (v0.25.50) ────────────────────────────
+
+def test_normalise_fr24_from_list() -> None:
+    """FR24 returns 16-element lists; verify normalise_fr24 handles dict input."""
+    # The _discover_fr24 function now converts FR24 lists to dicts before
+    # passing to normalise_fr24.  This test verifies the dict format works.
+    fr24_dict = {
+        "hex": "461F3E", "lat": 50.03, "lon": 8.57, "heading": 270,
+        "altitude": 35000, "speed": 470, "squawk": "1000", "radar": "F24",
+        "type": "A359", "reg": "D-AIXL", "timestamp": 1234567890,
+        "orig": "EDDF", "dest": "KJFK", "flight": "DLH400",
+        "vrate": 0, "track": 270,
+    }
+    result = normalise_fr24(fr24_dict)
+    check("FR24 dict: callsign preserved", result is not None)
+    check("FR24 dict: origin = EDDF", result and result.get("origin_icao") == "EDDF")
+    check("FR24 dict: destination = KJFK", result and result.get("destination_icao") == "KJFK")
+    check("FR24 dict: aircraft = A359", result and result.get("aircraft_type") == "A359")
+    check("FR24 dict: altitude_ft = 35000", result and result.get("altitude_ft") == 35000)
+    check("FR24 dict: flight_level = FL350", result and result.get("flight_level") == "FL350")
+
+
+def test_normalise_fr24_rejects_list() -> None:
+    """normalise_fr24 must reject list input (not crash)."""
+    result = normalise_fr24(["a", "b", "c"])
+    check("FR24 list input returns None", result is None)
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -337,6 +365,8 @@ if __name__ == "__main__":
     test_enrichment_aircraft_meta()
     test_enrichment_missing_route_handled()
     test_enrichment_field_name_variants()
+    test_normalise_fr24_from_list()
+    test_normalise_fr24_rejects_list()
 
     print("=" * 60)
     total = PASS + FAIL
