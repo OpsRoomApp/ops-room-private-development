@@ -1,4 +1,4 @@
-"""Real-World Flight Search pipeline – v0.25.48.
+"""Real-World Flight Search pipeline – v0.25.49.
 
 Provider-agnostic discovery, normalisation, ADSBDB enrichment, caching,
 search indexing, and diagnostics for the OPS ROOM Real World Schedules feature.
@@ -90,6 +90,12 @@ _pipeline_stats: dict[str, Any] = {
     "enrichment_attempted": 0,
     "enrichment_successful": 0,
     "enrichment_failed": 0,
+    "enrichment_missing_dest_before": 0,
+    "enrichment_recovered_dest": 0,
+    "enrichment_missing_origin_before": 0,
+    "enrichment_recovered_origin": 0,
+    "enrichment_missing_aircraft_before": 0,
+    "enrichment_recovered_aircraft": 0,
     "final_available": 0,
     "discovery_strategy": "none",
     "last_refresh_utc": None,
@@ -250,7 +256,7 @@ async def _discover_fr24(
                         params={"bounds": f"{bounds['lat']-1.5},{bounds['lat']+1.5},"
                                           f"{bounds['lon']-1.5},{bounds['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.48"},
+                                 "User-Agent": "OPS-ROOM/0.25.49"},
                     )
                     _update_provider_health("fr24", resp.status_code == 200,
                                             (time.monotonic() - t0) * 1000,
@@ -277,7 +283,7 @@ async def _discover_fr24(
                         params={"bounds": f"{zone['lat']-1.5},{zone['lat']+1.5},"
                                           f"{zone['lon']-1.5},{zone['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.48"},
+                                 "User-Agent": "OPS-ROOM/0.25.49"},
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -320,9 +326,30 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
     attempted = 0
     succeeded = 0
     failed = 0
+    missing_dest_before = 0
+    recovered_dest = 0
+    missing_origin_before = 0
+    recovered_origin = 0
+    missing_aircraft_before = 0
+    recovered_aircraft = 0
 
     async def _enrich_one(flight: dict[str, Any]) -> dict[str, Any]:
         nonlocal attempted, succeeded, failed
+        nonlocal missing_dest_before, recovered_dest
+        nonlocal missing_origin_before, recovered_origin
+        nonlocal missing_aircraft_before, recovered_aircraft
+
+        # Count missing fields before enrichment (save state for accurate recovery)
+        had_dest_before = bool(flight.get("destination_icao"))
+        had_origin_before = bool(flight.get("origin_icao"))
+        had_aircraft_before = bool(flight.get("aircraft_type"))
+        if not had_dest_before:
+            missing_dest_before += 1
+        if not had_origin_before:
+            missing_origin_before += 1
+        if not had_aircraft_before:
+            missing_aircraft_before += 1
+
         cs = _clean_str(flight.get("callsign") or "")
         mode_s = _clean_str(flight.get("mode_s") or "")
 
@@ -379,6 +406,15 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if route_data:
             apply_adsbdb_route(flight, route_data)
 
+        # Count field recovery after enrichment (only count actual recovery)
+        if route_data:
+            if not had_dest_before and flight.get("destination_icao"):
+                recovered_dest += 1
+            if not had_origin_before and flight.get("origin_icao"):
+                recovered_origin += 1
+        if not had_aircraft_before and flight.get("aircraft_type"):
+            recovered_aircraft += 1
+
         if not flight.get("category") or flight.get("category") == "UNKNOWN":
             flight["category"] = classify_aircraft(
                 flight.get("aircraft_type"), flight.get("callsign"))
@@ -406,9 +442,26 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
             _pipeline_stats.get("enrichment_successful", 0) + succeeded)
         _pipeline_stats["enrichment_failed"] = (
             _pipeline_stats.get("enrichment_failed", 0) + failed)
+        _pipeline_stats["enrichment_missing_dest_before"] = (
+            _pipeline_stats.get("enrichment_missing_dest_before", 0) + missing_dest_before)
+        _pipeline_stats["enrichment_recovered_dest"] = (
+            _pipeline_stats.get("enrichment_recovered_dest", 0) + recovered_dest)
+        _pipeline_stats["enrichment_missing_origin_before"] = (
+            _pipeline_stats.get("enrichment_missing_origin_before", 0) + missing_origin_before)
+        _pipeline_stats["enrichment_recovered_origin"] = (
+            _pipeline_stats.get("enrichment_recovered_origin", 0) + recovered_origin)
+        _pipeline_stats["enrichment_missing_aircraft_before"] = (
+            _pipeline_stats.get("enrichment_missing_aircraft_before", 0) + missing_aircraft_before)
+        _pipeline_stats["enrichment_recovered_aircraft"] = (
+            _pipeline_stats.get("enrichment_recovered_aircraft", 0) + recovered_aircraft)
 
-    _log.info("[RealWorld] Enrichment: %d attempted, %d succeeded, %d failed",
-              attempted, succeeded, failed)
+    _log.info("[RealWorld] Enrichment: %d attempted, %d succeeded, %d failed | "
+              "dest: %d missing → %d recovered, origin: %d missing → %d recovered, "
+              "aircraft: %d missing → %d recovered",
+              attempted, succeeded, failed,
+              missing_dest_before, recovered_dest,
+              missing_origin_before, recovered_origin,
+              missing_aircraft_before, recovered_aircraft)
     return enriched
 
 
@@ -655,7 +708,7 @@ async def realworld_diagnostics(include_recent_errors: bool = False):
     response: dict[str, Any] = {
         "status": "ok",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "version": "0.25.48",
+        "version": "0.25.49",
         "last_successful_refresh_utc": stats.get("last_refresh_utc"),
         "last_refresh_status": stats.get("last_refresh_status"),
         "serving_stale_cache": is_stale and len(flights) > 0,
@@ -676,6 +729,14 @@ async def realworld_diagnostics(include_recent_errors: bool = False):
             "enrichment_attempted": stats.get("enrichment_attempted", 0),
             "enrichment_successful": stats.get("enrichment_successful", 0),
             "enrichment_failed": stats.get("enrichment_failed", 0),
+            "enrichment_recovery": {
+                "missing_dest_before": stats.get("enrichment_missing_dest_before", 0),
+                "recovered_dest": stats.get("enrichment_recovered_dest", 0),
+                "missing_origin_before": stats.get("enrichment_missing_origin_before", 0),
+                "recovered_origin": stats.get("enrichment_recovered_origin", 0),
+                "missing_aircraft_before": stats.get("enrichment_missing_aircraft_before", 0),
+                "recovered_aircraft": stats.get("enrichment_recovered_aircraft", 0),
+            },
             "dedup_before": stats.get("before_dedup", 0),
             "dedup_after": stats.get("after_dedup", 0),
             "dedup_removed": stats.get("dedup_removed", 0),

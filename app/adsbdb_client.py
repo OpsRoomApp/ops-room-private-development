@@ -1,4 +1,4 @@
-"""ADSBDB API client – v0.25.48.
+"""ADSBDB API client – v0.25.49.
 
 Lightweight async client for the ADSBDB REST API with connection pooling,
 timeouts, retry, and rate-limit awareness.
@@ -77,7 +77,13 @@ async def _get(
                     continue
                 resp.raise_for_status()
                 data = resp.json()
-                result = data if isinstance(data, dict) else None
+                if isinstance(data, dict):
+                    # ADSBDB wraps all responses in a "response" key — unwrap it
+                    result = data.get("response", data)
+                    if not isinstance(result, dict):
+                        result = data
+                else:
+                    result = None
                 break
         except (httpx.TimeoutException, httpx.HTTPError, json.JSONDecodeError) as exc:
             last_exc = exc

@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
-title Build OPS ROOM 0.25.48 Public Release Windows App Only
+title Build OPS ROOM 0.25.49 Public Release Windows App Only
 
  echo ================================================================
- echo OPS ROOM 0.25.48 Public Release - Windows app only build
+ echo OPS ROOM 0.25.49 Public Release - Windows app only build
  echo ================================================================
  echo.
 
@@ -189,7 +189,7 @@ rem old release notes and helper batch files are intentionally not copied.
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "Compress-Archive -LiteralPath '%DIST_DIR%\OPS ROOM' -DestinationPath '%DIST_DIR%\OPS_ROOM_v0_25_48_Public_Windows_x64.zip' -Force -ErrorAction Stop" || goto :fail
 
-"%VENV_DIR%\Scripts\python.exe" tools\write_update_manifest.py --version 0.25.48 --channel stable --zip "%DIST_DIR%\OPS_ROOM_v0_25_48_Public_Windows_x64.zip" --out "%DIST_DIR%\update.json" || goto :fail
+"%VENV_DIR%\Scripts\python.exe" tools\write_update_manifest.py --version 0.25.49 --channel stable --zip "%DIST_DIR%\OPS_ROOM_v0_25_48_Public_Windows_x64.zip" --out "%DIST_DIR%\update.json" || goto :fail
 
 echo.
 echo Build complete:

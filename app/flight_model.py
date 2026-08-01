@@ -1,4 +1,4 @@
-"""Real-world flight data model – v0.25.48.
+"""Real-world flight data model – v0.25.49.
 
 Normalisation, classification, ranking, deduplication, and dispatch/Simbrief
 eligibility helpers for the Real World Search pipeline.
@@ -301,6 +301,7 @@ def apply_adsbdb_aircraft(flight: dict[str, Any], ac_data: dict[str, Any]) -> No
     """Enrich a flight record with ADSBDB aircraft / registration metadata."""
     if not ac_data or not isinstance(ac_data, dict):
         return
+    # ADSBDB wraps aircraft data under "aircraft" key after unwrapping
     a = ac_data.get("aircraft") or ac_data
     for src_key, dst_key in (
         ("type", "aircraft_type"),
@@ -310,52 +311,87 @@ def apply_adsbdb_aircraft(flight: dict[str, Any], ac_data: dict[str, Any]) -> No
         ("registered_owner", None),
     ):
         val = str(a.get(src_key) or "").strip()
-        if val and dst_key:
-            flight.setdefault(dst_key, val)
-    flight.setdefault("identity_source", "ADSBDB")
+        if val and dst_key and not flight.get(dst_key):
+            flight[dst_key] = val
+    # Identity source
+    if not flight.get("identity_source"):
+        flight["identity_source"] = "ADSBDB"
+    # Backfill aircraft_type from icao_type if we got it
     if not flight.get("aircraft_type"):
         flight["aircraft_type"] = flight.get("aircraft_icao_type")
-    if flight.get("aircraft_type"):
-        flight.setdefault("category", classify_aircraft(flight["aircraft_type"], flight.get("callsign")))
+    if flight.get("aircraft_type") and not flight.get("category"):
+        flight["category"] = classify_aircraft(flight["aircraft_type"], flight.get("callsign"))
 
 
 def apply_adsbdb_route(flight: dict[str, Any], route_data: dict[str, Any]) -> None:
-    """Enrich a flight record with ADSBDB route / callsign origin-destination data."""
+    """Enrich a flight record with ADSBDB route / callsign origin-destination data.
+
+    Handles both ADSBDB response formats:
+      - Callsign endpoint: {"flightroute": {"origin": {...}, "destination": {...}, ...}}
+      - Already-unwrapped data with "route" key
+      - Flat origin/destination string fields
+    """
     if not route_data or not isinstance(route_data, dict):
         return
-    r = route_data.get("route") or route_data
-    for src_key, dst_key in (
-        ("origin", "origin_icao"),
-        ("destination", "destination_icao"),
-    ):
+
+    # ADSBDB callsign endpoint returns data under "flightroute"; also try "route"
+    r = route_data.get("flightroute") or route_data.get("route") or route_data
+    if not isinstance(r, dict):
+        return
+
+    # Helper to get airport field across both naming conventions
+    def _a_val(apt: dict, *keys: str) -> str:
+        for k in keys:
+            v = str(apt.get(k) or "").strip()
+            if v:
+                return v
+        return ""
+
+    for src_key in ("origin", "destination"):
         airport = r.get(src_key)
         if isinstance(airport, dict):
-            for sub_key, dst_sub in (
-                ("icao", src_key + "_icao"),
-                ("iata", src_key + "_iata"),
-                ("name", src_key + "_name"),
-                ("municipality", src_key + "_city"),
-                ("country", src_key + "_country"),
-            ):
-                val = str(airport.get(sub_key) or "").strip()
-                if val:
-                    flight.setdefault(dst_sub, val)
+            icao = _a_val(airport, "icao_code", "icao")
+            iata = _a_val(airport, "iata_code", "iata")
+            name = _a_val(airport, "name")
+            city = _a_val(airport, "municipality")
+            country = _a_val(airport, "country_name", "country")
+
+            # Use explicit assignment (not setdefault) because normalise_fr24
+            # sets these keys to None, and setdefault won't overwrite None.
+            if icao and not flight.get(f"{src_key}_icao"):
+                flight[f"{src_key}_icao"] = icao
+            if iata and not flight.get(f"{src_key}_iata"):
+                flight[f"{src_key}_iata"] = iata
+            if name and not flight.get(f"{src_key}_name"):
+                flight[f"{src_key}_name"] = name
+            if city and not flight.get(f"{src_key}_city"):
+                flight[f"{src_key}_city"] = city
+            if country and not flight.get(f"{src_key}_country"):
+                flight[f"{src_key}_country"] = country
         elif isinstance(airport, str) and airport.strip():
-            flight.setdefault(src_key + "_icao", airport.strip().upper())
+            if not flight.get(f"{src_key}_icao"):
+                flight[f"{src_key}_icao"] = airport.strip().upper()
 
     # Airline metadata
-    airline = r.get("airline") or route_data.get("airline")
+    airline = r.get("airline")
     if isinstance(airline, dict):
-        for src_key, dst_key in (
+        for src_k, dst_k in (
             ("name", "airline_name"),
-            ("icao", "airline_icao"),
-            ("iata", "airline_iata"),
+            ("icao_code", "airline_icao"),
+            ("iata_code", "airline_iata"),
+            ("icao", "airline_icao"),  # fallback
+            ("iata", "airline_iata"),  # fallback
             ("callsign", "airline_callsign"),
         ):
-            val = str(airline.get(src_key) or "").strip()
-            if val:
-                flight.setdefault(dst_key, val)
-    flight.setdefault("route_source", "ADSBDB")
+            val = str(airline.get(src_k) or "").strip()
+            if val and not flight.get(dst_k):
+                flight[dst_k] = val
+
+    # Route source
+    if not flight.get("route_source"):
+        flight["route_source"] = "ADSBDB"
+
+    # Recompute derived fields
     flight["has_route"] = bool(flight.get("origin_icao") and flight.get("destination_icao"))
     compute_dispatch_eligibility(flight)
     compute_simbrief(flight)

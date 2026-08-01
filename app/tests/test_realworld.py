@@ -1,6 +1,6 @@
-"""Regression tests for Real World Search pipeline – v0.25.48.
+"""Regression tests for Real World Search pipeline – v0.25.49.
 
-Covers all v0.25.46 root-cause fixes and v0.25.48 hardening features.
+Covers all v0.25.46 root-cause fixes and v0.25.49 hardening features.
 Runs without external network access (pure unit tests).
 """
 
@@ -15,6 +15,8 @@ sys.path.insert(0, str(ROOT))
 # ── Import under test ───────────────────────────────────────────────────────
 from app.flight_model import (
     _parse_bool,
+    apply_adsbdb_aircraft,
+    apply_adsbdb_route,
     classify_aircraft,
     compute_dispatch_eligibility,
     compute_ranking,
@@ -209,6 +211,105 @@ def test_seed_coords() -> None:
     check("KJFK in seed coords", "KJFK" in _SEED_AIRPORTS)
 
 
+# ── Test K: ADSBDB enrichment (v0.25.49) ─────────────────────────────────────
+
+def test_enrichment_route_recovery() -> None:
+    """ADSBDB route enrichment recovers missing destination."""
+    # Simulate FR24 flight with no destination
+    flight = {
+        "callsign": "DLH1304",
+        "origin_icao": "EDDF",
+        "destination_icao": None,
+        "airline_name": None,
+    }
+    # Simulate ADSBDB callsign response (after unwrapping)
+    adsbdb_response = {
+        "flightroute": {
+            "origin": {"icao_code": "EDDF", "iata_code": "FRA",
+                       "name": "Frankfurt Airport", "municipality": "Frankfurt"},
+            "destination": {"icao_code": "EGLL", "iata_code": "LHR",
+                            "name": "London Heathrow", "municipality": "London"},
+            "airline": {"name": "Lufthansa", "icao_code": "DLH"},
+        }
+    }
+    apply_adsbdb_route(flight, adsbdb_response)
+    check("Enrichment: destination recovered", flight.get("destination_icao") == "EGLL")
+    check("Enrichment: destination name set", flight.get("destination_name") == "London Heathrow")
+    check("Enrichment: destination city set", flight.get("destination_city") == "London")
+    check("Enrichment: origin preserved", flight.get("origin_icao") == "EDDF")
+    check("Enrichment: airline recovered", flight.get("airline_name") == "Lufthansa")
+    check("Enrichment: has_route = True", flight.get("has_route") is True)
+    check("Enrichment: can_dispatch = True", flight.get("can_dispatch") is True)
+
+
+def test_enrichment_does_not_overwrite() -> None:
+    """ADSBDB must not overwrite existing non-null FR24 data."""
+    flight = {
+        "callsign": "DLH400",
+        "origin_icao": "EDDF",
+        "destination_icao": "KJFK",
+        "airline_name": "KNOWN AIRLINE",
+    }
+    adsbdb_response = {
+        "flightroute": {
+            "origin": {"icao_code": "EGLL"},
+            "destination": {"icao_code": "EGLL"},
+            "airline": {"name": "WRONG AIRLINE"},
+        }
+    }
+    apply_adsbdb_route(flight, adsbdb_response)
+    check("Existing origin preserved", flight.get("origin_icao") == "EDDF")
+    check("Existing destination preserved", flight.get("destination_icao") == "KJFK")
+    check("Existing airline preserved", flight.get("airline_name") == "KNOWN AIRLINE")
+
+
+def test_enrichment_aircraft_meta() -> None:
+    """ADSBDB aircraft metadata fills missing type and registration."""
+    flight = {"callsign": "DLH400", "registration": None, "aircraft_type": None}
+    adsbdb_response = {
+        "aircraft": {
+            "type": "Boeing 747-830",
+            "icao_type": "B748",
+            "registration": "D-ABYF",
+        }
+    }
+    apply_adsbdb_aircraft(flight, adsbdb_response)
+    check("Aircraft type set", flight.get("aircraft_type") == "Boeing 747-830")
+    check("ICAO type set", flight.get("aircraft_icao_type") == "B748")
+    check("Registration set", flight.get("registration") == "D-ABYF")
+
+
+def test_enrichment_missing_route_handled() -> None:
+    """Flight with no ADSBDB route data still returned intact."""
+    flight = {"callsign": "PRIVATE01", "origin_icao": None, "destination_icao": None}
+    apply_adsbdb_route(flight, {})  # Empty response
+    check("No crash on empty route data", flight.get("callsign") == "PRIVATE01")
+    check("Origin stays None", flight.get("origin_icao") is None)
+    apply_adsbdb_route(flight, None)  # None response
+    check("No crash on None route data", True)
+
+
+def test_enrichment_field_name_variants() -> None:
+    """ADSBDB field name variants (icao_code/icao, iata_code/iata) all work."""
+    # Test with icao/iata (older format)
+    flight1 = {"callsign": "TST1", "origin_icao": None, "destination_icao": None}
+    apply_adsbdb_route(flight1, {
+        "flightroute": {
+            "destination": {"icao": "KJFK", "iata": "JFK", "name": "JFK Airport"}
+        }
+    })
+    check("icao key accepted", flight1.get("destination_icao") == "KJFK")
+
+    # Test with icao_code/iata_code (current ADSBDB format)
+    flight2 = {"callsign": "TST2", "origin_icao": None, "destination_icao": None}
+    apply_adsbdb_route(flight2, {
+        "flightroute": {
+            "destination": {"icao_code": "EGLL", "iata_code": "LHR", "name": "Heathrow"}
+        }
+    })
+    check("icao_code key accepted", flight2.get("destination_icao") == "EGLL")
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -231,6 +332,11 @@ if __name__ == "__main__":
     test_normalisation_isolation()
     test_merge_flights()
     test_seed_coords()
+    test_enrichment_route_recovery()
+    test_enrichment_does_not_overwrite()
+    test_enrichment_aircraft_meta()
+    test_enrichment_missing_route_handled()
+    test_enrichment_field_name_variants()
 
     print("=" * 60)
     total = PASS + FAIL

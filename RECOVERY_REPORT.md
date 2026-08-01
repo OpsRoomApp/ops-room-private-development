@@ -1,4 +1,4 @@
-# OPS ROOM v0.25.48 — SOURCE RECOVERY REPORT
+# OPS ROOM v0.25.49 — SOURCE RECOVERY REPORT
 
 ## Recovery Date: 2026-08-01
 ## Recovery Method: Canonical backup restore + version bump
@@ -39,10 +39,10 @@ This is a July 30 checkpoint containing 4,185 source files — the complete appl
   - 18 OGG announcement files
   - Camera bridge C++ source
 
-### Phase 4 — Version Bump (0.25.35 → 0.25.48)
-- All `0.25.35` → `0.25.48` in Python, JS, HTML, CSS, BAT, ISS, JSON
+### Phase 4 — Version Bump (0.25.35 → 0.25.49)
+- All `0.25.35` → `0.25.49` in Python, JS, HTML, CSS, BAT, ISS, JSON
 - All cache-busters `v=0-25-35` → `v=0-25-47`
-- `version.json` already at 0.25.48 (preserved from damaged project)
+- `version.json` already at 0.25.49 (preserved from damaged project)
 - `pirep_print.css` header comment fixed directly
 
 ### Phase 5-6 — Real-World Search Modules
@@ -51,7 +51,7 @@ The real-world search modules (`realworld.py`, `flight_model.py`, `flight_search
 - The frontend (`opsroom.js`) calls `https://admin.opsroom.live/api/v1/realworld-search` — a VPS endpoint
 - These modules were deployed on the VPS website backend, not in the local desktop app
 
-**No local files are missing.** The backup represents the complete local application at v0.25.35 level, now bumped to v0.25.48.
+**No local files are missing.** The backup represents the complete local application at v0.25.35 level, now bumped to v0.25.49.
 
 ## 4. Validation Results
 
@@ -62,10 +62,10 @@ The real-world search modules (`realworld.py`, `flight_model.py`, `flight_search
 | Python compileall | ALL CLEAN |
 | JavaScript syntax (all 8 files) | ALL PASS |
 | FastAPI app load (239 routes) | OK |
-| Version consistency | 0.25.48 throughout |
+| Version consistency | 0.25.49 throughout |
 | Cache-busters | Correct (4 in index.html, 2 in host.html, 2 in pirep.html) |
-| UI labels | All show 0.25.48 |
-| Service worker | Starts with `// OPS ROOM 0.25.48:` |
+| UI labels | All show 0.25.49 |
+| Service worker | Starts with `// OPS ROOM 0.25.49:` |
 | Static assets | All present and validated |
 | Build scripts | All intact |
 | Documentation | 7 files intact |
@@ -73,7 +73,7 @@ The real-world search modules (`realworld.py`, `flight_model.py`, `flight_search
 
 ### App Health
 - **FastAPI**: Loads successfully with 239 routes
-- **Title**: "OPS ROOM" v0.25.48
+- **Title**: "OPS ROOM" v0.25.49
 - **Python**: All 69+ modules compile clean
 - **JavaScript**: All 8 JS files syntax-valid
 
@@ -83,7 +83,7 @@ The real-world search modules (`realworld.py`, `flight_model.py`, `flight_search
 |-------|-------|--------|
 | Backup | 99 files | Copied to `source-pre-recovery-backup/` |
 | Restore | 4,091 files | Copied from backup (previously deleted) |
-| Version bump | ~100 files | `0.25.35` → `0.25.48` (Python, JS, HTML, CSS, BAT, ISS, JSON) |
+| Version bump | ~100 files | `0.25.35` → `0.25.49` (Python, JS, HTML, CSS, BAT, ISS, JSON) |
 | Cache-buster bump | ~12 files | `v=0-25-35` → `v=0-25-47` (HTML/CSS/JS) |
 | pirep_print.css fix | 1 file | Direct sed fix for CSS comment |
 
@@ -110,17 +110,17 @@ opsroom-app/source/
 ├── opsroom_launcher.py     ← Entry point
 ├── opsroom_updater.py      ← Updater
 ├── OPS_ROOM.spec           ← PyInstaller spec
-├── version.json            ← {"version": "0.25.48"}
+├── version.json            ← {"version": "0.25.49"}
 ├── BUILD scripts           ← 3 BAT files
 └── vpilot_plugin/          ← vPilot bridge C# source
 ```
 
 ## 8. Conclusion
 
-**The OPS ROOM v0.25.48 source project has been fully recovered.**
+**The OPS ROOM v0.25.49 source project has been fully recovered.**
 
 - 4,091 files restored from the July 30 backup
-- Version bumped from 0.25.35 to 0.25.48 across all source files
+- Version bumped from 0.25.35 to 0.25.49 across all source files
 - 77/77 release validator checks pass
 - FastAPI loads with 239 routes
 - All Python and JavaScript syntax clean
@@ -128,4 +128,4 @@ opsroom-app/source/
 - No files are permanently lost
 - The backup remains untouched at `opsroom-app-backup/`
 
-**The project is functionally identical to the pre-deletion v0.25.48 state.**
+**The project is functionally identical to the pre-deletion v0.25.49 state.**

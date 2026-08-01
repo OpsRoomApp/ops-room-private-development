@@ -1,8 +1,8 @@
 [Setup]
 AppId={{8B6E32A0-6A2B-4A88-B932-9F1F3507B280}}
 AppName=OPS ROOM
-AppVersion=0.25.48
-AppVerName=OPS ROOM 0.25.48
+AppVersion=0.25.49
+AppVerName=OPS ROOM 0.25.49
 AppPublisher=Exzonom
 AppPublisherURL=https://opsroom.live
 AppSupportURL=https://opsroom.live/support
@@ -17,7 +17,7 @@ LicenseFile=PRIVACY_NOTICE.txt
 UninstallDisplayIcon={app}\OPS ROOM.exe
 SetupIconFile=app\static\opsroom.ico
 OutputDir=dist_installer
-OutputBaseFilename=OPS_ROOM_Setup_0.25.48
+OutputBaseFilename=OPS_ROOM_Setup_0.25.49
 WizardSmallImageFile=app\assets\brand\installer.png
 WizardImageFile=app\assets\brand\installer.png
 WizardImageStretch=no
