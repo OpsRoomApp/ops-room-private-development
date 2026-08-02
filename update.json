@@ -1,15 +1,15 @@
 {
-  "latest_version": "0.25.55",
-  "version": "0.25.55",
+  "latest_version": "0.25.58",
+  "version": "0.25.58",
   "codename": "Release Migration",
   "channel": "stable",
   "minimum_supported_version": "0.22.0",
   "mandatory": false,
-  "release_notes_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/tag/0.25.55",
-  "download_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/download/0.25.55/OPS_ROOM_v0_25_48_Public_Windows_x64.zip",
-  "url": "https://github.com/OpsRoomApp/ops-room-releases/releases/download/0.25.55/OPS_ROOM_v0_25_48_Public_Windows_x64.zip",
-  "fallback_download_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/download/0.25.55/OPS_ROOM_v0_25_48_Public_Windows_x64.zip",
+  "release_notes_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/tag/0.25.58",
+  "download_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/download/0.25.58/OPS_ROOM_v0_25_58_Public_Windows_x64.zip",
+  "url": "https://github.com/OpsRoomApp/ops-room-releases/releases/download/0.25.58/OPS_ROOM_v0_25_58_Public_Windows_x64.zip",
+  "fallback_download_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/download/0.25.58/OPS_ROOM_v0_25_58_Public_Windows_x64.zip",
   "sha256": "TO_BE_FILLED_BY_BUILD_SCRIPT",
-  "message": "OPS ROOM 0.25.55 is available.",
-  "notes": "OPS ROOM 0.25.55 — Release Migration. GitHub remains the primary distribution channel."
+  "message": "OPS ROOM 0.25.58 is available.",
+  "notes": "OPS ROOM 0.25.58 — Release Migration. GitHub remains the primary distribution channel."
 }

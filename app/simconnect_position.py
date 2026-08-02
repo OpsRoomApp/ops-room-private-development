@@ -34,6 +34,16 @@ _REPLAY_FRAME_EVENT_ID: Any | None = None
 _REPLAY_FRAME_ORIG_HANDLER: Any | None = None
 _REPLAY_FRAME_LAST_MONO = 0.0
 
+# v0.25.58 — Two-tier Black Box polling: low-rate SimVars (engine flags,
+# parking brake, flaps, gear, spoilers, wind, sim rate, pause/slew, reverser,
+# body velocity, stall/overspeed, aircraft info) are cached and refreshed at
+# ~2 Hz independent of the high-rate (position/attitude/speed) loop.  This
+# roughly halves the concurrent SimConnect subscription count during recording
+# without losing any field written to the .opsbb file.
+_LOW_RATE_CACHE: dict[str, Any] = {}
+_LOW_RATE_CACHE_TIME: float = 0.0
+_LOW_RATE_INTERVAL: float = 0.5  # refresh low-rate vars every 500 ms (2 Hz)
+
 
 class _ReplayPose(Structure):
     # Matches SkyDolly's PositionAndAttitudeUser: lat/lon/alt/pitch/bank/heading + velocity body X/Y/Z
@@ -961,15 +971,58 @@ def _read_position_uncached() -> dict[str, Any]:
         return {"ok": False, "reason": f"SimConnect position read failed: {type(exc).__name__}: {exc}", "diagnostics": diagnostics}
 
 
-def _read_position_minimal_uncached() -> dict[str, Any]:
-    """Black Box essentials only - prevents sim stutter on heavy polling.
+def _read_low_rate_tier(aq: Any) -> dict[str, Any]:
+    """Read the slow-changing SimVars (engine flags, surfaces, wind, sim rate).
 
-    Reads a deliberately small SimVar set so the recorder / replay can run at
-    20-30 Hz without producing measurable frame-rate impact on the simulator.
-    Other consumers that need autopilot detail, controls axes, radios, APU
-    gates or per-engine N1/N2/EGT can still call ``read_position()`` (the full
-    surface) on demand.
+    This is called at ~2 Hz rather than every Black Box sample cycle.  Merging
+    its last-known values into each high-rate sample roughly halves the number
+    of concurrent SimConnect subscriptions during recording.
     """
+    def read_value(name: str) -> Any:
+        try:
+            return aq.get(name)
+        except Exception:
+            return None
+    return {
+        "_lr_on_ground": read_value("SIM_ON_GROUND"),
+        "_lr_flap_index": read_value("FLAPS_HANDLE_INDEX"),
+        "_lr_gear_percent": read_value("GEAR_TOTAL_PCT_EXTENDED"),
+        "_lr_spoiler_percent": read_value("SPOILERS_HANDLE_POSITION"),
+        "_lr_flap_handle_percent": read_value("FLAPS_HANDLE_PERCENT"),
+        "_lr_wind_speed": read_value("AMBIENT_WIND_VELOCITY"),
+        "_lr_wind_direction": read_value("AMBIENT_WIND_DIRECTION"),
+        "_lr_sim_rate": read_value("SIMULATION_RATE"),
+        "_lr_paused": read_value("IS_LATITUDE_LONGITUDE_FREEZE_ON"),
+        "_lr_slew_active": read_value("IS_SLEW_ACTIVE"),
+        "_lr_stall_warning": read_value("STALL_WARNING"),
+        "_lr_overspeed_warning": read_value("OVERSPEED_WARNING"),
+        "_lr_parking_brake": read_value("BRAKE_PARKING_POSITION"),
+        "_lr_body_velocity_x": read_value("VELOCITY_BODY_X"),
+        "_lr_body_velocity_y": read_value("VELOCITY_BODY_Y"),
+        "_lr_body_velocity_z": read_value("VELOCITY_BODY_Z"),
+        "_lr_engine1": read_value("GENERAL_ENG_COMBUSTION:1"),
+        "_lr_engine2": read_value("GENERAL_ENG_COMBUSTION:2"),
+        "_lr_engine3": read_value("GENERAL_ENG_COMBUSTION:3"),
+        "_lr_engine4": read_value("GENERAL_ENG_COMBUSTION:4"),
+        "_lr_reverser_1": read_value("TURB_ENG_REVERSE_NOZZLE_PERCENT:1"),
+        "_lr_reverser_2": read_value("TURB_ENG_REVERSE_NOZZLE_PERCENT:2"),
+        "_lr_aircraft_title": read_value("TITLE"),
+        "_lr_aircraft_model": read_value("ATC_MODEL"),
+        "_lr_aircraft_type": read_value("ATC_TYPE"),
+    }
+
+
+def _read_position_minimal_uncached() -> dict[str, Any]:
+    """Black Box essentials — v0.25.58 two-tier polling.
+
+    High-rate vars (position, attitude, speeds) are read every call (~20
+    SimConnect subscriptions).  Low-rate vars (engine flags, surfaces, wind,
+    sim rate, aircraft info) are served from a module-level cache refreshed at
+    ~2 Hz, roughly halving total SimConnect subscription load during recording
+    without dropping any field from the .opsbb file.
+    """
+    global _LOW_RATE_CACHE, _LOW_RATE_CACHE_TIME
+
     mock_lat = os.getenv("VATSIM_BOARD_MOCK_LAT")
     mock_lon = os.getenv("VATSIM_BOARD_MOCK_LON")
     if mock_lat and mock_lon:
@@ -1025,6 +1078,7 @@ def _read_position_minimal_uncached() -> dict[str, Any]:
             except Exception:
                 return None
 
+        # ── High-rate tier: read every call (position, attitude, speeds) ──
         lat = read_value("PLANE_LATITUDE")
         lon = read_value("PLANE_LONGITUDE")
         altitude = read_value("PLANE_ALTITUDE")
@@ -1045,31 +1099,16 @@ def _read_position_minimal_uncached() -> dict[str, Any]:
         pitch = read_value("PLANE_PITCH_DEGREES")
         bank = read_value("PLANE_BANK_DEGREES")
         g_force = read_value("G_FORCE")
-        on_ground = read_value("SIM_ON_GROUND")
-        flap_index = read_value("FLAPS_HANDLE_INDEX")
-        gear_percent = read_value("GEAR_TOTAL_PCT_EXTENDED")
-        spoiler_percent = read_value("SPOILERS_HANDLE_POSITION")
-        flap_handle_percent = read_value("FLAPS_HANDLE_PERCENT")
-        wind_speed = read_value("AMBIENT_WIND_VELOCITY")
-        wind_direction = read_value("AMBIENT_WIND_DIRECTION")
-        sim_rate = read_value("SIMULATION_RATE")
-        paused = read_value("IS_LATITUDE_LONGITUDE_FREEZE_ON")
-        slew_active = read_value("IS_SLEW_ACTIVE")
-        stall_warning = read_value("STALL_WARNING")
-        overspeed_warning = read_value("OVERSPEED_WARNING")
-        parking_brake = read_value("BRAKE_PARKING_POSITION")
-        body_velocity_x = read_value("VELOCITY_BODY_X")
-        body_velocity_y = read_value("VELOCITY_BODY_Y")
-        body_velocity_z = read_value("VELOCITY_BODY_Z")
-        engine1 = read_value("GENERAL_ENG_COMBUSTION:1")
-        engine2 = read_value("GENERAL_ENG_COMBUSTION:2")
-        engine3 = read_value("GENERAL_ENG_COMBUSTION:3")
-        engine4 = read_value("GENERAL_ENG_COMBUSTION:4")
-        reverser_1 = read_value("TURB_ENG_REVERSE_NOZZLE_PERCENT:1")
-        reverser_2 = read_value("TURB_ENG_REVERSE_NOZZLE_PERCENT:2")
-        aircraft_title = read_value("TITLE")
-        aircraft_model = read_value("ATC_MODEL")
-        aircraft_type = read_value("ATC_TYPE")
+
+        # ── Low-rate tier: refresh cache at 2 Hz, merge last-known on every call ──
+        now = time.monotonic()
+        if now - _LOW_RATE_CACHE_TIME >= _LOW_RATE_INTERVAL:
+            _LOW_RATE_CACHE = _read_low_rate_tier(aq)
+            _LOW_RATE_CACHE_TIME = now
+        lr = _LOW_RATE_CACHE
+
+        def _lr(key: str) -> Any:
+            return lr.get(key) if lr else None
 
         def bool_value(value: Any) -> bool | None:
             try:
@@ -1077,13 +1116,13 @@ def _read_position_minimal_uncached() -> dict[str, Any]:
             except (TypeError, ValueError):
                 return None
 
-        engine1_running = bool_value(engine1)
-        engine2_running = bool_value(engine2)
-        engine3_running = bool_value(engine3)
-        engine4_running = bool_value(engine4)
+        engine1_running = bool_value(_lr("_lr_engine1"))
+        engine2_running = bool_value(_lr("_lr_engine2"))
+        engine3_running = bool_value(_lr("_lr_engine3"))
+        engine4_running = bool_value(_lr("_lr_engine4"))
         engines_running = any(value is True for value in (engine1_running, engine2_running, engine3_running, engine4_running))
         reverser_percent = None
-        for value in (reverser_1, reverser_2):
+        for value in (_lr("_lr_reverser_1"), _lr("_lr_reverser_2")):
             try:
                 if value is not None:
                     percent = float(value)
@@ -1093,9 +1132,9 @@ def _read_position_minimal_uncached() -> dict[str, Any]:
                 pass
 
         aircraft_info = {
-            "title": str(aircraft_title or "").strip(),
-            "model": str(aircraft_model or "").strip(),
-            "type": str(aircraft_type or "").strip(),
+            "title": str(_lr("_lr_aircraft_title") or "").strip(),
+            "model": str(_lr("_lr_aircraft_model") or "").strip(),
+            "type": str(_lr("_lr_aircraft_type") or "").strip(),
         }
         adapter = detect_adapter(aircraft_info)
 
@@ -1117,27 +1156,27 @@ def _read_position_minimal_uncached() -> dict[str, Any]:
             "pitch_deg": float(pitch) if pitch is not None else None,
             "bank_deg": float(bank) if bank is not None else None,
             "g_force": float(g_force) if g_force is not None else None,
-            "on_ground": bool(round(float(on_ground))) if on_ground is not None else None,
-            "flap_index": float(flap_index) if flap_index is not None else None,
+            "on_ground": bool(round(float(_lr("_lr_on_ground")))) if _lr("_lr_on_ground") is not None else None,
+            "flap_index": float(_lr("_lr_flap_index")) if _lr("_lr_flap_index") is not None else None,
             "flap_percent": None,
-            "flap_handle_percent": float(flap_handle_percent) if flap_handle_percent is not None else None,
-            "gear_percent": float(gear_percent) if gear_percent is not None else None,
-            "spoiler_percent": float(spoiler_percent) if spoiler_percent is not None else None,
-            "wind_speed_kts": float(wind_speed) if wind_speed is not None else None,
-            "wind_direction_deg": float(wind_direction) if wind_direction is not None else None,
-            "sim_rate": float(sim_rate) if sim_rate is not None else 1.0,
-            "paused": bool_value(paused),
-            "slew_active": bool_value(slew_active),
-            "stall_warning": bool_value(stall_warning),
-            "overspeed_warning": bool_value(overspeed_warning),
+            "flap_handle_percent": float(_lr("_lr_flap_handle_percent")) if _lr("_lr_flap_handle_percent") is not None else None,
+            "gear_percent": float(_lr("_lr_gear_percent")) if _lr("_lr_gear_percent") is not None else None,
+            "spoiler_percent": float(_lr("_lr_spoiler_percent")) if _lr("_lr_spoiler_percent") is not None else None,
+            "wind_speed_kts": float(_lr("_lr_wind_speed")) if _lr("_lr_wind_speed") is not None else None,
+            "wind_direction_deg": float(_lr("_lr_wind_direction")) if _lr("_lr_wind_direction") is not None else None,
+            "sim_rate": float(_lr("_lr_sim_rate")) if _lr("_lr_sim_rate") is not None else 1.0,
+            "paused": bool_value(_lr("_lr_paused")),
+            "slew_active": bool_value(_lr("_lr_slew_active")),
+            "stall_warning": bool_value(_lr("_lr_stall_warning")),
+            "overspeed_warning": bool_value(_lr("_lr_overspeed_warning")),
             "engines_running": engines_running,
             "engine1_running": engine1_running, "engine2_running": engine2_running,
             "engine3_running": engine3_running, "engine4_running": engine4_running,
-            "parking_brake": bool_value(parking_brake),
+            "parking_brake": bool_value(_lr("_lr_parking_brake")),
             "reverser_percent": reverser_percent,
-            "body_velocity_x_fps": float(body_velocity_x) if body_velocity_x is not None else None,
-            "body_velocity_y_fps": float(body_velocity_y) if body_velocity_y is not None else None,
-            "body_velocity_z_fps": float(body_velocity_z) if body_velocity_z is not None else None,
+            "body_velocity_x_fps": float(_lr("_lr_body_velocity_x")) if _lr("_lr_body_velocity_x") is not None else None,
+            "body_velocity_y_fps": float(_lr("_lr_body_velocity_y")) if _lr("_lr_body_velocity_y") is not None else None,
+            "body_velocity_z_fps": float(_lr("_lr_body_velocity_z")) if _lr("_lr_body_velocity_z") is not None else None,
             "fuel_flow_pph": None,
             "fuel_total_lb": None,
             "aircraft": aircraft_info,

@@ -1,6 +1,6 @@
 # OPS ROOM — Architecture Overview & System Blueprint
 
-**Version:** v0.25.55  
+**Version:** v0.25.58  
 **Last Updated:** 2026-07-31
 
 ---

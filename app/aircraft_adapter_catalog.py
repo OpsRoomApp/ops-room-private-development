@@ -68,7 +68,7 @@ LVAR_SPECS: tuple[LVarSpec, ...] = (
     _s("S_FCU_APPR", "fenix_a32x", "appr_button", kind="pulse", event="APPR BUTTON"),
     _s("E_FCU_SPEED", "fenix_a32x", "selected_speed", top_level="ap_selected_speed_kts", event="FCU SPEED"),
     _s("E_FCU_HEADING", "fenix_a32x", "selected_heading", top_level="ap_selected_heading_deg", event="FCU HEADING"),
-    _s("E_FCU_ALTITUDE", "fenix_a32x", "selected_altitude", top_level="ap_selected_altitude_ft", event="FCU ALTITUDE"),
+    _s("E_FCU_ALTITUDE", "fenix_a32x", "selected_altitude", top_level="ap_selected_altitude_ft", event="FCU ALTITUDE", scale=1000.0),
     _s("E_FCU_VS", "fenix_a32x", "selected_vertical_speed", top_level="ap_selected_vertical_speed_fpm", event="FCU V/S"),
     _s("S_FC_FLAPS", "fenix_a32x", "flap_handle", kind="enum", values=((0,"UP"),(1,"1"),(2,"2"),(3,"3"),(4,"FULL")), top_level="flap_index", event="FLAPS SELECTED"),
     _s("A_FC_SPEEDBRAKE", "fenix_a32x", "speedbrake_handle", kind="enum", values=((0,"ARMED"),(1,"RETRACTED"),(2,"DETENT")), event="SPEEDBRAKE"),

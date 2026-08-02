@@ -12,6 +12,7 @@ one timestamp.
 import importlib.util
 import math
 import os
+import struct
 import subprocess
 import sys
 import threading
@@ -1294,6 +1295,12 @@ def _read_addon_offsets(requests: list[tuple[int, str]]) -> list[Any]:
 
     This never scans or logs the simulator's full LVar catalogue. Only the
     currently active aircraft adapter's curated offsets are requested.
+
+    The FSUIPC WASM mirrors each LVar into its offset as a 4-byte float32
+    (size code ``F``, FSUIPC7 "Adding Lvars to Offsets" guide). The bundled
+    pyuipc build reads format letter ``f`` as an 8-byte double, which swallows
+    the neighbouring offset and yields denormal garbage. We therefore read the
+    raw 32-bit word (``u``) and reinterpret the bit pattern as float32.
     """
     global _ADDON_OFFSET_CACHE_KEY, _ADDON_OFFSET_CACHE_VALUES, _ADDON_OFFSET_CACHE_AT
     key = tuple((int(offset), str(fmt)) for offset, fmt in requests)
@@ -1302,12 +1309,23 @@ def _read_addon_offsets(requests: list[tuple[int, str]]) -> list[Any]:
         return list(_ADDON_OFFSET_CACHE_VALUES)
     if not key:
         return []
+    # pyuipc 'f' = 8-byte double in the bundled build; the WASM LVar block is
+    # 4-byte float32. Read raw u32 and reinterpret the bits as float32.
+    read_key = tuple((offset, "u" if fmt == "f" else fmt) for offset, fmt in key)
     with _FSUIPC_IO_LOCK:
         pyuipc = _import_pyuipc()
         _open_fsuipc(pyuipc)
-        values = pyuipc.read(list(key))
-    if not isinstance(values, (list, tuple)) or len(values) != len(key):
+        values = pyuipc.read(list(read_key))
+    if not isinstance(values, (list, tuple)) or len(values) != len(read_key):
         raise RuntimeError("FSUIPC returned an incomplete aircraft-adapter offset block")
+    values = list(values)
+    for i, (_, fmt) in enumerate(key):
+        if fmt == "f":
+            try:
+                raw = int(values[i]) & 0xFFFFFFFF
+                values[i] = struct.unpack("<f", struct.pack("<I", raw))[0]
+            except Exception:
+                values[i] = None
     _ADDON_OFFSET_CACHE_KEY = key
     _ADDON_OFFSET_CACHE_VALUES = list(values)
     _ADDON_OFFSET_CACHE_AT = now
@@ -1343,10 +1361,17 @@ def _read_simconnect_lvars(requests: list[tuple[str, str]]) -> list[Any]:
     values: list[Any] = []
     for lvar, fmt in requests:
         try:
+            # v0.25.58: "f"/"float" are not valid SimConnect units tokens. Passing
+            # them makes AddToDataDefinition fail and every L:Var read raise
+            # SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID (log flood + no data).
+            # Normalise to the correct generic float units token defensively.
+            units = (fmt or "Number").strip()
+            if units.lower() in ("f", "float"):
+                units = "Number"
             req = _SIMCONNECT_LVAR_REQUESTS.get(lvar)
             if req is None:
                 sm_name = f"L:{lvar}" if not lvar.startswith("L:") else lvar
-                req = Request((sm_name.encode("ascii"), fmt.encode("ascii")), sm, _time=100, _settable=True, _attemps=3)
+                req = Request((sm_name.encode("ascii"), units.encode("ascii")), sm, _time=100, _settable=True, _attemps=3)
                 _SIMCONNECT_LVAR_REQUESTS[lvar] = req
             raw = req.value
             values.append(None if raw is None else float(raw))

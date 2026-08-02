@@ -101,7 +101,7 @@ from .logbook import (
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="OPS ROOM", version="0.25.55")
+app = FastAPI(title="OPS ROOM", version="0.25.58")
 app.include_router(realworld_router)
 app.include_router(realworld_debug_router)
 app.add_middleware(GZipMiddleware, minimum_size=512)
@@ -111,12 +111,12 @@ app.add_middleware(GZipMiddleware, minimum_size=512)
 def _opsroom_startup_autofetch_ofp() -> None:
     """Warm telemetry and SimBrief caches without blocking the UI after app start."""
     start_telemetry_engine()
-    # v0.25.55: start real-world flight background refresh loop
+    # v0.25.58: start real-world flight background refresh loop
     try:
         start_background_refresh()
     except Exception as exc:
         _LOGGER.debug("RealWorld background refresh start skipped: %s", exc)
-    # v0.25.55: purge stale ChartFox cache files from previous builds on every cold start.
+    # v0.25.58: purge stale ChartFox cache files from previous builds on every cold start.
     def _chartfox_cleanup() -> None:
         try:
             result = chartfox_force_cache_cleanup()
@@ -1272,7 +1272,7 @@ async def chartfox_oauth_authorize_get(redirect_uri: str = "", request: Request 
 async def chartfox_oauth_callback_get(code: str = "", state: str = "", error: str = "") -> HTMLResponse:
     """OAuth callback completion page.
 
-    0.25.55 polish: build a JSON payload describing the result and inject
+    0.25.58 polish: build a JSON payload describing the result and inject
     it into the callback HTML as an embedded JS string literal in place of
     the previous ``_CHARTFOX_CALLBACK_HTML + urlencode({...})`` pattern.
 
@@ -2241,7 +2241,7 @@ def server_qr(request: Request) -> Response:
 def health() -> dict:
     return {
         "ok": True,
-        "version": "0.25.55",
+        "version": "0.25.58",
         "product": "OPS ROOM",
         "refresh_seconds": CACHE_SECONDS,
         "simconnect": simconnect_diagnostics(),
@@ -2266,7 +2266,7 @@ async def frontend_log(request: Request) -> dict:
             "page": str(payload.get("page") or "")[:80],
             "detail": str(payload.get("detail") or "")[:1200],
             "href": str(payload.get("href") or "")[:500],
-            "version": str(payload.get("version") or "0.25.55")[:40],
+            "version": str(payload.get("version") or "0.25.58")[:40],
         }
         with (log_dir / "frontend_errors.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -2496,7 +2496,7 @@ def charts_briefing_get() -> dict:
     return briefing_charts()
 
 
-# 0.25.55 polish: removed six legacy OAuth handlers that were silently
+# 0.25.58 polish: removed six legacy OAuth handlers that were silently
 # overriding the canonical block above (lines 1185-1316). Python silently
 # rebinds the function-name, so the most-recent ``def chartfox_oauth_callback_get``
 # wins at import time, and FastAPI then serves the LATEST-registered handler

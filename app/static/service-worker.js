@@ -1,4 +1,4 @@
-// OPS ROOM 0.25.55: no application-shell caching for the local EFB console.
+// OPS ROOM 0.25.58: no application-shell caching for the local EFB console.
 // Previous builds registered an offline shell with stale JS/CSS versions, which
 // could mix old frontend code with a newer backend and break modules until a
 // hard refresh. This worker clears old caches and then stays transparent.

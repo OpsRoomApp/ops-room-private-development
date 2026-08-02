@@ -1,4 +1,4 @@
-"""Real-World Flight Search pipeline – v0.25.55.
+"""Real-World Flight Search pipeline – v0.25.58.
 
 Provider-agnostic discovery, normalisation, ADSBDB enrichment, caching,
 search indexing, and diagnostics for the OPS ROOM Real World Schedules feature.
@@ -27,7 +27,13 @@ import httpx
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-from .adsbdb_client import get_aircraft, get_callsign, get_aircraft_with_callsign, health_check
+from .adsbdb_client import (
+    get_aircraft,
+    get_callsign,
+    get_aircraft_with_callsign,
+    health_check,
+    is_rate_limited,
+)
 from .flight_cache import (
     TTL_LIVE,
     all_stats as cache_all_stats,
@@ -111,6 +117,9 @@ _provider_health: dict[str, Any] = {
     "adsbdb": {"request_count": 0, "success_count": 0, "failure_count": 0,
                "last_latency_ms": None,
                "last_success_utc": None, "last_failure_utc": None, "last_error_type": None},
+    "adsb_lol": {"request_count": 0, "success_count": 0, "failure_count": 0,
+                  "last_latency_ms": None,
+                  "last_success_utc": None, "last_failure_utc": None, "last_error_type": None},
 }
 
 # Recent errors (bounded ring)
@@ -120,6 +129,20 @@ _MAX_ERRORS = 40
 # In-progress refresh lock
 _refresh_lock = asyncio.Lock()
 _refresh_running = False
+_refresh_scheduled = False  # strictly-one in-flight/queued refresh spawn
+
+# Max concurrent ADSBDB enrichment requests (v0.25.58 – never storm the API)
+MAX_CONCURRENT_ADSBDB_REQUESTS = 5
+_enrich_semaphore = asyncio.Semaphore(MAX_CONCURRENT_ADSBDB_REQUESTS)
+
+# v0.25.58: lazy enrichment — only the top-N operationally useful candidates
+# get ADSBDB lookups per refresh cycle (avoids 800+ lookups per cycle).
+MAX_ENRICH_PER_CYCLE = 60
+
+# v0.25.58: bounded first-load wait so the very first search returns results
+# (target < 5-8 s).  All later searches are cache-only (< 200 ms).
+COLD_START_WAIT_SECONDS = 8.0
+_cold_start_waited = False
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -267,7 +290,7 @@ async def _discover_fr24(
                         params={"bounds": f"{bounds['lat']-1.5},{bounds['lat']+1.5},"
                                           f"{bounds['lon']-1.5},{bounds['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.55"},
+                                 "User-Agent": "OPS-ROOM/0.25.58"},
                     )
                     _update_provider_health("fr24", resp.status_code == 200,
                                             (time.monotonic() - t0) * 1000,
@@ -299,7 +322,7 @@ async def _discover_fr24(
                         params={"bounds": f"{zone['lat']-1.5},{zone['lat']+1.5},"
                                           f"{zone['lon']-1.5},{zone['lon']+1.5}"},
                         headers={"Accept": "application/json",
-                                 "User-Agent": "OPS-ROOM/0.25.55"},
+                                 "User-Agent": "OPS-ROOM/0.25.58"},
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -315,21 +338,43 @@ async def _discover_fr24(
             except Exception:
                 continue
 
-    # Final fallback: ADSB.lol
+    # Final fallback: ADSB.lol (retry across zones so a transient timeout
+    # cannot zero out discovery).  Records are tagged so the pipeline can
+    # run them through normalise_adsb (v0.25.58).
     if not raw:
         discovery_strategy = "adsb_fallback"
-        _log.info("[RealWorld] Discovery: ADSB.lol fallback")
-        try:
-            async with httpx.AsyncClient(timeout=6.0) as client:
-                resp = await client.get("https://api.adsb.lol/v2/point/50.0/8.5/200",
-                                        headers={"Accept": "application/json"})
-                if resp.status_code == 200:
-                    data = resp.json()
-                    ac_list = data.get("aircraft") or data.get("ac") or []
-                    if isinstance(ac_list, list):
-                        raw = ac_list
-        except Exception as exc:
-            _record_error("discovery", "adsb_lol", type(exc).__name__, str(exc))
+        _log.info("[RealWorld] Discovery: ADSB.lol fallback (%d zones)", len(_ZONE_SWEEP))
+        for attempt in range(2):
+            for zone in _ZONE_SWEEP:
+                try:
+                    t0 = time.monotonic()
+                    async with httpx.AsyncClient(timeout=6.0, trust_env=False) as client:
+                        resp = await client.get(
+                            f"https://api.adsb.lol/v2/point/{zone['lat']}/{zone['lon']}/{zone['dist']}",
+                            headers={"Accept": "application/json"},
+                        )
+                        _update_provider_health("adsb_lol", resp.status_code == 200,
+                                                (time.monotonic() - t0) * 1000, resp.status_code)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            ac_list = data.get("aircraft") or data.get("ac") or []
+                            if isinstance(ac_list, list):
+                                for a in ac_list:
+                                    if isinstance(a, dict):
+                                        a["_src"] = "adsb"
+                                raw = ac_list
+                                if raw:
+                                    break
+                except Exception as exc:
+                    _update_provider_health("adsb_lol", False, error_type=type(exc).__name__)
+                    _record_error("discovery", "adsb_lol", type(exc).__name__, str(exc))
+                if raw:
+                    break
+            if raw:
+                break
+            if attempt == 0:
+                _log.warning("[RealWorld] ADSB.lol discovery attempt 1 returned nothing — retrying")
+                await asyncio.sleep(0.5)
 
     # Set discovery strategy in stats
     with _stats_lock:
@@ -358,9 +403,12 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
     route_ok = 0
     aircraft_ok = 0
     identity_ok = 0
+    cache_hits = 0
+    cache_misses = 0
 
     async def _enrich_one(flight: dict[str, Any]) -> dict[str, Any]:
         nonlocal attempted, succeeded, failed
+        nonlocal cache_hits, cache_misses
         nonlocal missing_dest_before, recovered_dest
         nonlocal missing_origin_before, recovered_origin
         nonlocal missing_aircraft_before, recovered_aircraft
@@ -380,7 +428,11 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cs = _clean_str(flight.get("callsign") or "")
         mode_s = _clean_str(flight.get("mode_s") or "")
 
-        # Track enrichment result per flight (v0.25.55)
+        # v0.25.58: ADSBDB 429 circuit breaker — during cooldown only apply
+        # cached enrichment; never issue network lookups.
+        adsbdb_cooling = is_rate_limited()
+
+        # Track enrichment result per flight (v0.25.58)
         enrichment_attempted = True
         route_lookup = False
         route_success = False
@@ -402,27 +454,30 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if ac_key:
             cached_ac = cache_get_aircraft(ac_key)
             if cached_ac:
+                cache_hits += 1
                 apply_adsbdb_aircraft(flight, cached_ac)
                 aircraft_lookup = True
                 aircraft_success = True
             else:
-                aircraft_lookup = True
-                attempted += 1
-                try:
-                    ac_data = await get_aircraft(ac_key)
-                    if ac_data:
-                        cache_set_aircraft(ac_key, ac_data)
-                        apply_adsbdb_aircraft(flight, ac_data)
-                        aircraft_success = True
-                        aircraft_ok += 1
-                        succeeded += 1
-                        _log.info("[RealWorld] AIRCRAFT ENRICH cs=%%s hex=%%s key=%%s type=%%s reg=%%s",
-                                  cs, mode_s, ac_key,
-                                  flight.get("aircraft_type"), flight.get("registration"))
-                    _update_provider_health("adsbdb", True)
-                except Exception as exc:
-                    failed += 1
-                    _update_provider_health("adsbdb", False, error_type=type(exc).__name__)
+                if not adsbdb_cooling:
+                    cache_misses += 1
+                    aircraft_lookup = True
+                    attempted += 1
+                    try:
+                        ac_data = await get_aircraft(ac_key)
+                        if ac_data:
+                            cache_set_aircraft(ac_key, ac_data)
+                            apply_adsbdb_aircraft(flight, ac_data)
+                            aircraft_success = True
+                            aircraft_ok += 1
+                            succeeded += 1
+                            _log.info("[RealWorld] AIRCRAFT ENRICH cs=%%s hex=%%s key=%%s type=%%s reg=%%s",
+                                      cs, mode_s, ac_key,
+                                      flight.get("aircraft_type"), flight.get("registration"))
+                        _update_provider_health("adsbdb", True)
+                    except Exception as exc:
+                        failed += 1
+                        _update_provider_health("adsbdb", False, error_type=type(exc).__name__)
 
         # ── Route data ──
         route_data = None
@@ -432,9 +487,13 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
             route_lookup = True
             cached_route = cache_get_route(variant)
             if cached_route:
+                cache_hits += 1
                 route_data = cached_route
                 route_success = True
                 break
+            if adsbdb_cooling:
+                break
+            cache_misses += 1
             try:
                 attempted += 1
                 route_data = await get_callsign(variant)
@@ -461,7 +520,7 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not had_aircraft_before and flight.get("aircraft_type"):
             recovered_aircraft += 1
 
-        # ── Attach per-flight enrichment audit flags (v0.25.55) ──
+        # ── Attach per-flight enrichment audit flags (v0.25.58) ──
         flight["enrichment_attempted"] = enrichment_attempted
         flight["enrichment_success"] = route_success or aircraft_success
         flight["route_enriched"] = route_success
@@ -484,7 +543,13 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
         compute_simbrief(flight)
         return flight
 
-    tasks = [_enrich_one(f) for f in flights]
+    # v0.25.58: cap concurrent ADSBDB enrichment so a large discovery batch
+    # can never storm the provider API (MAX_CONCURRENT_ADSBDB_REQUESTS=5).
+    async def _enrich_one_capped(flight: dict[str, Any]) -> dict[str, Any]:
+        async with _enrich_semaphore:
+            return await _enrich_one(flight)
+
+    tasks = [_enrich_one_capped(f) for f in flights]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     enriched: list[dict[str, Any]] = []
@@ -514,6 +579,16 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
             _pipeline_stats.get("enrichment_missing_aircraft_before", 0) + missing_aircraft_before)
         _pipeline_stats["enrichment_recovered_aircraft"] = (
             _pipeline_stats.get("enrichment_recovered_aircraft", 0) + recovered_aircraft)
+        _pipeline_stats["enrichment_route_ok"] = (
+            _pipeline_stats.get("enrichment_route_ok", 0) + route_ok)
+        _pipeline_stats["enrichment_aircraft_ok"] = (
+            _pipeline_stats.get("enrichment_aircraft_ok", 0) + aircraft_ok)
+        _pipeline_stats["enrichment_identity_ok"] = (
+            _pipeline_stats.get("enrichment_identity_ok", 0) + identity_ok)
+        _pipeline_stats["enrichment_cache_hits"] = (
+            _pipeline_stats.get("enrichment_cache_hits", 0) + cache_hits)
+        _pipeline_stats["enrichment_cache_misses"] = (
+            _pipeline_stats.get("enrichment_cache_misses", 0) + cache_misses)
 
     _log.info("[RealWorld] Enrichment: %d attempted, %d succeeded, %d failed | "
               "dest: %d missing → %d recovered, origin: %d missing → %d recovered, "
@@ -562,7 +637,7 @@ def _filter_flights(
 async def _refresh_loop() -> None:
     """Full refresh cycle: discover → normalise → enrich → dedup → filter → cache → index.
 
-    v0.25.55: all stages instrumented with wall-clock timing.
+    v0.25.58: all stages instrumented with wall-clock timing.
     """
     global _refresh_running
     async with _refresh_lock:
@@ -584,6 +659,10 @@ async def _refresh_loop() -> None:
             timings["discovery_ms"] = round((time.monotonic() - t0) * 1000, 1)
 
             # ── Normalisation (per-record fault isolation) ──
+            # v0.25.58: ADSB.lol records carry _src="adsb" and must run through
+            # normalise_adsb (reads t/r/alt_baro/gs) instead of normalise_fr24
+            # (reads type/reg/altitude/speed) — otherwise aircraft type,
+            # registration, altitude and speed are silently dropped.
             t0 = time.monotonic()
             normalized: list[dict[str, Any]] = []
             norm_failed = 0
@@ -591,7 +670,10 @@ async def _refresh_loop() -> None:
                 if not item:
                     continue
                 try:
-                    f = normalise_fr24(item)
+                    if item.get("_src") == "adsb":
+                        f = normalise_adsb(item)
+                    else:
+                        f = normalise_fr24(item)
                     if f:
                         normalized.append(f)
                     else:
@@ -600,21 +682,48 @@ async def _refresh_loop() -> None:
                     norm_failed += 1
             timings["normalise_ms"] = round((time.monotonic() - t0) * 1000, 1)
 
+            # v0.25.58: early cache population — serve normalised flights the
+            # moment discovery+normalisation completes so the first search
+            # returns results even while enrichment is still running.
+            # Apply the same default filter so early and final caches are
+            # consistent (and the empty-cache protection can never pin an
+            # unfiltered GA/glider list when the filtered result is empty).
+            if normalized:
+                early_filtered = _dedup(_filter_flights(normalized, include_ga=False,
+                                                        include_gliders=False))
+                set_live_flights(early_filtered)
+                build_search_index(early_filtered)
+
             # Category counts
             cat_counts: dict[str, int] = {}
             for f in normalized:
                 cat = f.get("category") or "UNKNOWN"
                 cat_counts[cat] = cat_counts.get(cat, 0) + 1
 
-            # ── Enrichment ──
+            # ── Enrichment (lazy, capped — v0.25.58) ──
             t0 = time.monotonic()
             before_dedup = len(normalized)
-            enriched = await _enrich_batch(normalized)
+            # Only enrich the top-N operationally useful candidates to respect
+            # ADSBDB rate limits; the rest stay on normalised telemetry.
+            enrich_candidates = [
+                f for f in normalized
+                if (f.get("callsign") or "").strip()
+                and (f.get("category") or "UNKNOWN") in ("AIRLINE", "BUSINESS", "CARGO")
+            ]
+            enrich_candidates.sort(key=lambda f: -(f.get("rank_score") or 0))
+            enrich_candidates = enrich_candidates[:MAX_ENRICH_PER_CYCLE]
+            # _enrich_batch mutates the candidate dicts IN PLACE; the return
+            # value is not used (normalized already carries the enriched
+            # versions), so await without capturing.
+            await _enrich_batch(enrich_candidates)
             timings["enrich_ms"] = round((time.monotonic() - t0) * 1000, 1)
 
-            # ── Dedup ──
+            # ── Dedup (over the full set) ──
+            # _enrich_batch mutates the candidate dicts IN PLACE, so ``normalized``
+            # already holds the enriched versions of the capped subset while all
+            # remaining flights stay on normalised telemetry.  No merge needed.
             t0 = time.monotonic()
-            deduped = _dedup(enriched)
+            deduped = _dedup(normalized)
             after_dedup = len(deduped)
             timings["dedup_ms"] = round((time.monotonic() - t0) * 1000, 1)
 
@@ -683,6 +792,37 @@ def start_background_refresh() -> None:
         _log.info("[RealWorld] No event loop — background refresh not started")
 
 
+def _spawn_refresh() -> None:
+    """Fire-and-forget a single refresh cycle with an error callback.
+
+    Never awaits the cycle; returns immediately so user-facing requests are
+    never blocked on discovery or enrichment.  Strictly one refresh is ever
+    scheduled at a time: concurrent stale-search requests share it instead of
+    queuing duplicate cycles on the refresh lock.
+    """
+    global _refresh_scheduled
+    if _refresh_scheduled or _refresh_lock.locked() or _refresh_running:
+        return
+    _refresh_scheduled = True
+    try:
+        task = asyncio.create_task(_refresh_loop())
+
+        def _on_refresh_done(t: asyncio.Task) -> None:
+            global _refresh_scheduled
+            _refresh_scheduled = False
+            try:
+                t.result()
+            except asyncio.CancelledError:
+                pass  # app shutdown — ignore
+            except Exception as exc:
+                _log.error("[RealWorld] Background refresh crashed: %s", exc, exc_info=True)
+
+        task.add_done_callback(_on_refresh_done)
+    except RuntimeError:
+        _refresh_scheduled = False
+        _log.info("[RealWorld] No event loop — refresh spawn skipped")
+
+
 # Initial warm-up on first import
 _load_airports_csv()
 
@@ -704,6 +844,7 @@ async def realworld_search(
       origin, destination (ICAO), callsign, aircraft (ICAO type),
       include_ga, include_gliders (boolean strings)
     """
+    global _cold_start_waited
     origin_clean = _clean_str(origin)
     dest_clean = _clean_str(destination)
     callsign_clean = _clean_str(callsign)
@@ -721,30 +862,38 @@ async def realworld_search(
             aircraft_clean or "-", include_ga_bool, include_gliders_bool,
             len(flights), cache_age, is_stale)
 
-        # v0.25.55: cold-start bootstrap — call _refresh_loop() directly;
-        # it manages its own lock and _refresh_running flag internally.
-        if not flights:
-            _log.info("[RealWorld] Cold start - awaiting first refresh (max 30s)")
-            try:
-                await asyncio.wait_for(_refresh_loop(), timeout=30.0)
-            except asyncio.TimeoutError:
-                _log.warning("[RealWorld] First refresh timed out")
-            except Exception as exc:
-                _log.error("[RealWorld] First refresh failed: %s", exc, exc_info=True)
-            flights, cache_age, is_stale = get_live_flights()
+        # v0.25.58: cold-start — bounded first-load wait (v0.25.55 spec: first
+        # search < 5-8 s acceptable; later searches cache-only < 200 ms).  Only
+        # the very first request ever waits; the refresh loop populates the
+        # cache as soon as discovery+normalisation completes (early cache).
+        if not flights and not _cold_start_waited:
+            _cold_start_waited = True
+            _log.info("[RealWorld] Cold start - polling for first cache (max %.0fs)",
+                      COLD_START_WAIT_SECONDS)
+            # Never await the refresh cycle directly (it would queue on the
+            # refresh lock and, on timeout, cancel in-flight enrichment).
+            # Fire-and-forget, then poll the cache until it populates.
+            _spawn_refresh()
+            deadline = time.monotonic() + COLD_START_WAIT_SECONDS
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.4)
+                flights, cache_age, is_stale = get_live_flights()
+                if flights:
+                    break
+            if not flights:
+                _log.warning("[RealWorld] Cold-start cache still empty after %.0fs — serving partial cache",
+                             COLD_START_WAIT_SECONDS)
 
-        # v0.25.55: stale cache - fire-and-forget with error callback
+        # v0.25.58: cold-start (subsequent requests) — never block; fire-and-forget
+        if not flights:
+            _log.info("[RealWorld] Cold start (subsequent) - cache empty, background refresh")
+            _spawn_refresh()
+
+        # v0.25.58: stale cache - fire-and-forget with error callback
         elif is_stale:
             if not _refresh_lock.locked():
                 _log.info("[RealWorld] Stale cache (age=%.1fs) - triggering background refresh", cache_age)
-                task = asyncio.create_task(_refresh_loop())
-                def _on_refresh_done(t):
-                    try:
-                        t.result()
-                    except Exception as exc:
-                        _log.error("[RealWorld] Background refresh crashed: %s", exc, exc_info=True)
-                task.add_done_callback(_on_refresh_done)
-                asyncio.create_task(_refresh_loop())
+                _spawn_refresh()
 
         # Filter by search params
         q_parts = [p for p in (callsign_clean, origin_clean, dest_clean, aircraft_clean) if p]
@@ -762,7 +911,7 @@ async def realworld_search(
         # Limit to top 100 results
         results = filtered[:100]
 
-        # v0.25.55: add origin/destination flat aliases for frontend compatibility
+        # v0.25.58: add origin/destination flat aliases for frontend compatibility
         # The frontend reads flight.origin / flight.destination (flat strings)
         # but the canonical model uses origin_icao / destination_icao.
         for f in results:
@@ -789,7 +938,7 @@ async def realworld_search(
         )
 
 
-# ── Debug enrichment endpoint (v0.25.55) ────────────────────────────────────
+# ── Debug enrichment endpoint (v0.25.58) ────────────────────────────────────
 # Traces a single callsign through the full enrichment pipeline to identify
 # exactly where data is lost.  Local-only; does not expose secrets.
 
@@ -800,7 +949,7 @@ _DEBUG_ROUTER = APIRouter(prefix="/api/v1/realworld-debug", tags=["realworld-deb
 async def debug_enrichment_pipeline(callsign: str):
     """Trace a single callsign through the enrichment pipeline.
 
-    v0.25.55: instrumented with per-stage timing.  Never triggers refresh.
+    v0.25.58: instrumented with per-stage timing.  Never triggers refresh.
     Returns the state at each stage: raw ADSBDB → normalised → enriched → final.
     """
     t_total = time.monotonic()
@@ -848,7 +997,7 @@ async def debug_enrichment_pipeline(callsign: str):
         result["adsbdb_raw"] = {"available": False, "error": str(exc)}
 
     # ── Stage 2: Simulate a minimal FR24 flight + normalise ──
-    # v0.25.55: include hex (mode_s) so aircraft identity enrichment is testable
+    # v0.25.58: include hex (mode_s) so aircraft identity enrichment is testable
     mock_fr24 = {"flight": cs, "orig": "EDDF", "hex": "3c0000"}
     normalized = normalise_fr24(mock_fr24)
     if normalized:
@@ -868,7 +1017,7 @@ async def debug_enrichment_pipeline(callsign: str):
     # ── Stage 3: Apply ADSBDB enrichment (route + aircraft identity) ──
     if normalized and adsbdb_raw:
         apply_adsbdb_route(normalized, adsbdb_raw)
-        # v0.25.55: also attempt aircraft identity enrichment via mode_s or registration
+        # v0.25.58: also attempt aircraft identity enrichment via mode_s or registration
         ac_raw = None
         ms = normalized.get("mode_s")
         reg = normalized.get("registration")
@@ -981,7 +1130,7 @@ async def realworld_diagnostics(include_recent_errors: bool = False):
     response: dict[str, Any] = {
         "status": "ok",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "version": "0.25.55",
+        "version": "0.25.58",
         "last_successful_refresh_utc": stats.get("last_refresh_utc"),
         "last_refresh_status": stats.get("last_refresh_status"),
         "serving_stale_cache": is_stale and len(flights) > 0,

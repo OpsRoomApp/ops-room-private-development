@@ -1,4 +1,4 @@
-# OPS ROOM v0.25.55 — Complete API & WebSocket Specification
+# OPS ROOM v0.25.58 — Complete API & WebSocket Specification
 
 > **Exhaustive reference** for every REST endpoint and WebSocket message type across both `opsroom-app` (desktop) and `opsroom-website` (proxy).
 
@@ -79,7 +79,7 @@ Full system status, version, uptime, subsystem health. No auth required.
 ```json
 {
   "ok": true,
-  "version": "0.25.55",
+  "version": "0.25.58",
   "build": "public-release",
   "uptime_seconds": 410789.2,
   "subsystems": {
@@ -221,8 +221,8 @@ Check for available updates (dual-channel: opsroom.live → GitHub fallback). Lo
 {
   "ok": true,
   "update_available": false,
-  "current_version": "0.25.55",
-  "latest_version": "0.25.55",
+  "current_version": "0.25.58",
+  "latest_version": "0.25.58",
   "channel": "stable"
 }
 ```
@@ -316,8 +316,8 @@ curl "http://localhost:8080/api/updates/check?force=true"
 {
   "ok": true,
   "update_available": false,
-  "current_version": "0.25.55",
-  "latest_version": "0.25.55",
+  "current_version": "0.25.58",
+  "latest_version": "0.25.58",
   "channel": "stable"
 }
 ```
@@ -328,8 +328,8 @@ curl "http://localhost:8080/api/updates/check?force=true"
   "ok": true,
   "update_available": true,
   "current_version": "0.24.00",
-  "latest_version": "0.25.55",
-  "manifest": { "version": "0.25.55", "download_url": "...", "sha256": "..." }
+  "latest_version": "0.25.58",
+  "manifest": { "version": "0.25.58", "download_url": "...", "sha256": "..." }
 }
 ```
 
@@ -343,7 +343,7 @@ Download and stage update ZIP. Local-only.
 
 **Response (200):**
 ```json
-{ "ok": true, "staged_version": "0.25.55", "staged_path": "..." }
+{ "ok": true, "staged_version": "0.25.58", "staged_path": "..." }
 ```
 
 ### 1.12 SimBrief Endpoints

@@ -408,9 +408,15 @@ def enrich_telemetry(sample: dict[str, Any], offset_reader: Callable[[list[tuple
             if fenix_specs:
                 try:
                     probe_specs = fenix_specs[:5]
-                    lvar_requests = [(s.lvar, "f") for s in probe_specs]
+                    # v0.25.58: SimConnect rejects "f" as a units token and answers
+                    # SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID, flooding the log on every
+                    # telemetry tick. "Number" is the correct generic float units.
+                    lvar_requests = [(s.lvar, "Number") for s in probe_specs]
                     values = list(simconnect_reader(lvar_requests))
-                    if values and len(values) == len(lvar_requests):
+                    # Only force the Fenix family when the probe actually returned a
+                    # readable value — an all-None result means the LVars do not exist
+                    # on the loaded aircraft (avoid false-positive family detection).
+                    if values and any(v is not None for v in values) and len(values) == len(lvar_requests):
                         family = {"key": "fenix_a32x", "label": FAMILY_LABELS["fenix_a32x"], "supported": True, "aircraft_text": identity_text}
                         adapter.update({
                             "key": "fenix_a32x",
@@ -453,12 +459,16 @@ def enrich_telemetry(sample: dict[str, Any], offset_reader: Callable[[list[tuple
     # relying on FSUIPC WASM offset copies, which have historically been unreliable
     # for Fenix aircraft. Falls back to FSUIPC offsets if SimConnect is unavailable.
     if family["key"] == "fenix_a32x" and simconnect_reader and active_specs:
-        lvar_requests: list[tuple[str, str]] = [(spec.lvar, "f") for spec in active_specs]
+        # v0.25.58: "f" is not a valid SimConnect units token. Passing it made
+        # AddToDataDefinition fail and every L:Var read raised
+        # SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID — thousands of log lines per
+        # session (each flushed to disk) and no Fenix data ever read.
+        lvar_requests: list[tuple[str, str]] = [(spec.lvar, "Number") for spec in active_specs]
         try:
             values = list(simconnect_reader(lvar_requests))
         except Exception:
             values = []
-        if values and len(values) == len(active_specs):
+        if values and any(v is not None for v in values) and len(values) == len(active_specs):
             addon = dict(result.get("addon_state") or {})
             event_meta = dict(result.get("addon_event_meta") or {})
             top_level_contributed = False
