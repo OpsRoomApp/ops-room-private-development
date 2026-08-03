@@ -1,29 +1,54 @@
-# OPS ROOM 0.25.58
+# OPS ROOM 0.25.60
 
-OPS ROOM 0.25.58 is a public maintenance release that refines the surface of the application without changing how flights are recorded or replayed.
+OPS ROOM 0.25.60 is a public reliability release that hardens flight-phase
+detection, the Status Board, the simulator telemetry session and Black Box
+auto-recording.
 
-## 0.25.58: Polish Pass
+## 0.25.60: Reliability Pass
 
 Highlights in this build:
 
-- Status Board advisories now route through a single friendly-error filter so raw application exceptions never appear on the operational dashboard. Unusual conditions surface as operational copy or are journaled to developer diagnostics.
-- A global :focus-visible outline rule ships, so keyboard navigation has a consistent visual cue across every module.
-- A conservative set of spacing and hierarchy tweaks tightens the breathing room on existing layouts without changing the cockpit-amber visual identity or any module's basic structure.
+- Pushback is now recognised for any tug — GSX, the default tug or any
+  third-party pushback service. Backward body motion and heading/track
+  reversal are detected independently of GSX, so the safety briefing no longer
+  fires when the aircraft is simply being pushed back.
+- The Status Board advisories panel is crash-proofed and more useful: the
+  flight-identity line no longer throws when a flight plan has no raw OFP
+  envelope, and up to three departure and three arrival route NOTAMs from the
+  loaded flight plan are shown beneath the system notices.
+- The SimConnect session heals itself: if the connection's dispatch loop
+  breaks mid-session, repeated failed reads tear the session down and a fresh
+  one is created, instead of serving a dead connection and silently falling
+  back to generic aircraft data.
+- Flight Watch no longer shows fabricated FCU selections: when the aircraft
+  adapter is inactive, the zero-valued generic autopilot offsets are presented
+  as no data instead of a misleading "0 FT / 0°".
+- The full-screen RAAS CHECK overlay works again on every module after the
+  previous toast cleanup pass accidentally hid it.
+- Black Box auto-recording starts at the earliest of engine start, pushback or
+  taxi-out, and stops on blocks with the engines off — the watchdog that
+  detects engine start now runs from app startup and between recordings.
 
 Behavioural compatibility:
 
-- The ChartFox browser, two-pane chart layout, search-dropdown and ownship overlay behave the same as in the prior release.
-- Camera-distance volume remains on by default with the smooth distance blend.
-- Black Box recording schema v2 (with the appended first-officer sidestick fields) is unchanged; existing recordings still load and replay normally.
-- Public release identity, build channels and acknowledgements stay in sync across the .md and .txt copies.
+- Black Box recording schema v2 is unchanged; existing recordings still load
+  and replay normally.
+- Real World Search keeps its cache-first pipeline: FR24 discovery and ADSBDB
+  enrichment run in the background and never block a search request.
+- The ChartFox browser, Dispatch, Briefing, Logbook and Settings pages behave
+  the same as in the prior release.
+- Public release identity, build channels and acknowledgements stay in sync
+  across the .md and .txt copies.
 
-This build is a stable public release. Refresh the briefing charts, Black Box recordings and Settings pages after upgrading.
+This build is a stable public release. Refresh the Black Box recordings and
+Status Board pages after upgrading.
 
-## 0.25.58 verified scope
+## 0.25.60 verified scope
 
-- Public release identity and build channels (Polish Pass, stable).
-- Shipped README, release notes and acknowledgements kept in sync across .md and .txt.
-- Black Box recording schema unchanged in this release; v2 stays current.
-- Procedure charts are still sourced from ChartFox when connected, otherwise SimBrief and AIP/FAA fallbacks remain available.
+- Pushback detection (GSX and non-GSX), Status Board advisories and NOTAMs.
+- SimConnect session self-healing and Flight Watch FCU presentation.
+- RAAS global overlay and Black Box auto-record start/stop.
+- Installer generation with correct version naming.
 
-Aircraft compatibility, simulator fallback behaviour and online network etiquette follow the same conventions as previous public releases.
+Aircraft compatibility, simulator fallback behaviour and online network
+etiquette follow the same conventions as previous public releases.

@@ -10,11 +10,13 @@ RELEASE_CODENAME = "Release Migration"
 RELEASE_CHANNEL = "stable"
 RELEASE_MESSAGE = "OPS ROOM {version} is available."
 RELEASE_NOTES = (
-    "OPS ROOM {version} is a polish pass. Operational advisories on the dashboard route through the "
-    "friendly-error filter instead of leaking raw exceptions. The ChartFox quick-pick chips, search "
-    "and ownship overlay continue to behave like the prior release. Camera-distance volume is on by "
-    "default with a smoothstep curve. Recording schema v2 still captures the first-officer sidestick. "
-    "Read-only surface changes only; no backend or schema changes affecting recordings or PIREP data."
+    "OPS ROOM {version} is a reliability pass. Fenix/EFB detection holds its last known state across "
+    "brief probe delays so Ground Control, Flight Watch and Black Box stay steady. RAAS and landing "
+    "alerts are delivered reliably, including right after app start, with burst polling after a "
+    "landing. Short SimConnect/FSUIPC telemetry gaps are bridged in flight recording while long gaps "
+    "are still reported. Full PIREP PDF export inlines the current assets regardless of cache-busting "
+    "version suffixes, and the Windows installer is produced again with the correct version name. "
+    "Recording schema v2 is unchanged."
 )
 
 
@@ -40,7 +42,7 @@ def main() -> int:
     digest = sha256(zip_path)
     sha_path = zip_path.with_suffix(zip_path.suffix + ".sha256")
     sha_path.write_text(f"{digest}  {zip_path.name}\n", encoding="ascii")
-    # version already includes the 'v' prefix (e.g. '0.25.58')
+    # version already includes the 'v' prefix (e.g. '0.25.60')
     download_url = f"{args.repo}/releases/download/{version}/{zip_path.name}"
     manifest = {
         "latest_version": version,

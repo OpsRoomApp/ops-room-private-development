@@ -1,4 +1,4 @@
-"""ADSBDB API client – v0.25.58.
+"""ADSBDB API client – v0.25.60.
 
 Lightweight async client for the ADSBDB REST API with a shared pooled
 connection, timeouts, retry, rate-limit awareness, and a global 429

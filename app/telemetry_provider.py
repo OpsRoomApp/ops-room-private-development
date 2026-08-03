@@ -1346,11 +1346,12 @@ def _read_simconnect_lvars(requests: list[tuple[str, str]]) -> list[Any]:
     global _SIMCONNECT_LVAR_SESSION, _SIMCONNECT_LVAR_REQUESTS
     if not requests:
         return []
-    from .simconnect_position import _ensure_session, simconnect_diagnostics
+    from .simconnect_position import _ensure_session, simconnect_diagnostics, _note_session_read_result
     try:
         diagnostics = simconnect_diagnostics()
         sm, _aq = _ensure_session(diagnostics)
     except Exception:
+        _note_session_read_result(False)
         return []
     if sm is None:
         return []
@@ -1361,7 +1362,7 @@ def _read_simconnect_lvars(requests: list[tuple[str, str]]) -> list[Any]:
     values: list[Any] = []
     for lvar, fmt in requests:
         try:
-            # v0.25.58: "f"/"float" are not valid SimConnect units tokens. Passing
+            # v0.25.59: "f"/"float" are not valid SimConnect units tokens. Passing
             # them makes AddToDataDefinition fail and every L:Var read raise
             # SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID (log flood + no data).
             # Normalise to the correct generic float units token defensively.
@@ -1377,6 +1378,14 @@ def _read_simconnect_lvars(requests: list[tuple[str, str]]) -> list[Any]:
             values.append(None if raw is None else float(raw))
         except Exception:
             values.append(None)
+    # v0.25.60: session self-heal — every L:Var read coming back None (broken
+    # SimConnect dispatch thread) counts as a session failure so the shared
+    # session is rebuilt instead of serving a dead connection forever.
+    if requests:
+        if any(v is not None for v in values):
+            _note_session_read_result(True)
+        else:
+            _note_session_read_result(False)
     return values
 
 

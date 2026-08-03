@@ -302,6 +302,7 @@ def _sample(t: dict[str, Any], now: str) -> dict[str, Any]:
         "ground_speed_kts": _number(t.get("ground_speed_kts")), "vertical_speed_fpm": _number(t.get("vertical_speed_fpm")),
         "raw_ground_speed_kts": _number(t.get("raw_ground_speed_kts")), "raw_vertical_speed_fpm": _number(t.get("raw_vertical_speed_fpm")),
         "heading_deg": _number(t.get("heading_deg")), "track_deg": _number(t.get("track_deg")),
+        "body_velocity_x_fps": _number(t.get("body_velocity_x_fps")),
         "pitch_deg": _number(t.get("pitch_deg")), "bank_deg": _number(t.get("bank_deg")), "g_force": _number(t.get("g_force")),
         "raw_g_force": _number(t.get("raw_g_force")), "raw_radio_altitude_ft": _number(t.get("raw_radio_altitude_ft")),
         "fuel_total_lb": _number(t.get("fuel_total_lb")), "fuel_flow_pph": _number(t.get("fuel_flow_pph")),
@@ -464,6 +465,37 @@ def _gsx_pushback_active_inner() -> tuple[bool, bool]:
     return bool(raw == 5 and str(row.get("source") or "").lower() == "official-remote-api-v2"), False
 
 
+def _backward_motion_active(sample: dict[str, Any]) -> bool:
+    """Detect any tug pushing the aircraft backward (GSX, default or third-party).
+
+    Two independent telemetry signals are combined so ordinary forward taxi is
+    never mistaken for pushback:
+
+    1. MSFS ``VELOCITY_BODY_X`` is positive forward; a sustained negative value
+       while on the ground means the aircraft is being pushed backward.
+    2. When moving slowly on the ground, a ground track ~180 degrees opposite
+       the nose heading means the aircraft is travelling tail-first.
+
+    The tug speed guard (0.5-5 kt) matches the physical envelope of a pushback
+    tug; anything faster is self-powered taxi and handled by the existing
+    TAXI OUT logic.
+    """
+    if sample.get("on_ground") is not True and sample.get("ground_safe") is not True:
+        return False
+    gs = _number(sample.get("ground_speed_kts")) or 0.0
+    if gs < 0.5 or gs > 5.0:
+        return False
+    body_vx = _number(sample.get("body_velocity_x_fps"))
+    if body_vx is not None and body_vx <= -1.5:
+        return True
+    heading = _number(sample.get("heading_deg"))
+    track = _number(sample.get("track_deg"))
+    if heading is None or track is None:
+        return False
+    delta = abs(((track - heading) + 180.0) % 360.0 - 180.0)
+    return delta >= 150.0
+
+
 def _altitude_reliable(sample: dict[str, Any]) -> bool:
     if sample.get("altitude_unreliable") is True:
         return False
@@ -582,7 +614,7 @@ def _phase(sample: dict[str, Any], meta: dict[str, Any]) -> str:
     # sample cannot demote tug movement to TAXI OUT.
     pushback_active = bool(state.get("pushback_positive_latch") or state.get("pushback_active") or sample.get("pushback_active"))
     if not pushback_active and not state.get("pushback_forward_taxi_proven"):
-        pushback_active = _gsx_pushback_active()
+        pushback_active = _gsx_pushback_active() or _backward_motion_active(sample)
     if sample.get("on_ground") is True or sample.get("ground_safe") is True:
         if pushback_active and gs <= 5.0:
             return "PUSHBACK"
@@ -742,7 +774,7 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
     now = current["time"]; state = meta.setdefault("_state", {}); metrics = meta.setdefault("metrics", {}); times = meta.setdefault("times", {}); fuel = meta.setdefault("fuel", {})
     airport = _airport_at(current); gs = current.get("ground_speed_kts") or 0.0; vs = current.get("vertical_speed_fpm") or 0.0; agl = current.get("agl_ft")
     previous_phase = state.get("phase")
-    pushback_observed = _gsx_pushback_active()
+    pushback_observed = _gsx_pushback_active() or _backward_motion_active(current)
     pushback_explicit_clear = bool(getattr(_gsx_pushback_active, "_last_explicit_clear", False))
     pushback_latched = bool(state.get("pushback_positive_latch") or state.get("pushback_active"))
     if pushback_observed and not state.get("pushback_forward_taxi_proven"):

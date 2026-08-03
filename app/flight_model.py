@@ -1,4 +1,4 @@
-"""Real-world flight data model – v0.25.58.
+"""Real-world flight data model – v0.25.60.
 
 Normalisation, classification, ranking, deduplication, and dispatch/Simbrief
 eligibility helpers for the Real World Search pipeline.

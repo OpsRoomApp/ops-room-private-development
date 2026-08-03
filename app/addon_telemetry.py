@@ -408,7 +408,7 @@ def enrich_telemetry(sample: dict[str, Any], offset_reader: Callable[[list[tuple
             if fenix_specs:
                 try:
                     probe_specs = fenix_specs[:5]
-                    # v0.25.58: SimConnect rejects "f" as a units token and answers
+                    # v0.25.59: SimConnect rejects "f" as a units token and answers
                     # SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID, flooding the log on every
                     # telemetry tick. "Number" is the correct generic float units.
                     lvar_requests = [(s.lvar, "Number") for s in probe_specs]
@@ -459,7 +459,7 @@ def enrich_telemetry(sample: dict[str, Any], offset_reader: Callable[[list[tuple
     # relying on FSUIPC WASM offset copies, which have historically been unreliable
     # for Fenix aircraft. Falls back to FSUIPC offsets if SimConnect is unavailable.
     if family["key"] == "fenix_a32x" and simconnect_reader and active_specs:
-        # v0.25.58: "f" is not a valid SimConnect units token. Passing it made
+        # v0.25.59: "f" is not a valid SimConnect units token. Passing it made
         # AddToDataDefinition fail and every L:Var read raised
         # SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID — thousands of log lines per
         # session (each flushed to disk) and no Fenix data ever read.
@@ -559,6 +559,18 @@ def enrich_telemetry(sample: dict[str, Any], offset_reader: Callable[[list[tuple
     if "mode" not in adapter_status or adapter_status["mode"] != "SIMCONNECT LVARS":
         adapter_status["mode"] = "ENHANCED" if adapter_status["active"] else "GENERIC FALLBACK"
     result["adapter_status"] = adapter_status
+    # v0.25.60: when the aircraft family is supported (e.g. Fenix) but the
+    # adapter is inactive (SimConnect session broken / L:Vars unavailable),
+    # the generic standard AP offsets the addon does not populate read 0, and
+    # the Flight Watch renders a fabricated "0 FT / 0°". Null only those exact
+    # zeros so the UI shows "---" instead of a misleading selection. A valid
+    # non-zero selection is never touched.
+    if family.get("supported") and not adapter_status.get("active"):
+        ap_now = result.get("autopilot")
+        if isinstance(ap_now, dict):
+            for fcu_key in ("selected_altitude_ft", "selected_heading_deg", "selected_speed_kts", "selected_vertical_speed_fpm"):
+                if ap_now.get(fcu_key) == 0:
+                    ap_now[fcu_key] = None
     # Lock the adapter after the first confirmed LVar read. Once locked,
     # the family holds through transient identity degradation until a
     # genuine aircraft change is detected by _aircraft_changed().

@@ -27,6 +27,14 @@ _REPLAY_INITIAL_DEFINITION: Any | None = None
 _REPLAY_POSE_SESSION_ID: int | None = None
 _REPLAY_OPTIONAL_LAST: dict[str, float | int] = {}
 
+# v0.25.60: session self-heal. The upstream SimConnect wrapper's dispatch
+# thread can break mid-session (repeated ``OS error: WinError 0xc00000b0``
+# floods with every read returning None). Consecutive failed reads tear the
+# session down so the next ``_ensure_session`` builds a fresh connection
+# instead of serving a dead one forever.
+_SESSION_CONSECUTIVE_FAILURES = 0
+_SESSION_MAX_CONSECUTIVE_FAILURES = 25
+
 # Single-session Frame event subscription (SkyDolly approach — one SimConnect session)
 _REPLAY_FRAME_COND = threading.Condition()
 _REPLAY_FRAME_SUBSCRIBED = False
@@ -34,7 +42,7 @@ _REPLAY_FRAME_EVENT_ID: Any | None = None
 _REPLAY_FRAME_ORIG_HANDLER: Any | None = None
 _REPLAY_FRAME_LAST_MONO = 0.0
 
-# v0.25.58 — Two-tier Black Box polling: low-rate SimVars (engine flags,
+# v0.25.59 — Two-tier Black Box polling: low-rate SimVars (engine flags,
 # parking brake, flaps, gear, spoilers, wind, sim rate, pause/slew, reverser,
 # body velocity, stall/overspeed, aircraft info) are cached and refreshed at
 # ~2 Hz independent of the high-rate (position/attitude/speed) loop.  This
@@ -257,7 +265,7 @@ def _connect_with_timeout(sm: Any, timeout_seconds: float = 8.0) -> None:
         raise TimeoutError("Timed out waiting for the SimConnect OPEN event")
 
 def _close_session() -> None:
-    global _SESSION_SM, _SESSION_AQ, _SESSION_STARTED
+    global _SESSION_SM, _SESSION_AQ, _SESSION_STARTED, _SESSION_CONSECUTIVE_FAILURES
     if _SESSION_SM is not None:
         try:
             _SESSION_SM.exit()
@@ -266,6 +274,20 @@ def _close_session() -> None:
     _SESSION_SM = None
     _SESSION_AQ = None
     _SESSION_STARTED = 0.0
+    _SESSION_CONSECUTIVE_FAILURES = 0
+
+
+def _note_session_read_result(ok: bool) -> None:
+    """Track read health so a broken SimConnect session is rebuilt (v0.25.60)."""
+    global _SESSION_CONSECUTIVE_FAILURES
+    if _SESSION_SM is None:
+        return
+    if ok:
+        _SESSION_CONSECUTIVE_FAILURES = 0
+        return
+    _SESSION_CONSECUTIVE_FAILURES += 1
+    if _SESSION_CONSECUTIVE_FAILURES >= _SESSION_MAX_CONSECUTIVE_FAILURES:
+        _close_session()
 
 
 def _ensure_session(diagnostics: dict[str, Any]) -> tuple[Any, Any]:
@@ -1013,7 +1035,7 @@ def _read_low_rate_tier(aq: Any) -> dict[str, Any]:
 
 
 def _read_position_minimal_uncached() -> dict[str, Any]:
-    """Black Box essentials — v0.25.58 two-tier polling.
+    """Black Box essentials — v0.25.59 two-tier polling.
 
     High-rate vars (position, attitude, speeds) are read every call (~20
     SimConnect subscriptions).  Low-rate vars (engine flags, surfaces, wind,
@@ -1201,7 +1223,9 @@ def read_position_minimal(force: bool = False) -> dict[str, Any]:
     non-poisoning by design.
     """
     with _LOCK:
-        return _sanitize_telemetry(_read_position_minimal_uncached())
+        result = _sanitize_telemetry(_read_position_minimal_uncached())
+        _note_session_read_result(bool(result.get("ok")))
+        return result
 
 
 def read_position(force: bool = False) -> dict[str, Any]:
@@ -1217,6 +1241,7 @@ def read_position(force: bool = False) -> dict[str, Any]:
         if not force and _CACHE is not None and now - _CACHE_TIME < _CACHE_SECONDS:
             return dict(_CACHE)
         result = _sanitize_telemetry(_read_position_uncached())
+        _note_session_read_result(bool(result.get("ok")))
         _CACHE = dict(result)
         _CACHE_TIME = time.monotonic()
         return result

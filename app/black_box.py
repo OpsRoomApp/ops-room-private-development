@@ -33,6 +33,7 @@ _SCHEMA_VERSION = 2
 _LOCK = threading.RLock()
 _STOP = threading.Event()
 _THREAD: threading.Thread | None = None
+_SHUTDOWN = False
 _ACTIVE: dict[str, Any] | None = None
 _RING: deque[dict[str, Any]] = deque(maxlen=18000)
 _PHASE_CONTEXT: dict[str, Any] = {"flight_id": None, "phase": "", "meta": {}}
@@ -399,8 +400,9 @@ def start_recording(flight_id: str, meta: dict[str, Any] | None = None) -> dict[
         _STOP.clear()
         _RING.clear()
         _event_locked(_ACTIVE, "RECORDING START", "Recording started at taxi-out")
-        _THREAD = threading.Thread(target=_record_loop, name="OpsRoom-BlackBox", daemon=True)
-        _THREAD.start()
+        if _THREAD is None or not _THREAD.is_alive():
+            _THREAD = threading.Thread(target=_record_loop, name="OpsRoom-BlackBox", daemon=True)
+            _THREAD.start()
         return status()
 
 
@@ -440,7 +442,29 @@ def stop_recording(reason: str = "TAXI IN") -> dict[str, Any]:
         _ACTIVE = None
         _THREAD = None
         _STOP.clear()
+        if not _SHUTDOWN:
+            start_watchdog()
         return finished
+
+
+def start_watchdog() -> None:
+    """Start the Black Box record-loop watchdog thread (v0.25.60).
+
+    The watchdog keeps the engine-on / taxi-out auto-record detector alive
+    from app startup and between recordings. Previously the thread was only
+    ever spawned inside ``start_recording``, so on a fresh boot the auto-start
+    detector never existed and recordings never began automatically. Spawning
+    is idempotent - a live thread is never replaced.
+    """
+    global _THREAD, _SHUTDOWN
+    if _SHUTDOWN:
+        return
+    with _LOCK:
+        if _THREAD is not None and _THREAD.is_alive():
+            return
+        _STOP.clear()
+        _THREAD = threading.Thread(target=_record_loop, name="OpsRoom-BlackBox", daemon=True)
+        _THREAD.start()
 
 
 def diagnose() -> dict[str, Any]:
@@ -554,15 +578,14 @@ def observe_phase(flight_id: str, phase: str, meta: dict[str, Any] | None = None
     integrations = load_settings().get("integrations", {})
     if replay_active() or not bool(integrations.get("black_box_enabled", True)) or not bool(integrations.get("black_box_auto_record", True)):
         return
-    # v0.25.7: Recording start policy changed.
+    # v0.25.7/0.25.60: Recording start policy.
+    #   - ENGINE ON: detected in _record_loop via stream-minimal telemetry so a
+    #     hot-start before any logbook phase change is captured first.
     #   - PUSHBACK (regardless of engine state): pilots get a recording when
-    #     GSX/autosave tug starts moving them. Pre-flight coverage preserved.
-    #   - ENGINE ON: detected in _record_loop via stream-minimal telemetry so
-    #     a hot-start before any logbook phase change is also captured.
-    #   - TAXI OUT / PARKED: previously triggered recording here; both routes
-    #     are now subsumed by the two paths above (engine-on starts taxi-out
-    #     so waiting for the phase transition adds nothing).
-    if not active and phase_up == "PUSHBACK":
+    #     any tug (GSX, default, third-party) starts moving them backward.
+    #   - TAXI OUT: restored in v0.25.60 as an independent start trigger so the
+    #     recording begins at the earliest of engine-on, pushback, or taxi-out.
+    if not active and phase_up in {"PUSHBACK", "TAXI OUT"}:
         try:
             start_recording(str(flight_id), meta)
             return
@@ -718,11 +741,15 @@ def _record_loop() -> None:
                 with _LOCK:
                     flight_id = str(_PHASE_CONTEXT.get("flight_id") or "")
                     flight_meta = dict(_PHASE_CONTEXT.get("meta") or {})
-                if flight_id:
-                    try:
-                        start_recording(flight_id, flight_meta)
-                    except Exception:
-                        pass
+                if not flight_id:
+                    # v0.25.60: engines on before any logbook session exists -
+                    # start with an ad-hoc identity so the recording is never
+                    # silently skipped on a hot start.
+                    flight_id = f"blackbox-{uuid.uuid4().hex[:10]}"
+                try:
+                    start_recording(flight_id, flight_meta)
+                except Exception:
+                    pass
             last_engines_running = engines_now
             next_run = now + 1.0
             continue
@@ -965,5 +992,15 @@ def recover_interrupted() -> None:
 
 
 def shutdown() -> None:
-    if status().get("recording"):
-        stop_recording("OPS ROOM SHUTDOWN")
+    global _SHUTDOWN, _THREAD
+    _SHUTDOWN = True
+    try:
+        if status().get("recording"):
+            stop_recording("OPS ROOM SHUTDOWN")
+    finally:
+        with _LOCK:
+            _STOP.set()
+            thread = _THREAD
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        _STOP.clear()

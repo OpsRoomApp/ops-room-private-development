@@ -244,7 +244,7 @@ def _sample_time(row: dict[str, Any]) -> float | None:
 
 def _sanitize_samples(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Chronologically sanitize recorder samples before PIREP scoring/plotting."""
-    # v0.25.58: telemetry_gap / telemetry_hold samples are no longer dropped
+    # v0.25.59: telemetry_gap / telemetry_hold samples are no longer dropped
     # unconditionally. A second or two of flagged samples with clean, continuous
     # data on both sides is bridged (kept); the geometric jump filter below
     # still rejects genuinely impossible transitions. Only gap runs longer than

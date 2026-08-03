@@ -103,7 +103,7 @@ def build_system_summary(probe_simconnect: bool = False) -> dict[str, Any]:
     else:
         telemetry_detail = str((position or {}).get("reason") or "Waiting for Microsoft Flight Simulator")[:140]
     return {
-        "version": "0.25.58",
+        "version": "0.25.60",
         "position": position if sim_connected else None,
         "nearest_airport": nearest_code,
         "product": "OPS ROOM",
