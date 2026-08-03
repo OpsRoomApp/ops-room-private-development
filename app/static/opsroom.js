@@ -151,8 +151,10 @@ let lastRaasClientAudioToastId = null;
 let raasGlobalTimer = null;
 let raasGlobalPollTimer = null;
 let landingMonitorTimer = null;
+let landingBurstTimer = null;
 let lastLandingToastId = null;
 let landingMonitorPrimed = false;
+let landingMonitorStartedAt = 0;
 let raasListenerSeeded = false;
 let cameraViewState = {mode:'tail_follow',distance:55,height:10,sideOffset:0,pitch:-7,orbitAngle:180,smoothing:0.35};
 let cameraViewSaveTimer = null;
@@ -5899,20 +5901,40 @@ function renderRaasUnitButtons(unit){
   });
 }
 
+// v0.25.59 — RAAS global toast. Poll interval is 5s; the freshness window must
+// have comfortable headroom above it (3x), otherwise any poll/fetch delay or
+// backend processing time between the runway event and the created_epoch stamp
+// blows through the window and the toast is silently dropped as stale.
+const RAAS_TOAST_FRESH_SECONDS = 15;
+// Set localStorage opsroom-raas-debug=1 to log why a toast was gated.
+const RAAS_TOAST_DEBUG = (()=>{try{return localStorage.getItem('opsroom-raas-debug')==='1'}catch(e){return false}})();
 function showRaasCenterToast(data, force=false){
   const type = String(data?.last_callout_type||'').toLowerCase();
-  if(!data || (data.suppress_center_toast && type !== 'test')) return;
+  if(!data || (data.suppress_center_toast && type !== 'test')){
+    if(RAAS_TOAST_DEBUG) console.warn('[RAAS] toast gated: suppress_center_toast=true type='+type);
+    return;
+  }
   const created = Number(data.raas_event_created_epoch||0);
   const active = data.raas_event_active !== false;
-  if(!active || !created || (Date.now()/1000-created)>8) return;
+  if(!active || !created || (Date.now()/1000-created)>RAAS_TOAST_FRESH_SECONDS){
+    if(RAAS_TOAST_DEBUG) console.warn('[RAAS] toast gated: active='+active+' created='+created+' age='+(created?(Date.now()/1000-created).toFixed(1):'n/a')+'s (window '+RAAS_TOAST_FRESH_SECONDS+'s)');
+    return;
+  }
   if(!force){
-    if(!data.toast_id || data.toast_id === lastRaasToastId) return;
+    if(!data.toast_id || data.toast_id === lastRaasToastId){
+      if(RAAS_TOAST_DEBUG) console.warn('[RAAS] toast gated: dedup toast_id='+data.toast_id+' last='+lastRaasToastId);
+      return;
+    }
     lastRaasToastId = data.toast_id;
   }else if(data.toast_id){
     lastRaasToastId = data.toast_id;
   }
   const raasText = formatRaasGlobalText(data);
-  if(raasText) showRaasGlobalAlert(raasText, data.last_callout_priority || 'advisory');
+  if(!raasText){
+    if(RAAS_TOAST_DEBUG) console.warn('[RAAS] toast gated: empty text type='+type+' last_callout='+String(data.last_callout||'').slice(0,60)+' display='+String(data.display||'').slice(0,60));
+    return;
+  }
+  showRaasGlobalAlert(raasText, data.last_callout_priority || 'advisory');
 }
 
 
@@ -5964,7 +5986,40 @@ function showLandingToast(data){
   toast.hidden=false;
 }
 async function pollLandingResult(){
-  try{const r=await fetch('/api/logbook/landing-latest',{cache:'no-store'});const d=await r.json();if(!r.ok)return;if(!landingMonitorPrimed){lastLandingToastId=d?.id||null;landingMonitorPrimed=true;return}showLandingToast(d)}catch{}
+  try{
+    const r=await fetch('/api/logbook/landing-latest',{cache:'no-store'});
+    if(!r.ok){console.warn('[landing] poll HTTP '+r.status);return;}
+    const d=await r.json();
+    if(!landingMonitorPrimed){
+      landingMonitorPrimed=true;
+      landingMonitorStartedAt=Date.now();
+      // Prime against a timestamp boundary rather than presence/absence: a
+      // landing recorded around app boot must still toast instead of being
+      // silently absorbed as the baseline.
+      const ts=landingRecordEpoch(d);
+      if(d?.id && ts && ts>=landingMonitorStartedAt-20000){ showLandingToast(d); startLandingBurst(); return; }
+      lastLandingToastId=d?.id||null;
+      return;
+    }
+    showLandingToast(d);
+    startLandingBurst();
+  }catch(err){ console.warn('[landing] poll failed', err); }
+}
+function landingRecordEpoch(d){
+  if(!d) return 0;
+  const raw=String(d.updated_utc||d.landing_utc||'');
+  const ts=Date.parse(raw);
+  return Number.isFinite(ts)?ts:0;
+}
+function startLandingBurst(){
+  if(landingBurstTimer) return;
+  clearInterval(landingMonitorTimer);
+  landingMonitorTimer=setInterval(pollLandingResult,2000);
+  landingBurstTimer=setTimeout(()=>{
+    clearInterval(landingMonitorTimer);
+    landingMonitorTimer=setInterval(pollLandingResult,10000);
+    landingBurstTimer=null;
+  },15000);
 }
 function startLandingMonitor(){
   if(landingMonitorTimer)return;

@@ -26,10 +26,52 @@ _APPROX_RE = re.compile(rf"[~≈]\s*({_CURRENCY_TOKEN})\s*([0-9][0-9, .]*)", re.
 _FILENAME_TS_RE = re.compile(r"^(\d{8}T\d{6}Z)_([A-Z0-9]{4})_(.+)$", re.I)
 
 
+def _receipts_candidates() -> list[Path]:
+    """Alternative GSX Pro receipt locations probed when the default is absent.
+
+    GSX updates have moved the receipts folder in the past; probing known
+    alternatives before falling back to the default keeps receipt detection
+    working even when a new GSX build relocates the directory.
+    """
+    candidates: list[Path] = []
+    local = os.getenv("LOCALAPPDATA")
+    if local:
+        candidates.append(Path(local) / "Virtuali" / "GSX" / "Receipts")
+    program = os.getenv("PROGRAMDATA")
+    if program:
+        candidates.append(Path(program) / "Virtuali" / "GSX" / "Receipts")
+    candidates.append(Path.home() / "AppData" / "Roaming" / "Virtuali" / "GSX" / "Receipts")
+    return candidates
+
+
 def receipts_root() -> Path:
+    """Locate the GSX Pro receipts directory.
+
+    The default GSX layout is %APPDATA%\\Virtuali\\GSX\\Receipts. A settings
+    override (``integrations.gsx_receipts_dir``, mirroring the existing
+    ``integrations.fenix_efb_url`` pattern) takes precedence; if the resolved
+    directory is absent, known alternative layouts are probed so a GSX update
+    that relocates the folder does not silently break receipt detection again.
+    """
+    try:
+        from .settings_store import load_settings
+
+        override = str((load_settings().get("integrations", {}) or {}).get("gsx_receipts_dir") or "").strip()
+        if override:
+            path = Path(override).expanduser()
+            if path.is_dir():
+                return path
+    except Exception:
+        pass
     appdata = os.getenv("APPDATA")
     base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
-    return base / "Virtuali" / "GSX" / "Receipts"
+    primary = base / "Virtuali" / "GSX" / "Receipts"
+    if primary.is_dir():
+        return primary
+    for candidate in _receipts_candidates():
+        if candidate.is_dir():
+            return candidate
+    return primary
 
 
 def _utc_from_epoch(value: float) -> str:

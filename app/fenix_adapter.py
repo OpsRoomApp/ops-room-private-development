@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -17,6 +18,52 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8083"
 _CACHE: dict[str, Any] | None = None
 _CACHE_TIME = 0.0
 _LAST_SYNC: dict[str, Any] = {}
+
+# Detection hysteresis (hold-last-known-good). Ground Control / GSX reads
+# fenix_detected / fenix_controlled_loading at several call sites and reacts
+# to the most recent read, so a single slow or failed EFB HTTP round-trip (a
+# scene-load stutter, a busy EFB, ordinary localhost jitter) must not flip
+# Fenix detection off for that one read. We hold the last confirmed True for a
+# grace window and only report False after that many consecutive negative
+# reads, mirroring the _STICKY_FAMILY pattern in addon_telemetry.py. A
+# genuinely different aircraft (raw stays negative past the grace window and
+# streak) still clears the hold promptly.
+_FENIX_STICKY_GRACE_SECONDS = 12.0
+_FENIX_STICKY_MAX_NEGATIVE = 3
+
+_STICKY_DETECTED: bool | None = None
+_STICKY_DETECTED_AT = 0.0
+_STICKY_DETECTED_NEGATIVE = 0
+_STICKY_CONTROLLED: bool | None = None
+_STICKY_CONTROLLED_AT = 0.0
+_STICKY_CONTROLLED_NEGATIVE = 0
+# status() can be read from the GSX monitor thread and API request threads
+# concurrently; guard the sticky read-modify-write so a lost update cannot
+# extend the hold past its grace window.
+_STICKY_LOCK = threading.Lock()
+
+
+def _sticky_bool(
+    raw: bool,
+    sticky: bool | None,
+    at: float,
+    negatives: int,
+    now: float,
+) -> tuple[bool, float, int]:
+    """Return the held (stabilized) value plus the updated sticky bookkeeping.
+
+    A confirmed ``raw=True`` resets the hold. ``raw=False`` keeps reporting True
+    while the last confirmed state is younger than the grace window and the
+    consecutive-negative streak is under the cap; once either bound is crossed
+    it reports False and clears the hold so a genuine aircraft change is
+    detected promptly.
+    """
+    if raw:
+        return True, now, 0
+    if sticky is True and (now - at) < _FENIX_STICKY_GRACE_SECONDS and negatives < _FENIX_STICKY_MAX_NEGATIVE:
+        return True, at, negatives + 1
+    return False, now, 0
+
 
 
 def _utc() -> str:
@@ -214,15 +261,29 @@ def loadsheet() -> dict[str, Any]:
 
 def status(force: bool = False) -> dict[str, Any]:
     global _CACHE, _CACHE_TIME
+    global _STICKY_DETECTED, _STICKY_DETECTED_AT, _STICKY_DETECTED_NEGATIVE
+    global _STICKY_CONTROLLED, _STICKY_CONTROLLED_AT, _STICKY_CONTROLLED_NEGATIVE
     now = time.monotonic()
     if not force and _CACHE and now - _CACHE_TIME < 3.0:
         return dict(_CACHE)
-    detected, aircraft_info = _is_fenix_aircraft()
+    raw_detected, aircraft_info = _is_fenix_aircraft()
     family_hint, aircraft_family = _airbus_narrowbody_family_hint(aircraft_info)
     recent_sync = _last_sync_success_recent()
     probe = simbrief()
     efb_online = bool(probe.get("ok"))
-    fenix_controlled_loading = bool(efb_online and (detected or (family_hint and recent_sync)))
+    raw_controlled = bool(efb_online and (raw_detected or (family_hint and recent_sync)))
+    # Hold-last-known-good: a single failed probe or degraded identity read must
+    # not flip Fenix detection off for Ground Control / GSX. The reported values
+    # are the stabilized ones; the raw probe outcome stays observable below.
+    with _STICKY_LOCK:
+        detected, _STICKY_DETECTED_AT, _STICKY_DETECTED_NEGATIVE = _sticky_bool(
+            raw_detected, _STICKY_DETECTED, _STICKY_DETECTED_AT, _STICKY_DETECTED_NEGATIVE, now
+        )
+        _STICKY_DETECTED = detected
+        fenix_controlled_loading, _STICKY_CONTROLLED_AT, _STICKY_CONTROLLED_NEGATIVE = _sticky_bool(
+            raw_controlled, _STICKY_CONTROLLED, _STICKY_CONTROLLED_AT, _STICKY_CONTROLLED_NEGATIVE, now
+        )
+        _STICKY_CONTROLLED = fenix_controlled_loading
     if detected:
         detection_mode = "strict"
     elif fenix_controlled_loading:
@@ -234,6 +295,7 @@ def status(force: bool = False) -> dict[str, Any]:
     data = {
         "ok": True,
         "fenix_detected": detected,
+        "fenix_detected_raw": raw_detected,
         "efb_online": efb_online,
         "base_url": _base_url(),
         "simbrief_available": efb_online,
@@ -242,7 +304,11 @@ def status(force: bool = False) -> dict[str, Any]:
         "aircraft_family": aircraft_family,
         "last_sync_success_recent": recent_sync,
         "fenix_controlled_loading": fenix_controlled_loading,
+        "fenix_controlled_loading_raw": raw_controlled,
         "detection_mode": detection_mode,
+        "sticky_grace_seconds": _FENIX_STICKY_GRACE_SECONDS,
+        "sticky_detected_negative_streak": _STICKY_DETECTED_NEGATIVE,
+        "sticky_controlled_negative_streak": _STICKY_CONTROLLED_NEGATIVE,
         "last_sync": dict(_LAST_SYNC),
         "reason": None if probe.get("ok") else probe.get("reason"),
     }

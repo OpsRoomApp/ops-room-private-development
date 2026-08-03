@@ -2770,13 +2770,34 @@ def _pirep_snapshot_html(entry_id: str, settings_payload: dict[str, Any] | None 
     ).replace("</", "<\\/")
     template = template.replace('<link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />', "")
     template = template.replace('<link rel="icon" href="/static/favicon-32.png" sizes="32x32" />', "")
-    template = template.replace(
-        '<link rel="stylesheet" href="/static/pirep.css?v=0-24-101-blackbox2">',
-        f"<style>\n{css_text}\n</style>\n<style>\n{print_css}\n</style>",
+    # Version-agnostic asset inlining: the cache-busting ?v= query on the
+    # pirep.css/pirep.js tags changes between releases, so an exact-string
+    # replace silently no-ops once the version bumps and the PDF renders
+    # without any CSS or scripts. Match the tag regardless of the version value
+    # and warn loudly if it is ever missing instead of failing silently.
+    # NOTE: the replacements are passed as callables, never as literal strings,
+    # because pirep.js contains backslash sequences (e.g. /^RWY\s*/i) that
+    # re.sub would interpret as escape codes and reject with "bad escape".
+    css_tag = re.search(r'<link rel="stylesheet" href="/static/pirep\.css\?v=[^"]*">', template)
+    js_tag = re.search(r'<script src="/static/pirep\.js\?v=[^"]*"></script>', template)
+    if not css_tag or not js_tag:
+        import logging as _logging_pdf_snapshot
+
+        _logging_pdf_snapshot.getLogger("opsroom.logbook").warning(
+            "Full PIREP PDF snapshot: pirep.css/pirep.js asset tag not found in pirep.html "
+            "(cache-bust version or tag format changed?) -- PDF may render unstyled/broken"
+        )
+    template = re.sub(
+        r'<link rel="stylesheet" href="/static/pirep\.css\?v=[^"]*">',
+        lambda _m: f"<style>\n{css_text}\n</style>\n<style>\n{print_css}\n</style>",
+        template,
+        count=1,
     )
-    template = template.replace(
-        '<script src="/static/pirep.js?v=0-24-101-blackbox2"></script>',
-        f"<script>window.__OPSROOM_PIREP_PRELOADED__={payload};</script>\n<script>\n{js_text}\n</script>\n<script>\n{print_js}\n</script>",
+    template = re.sub(
+        r'<script src="/static/pirep\.js\?v=[^"]*"></script>',
+        lambda _m: f"<script>window.__OPSROOM_PIREP_PRELOADED__={payload};</script>\n<script>\n{js_text}\n</script>\n<script>\n{print_js}\n</script>",
+        template,
+        count=1,
     )
     return template
 

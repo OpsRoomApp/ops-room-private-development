@@ -1,10 +1,25 @@
 from __future__ import annotations
 
+import logging
 import math
 from statistics import median
 from typing import Any
 
 from . import navdata
+
+_LOG = logging.getLogger("opsroom.pirep")
+
+# Short-gap bridging tolerance. Recording runs at roughly 1 Hz, so a run of a
+# few gap-flagged samples is usually a brief SimConnect<->FSUIPC failover or a
+# one-off stall blip surrounded by clean data. Such short runs are bridged
+# (kept) so PIREP phases do not lose contiguous data; only runs long enough to
+# represent a real outage are discarded.
+_GAP_BRIDGE_MAX_SAMPLES = 3
+_GAP_BRIDGE_MAX_SECONDS = 5.0
+
+
+def _is_gap_sample(row: dict[str, Any]) -> bool:
+    return bool(row.get("telemetry_gap") or row.get("telemetry_hold"))
 
 EARTH_NM = 3440.065
 FT_PER_NM = 6076.12
@@ -229,7 +244,47 @@ def _sample_time(row: dict[str, Any]) -> float | None:
 
 def _sanitize_samples(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Chronologically sanitize recorder samples before PIREP scoring/plotting."""
-    cleaned = [dict(x) for x in rows if isinstance(x, dict) and _valid_latlon(x) and not x.get("telemetry_gap") and not x.get("telemetry_hold")]
+    # v0.25.58: telemetry_gap / telemetry_hold samples are no longer dropped
+    # unconditionally. A second or two of flagged samples with clean, continuous
+    # data on both sides is bridged (kept); the geometric jump filter below
+    # still rejects genuinely impossible transitions. Only gap runs longer than
+    # the bridge tolerance are discarded.
+    candidates = [dict(x) for x in rows if isinstance(x, dict) and _valid_latlon(x)]
+    gap_runs: list[tuple[int, int]] = []
+    index = 0
+    total = len(candidates)
+    while index < total:
+        if _is_gap_sample(candidates[index]):
+            end = index
+            while end < total and _is_gap_sample(candidates[end]):
+                end += 1
+            gap_runs.append((index, end))
+            index = end
+        else:
+            index += 1
+    keep = [True] * total
+    bridged_samples = 0
+    dropped_samples = 0
+    dropped_runs = 0
+    for start, end in gap_runs:
+        first_t = _sample_time(candidates[start])
+        last_t = _sample_time(candidates[end - 1])
+        # Without timestamps we cannot verify the gap is short, so treat it as
+        # too long to bridge (conservative: only bridge when we can prove clean
+        # data bounds a brief window).
+        if first_t is None or last_t is None:
+            span = float("inf")
+        else:
+            span = max(0.0, last_t - first_t)
+        length = end - start
+        if length <= _GAP_BRIDGE_MAX_SAMPLES and span <= _GAP_BRIDGE_MAX_SECONDS:
+            bridged_samples += length
+        else:
+            dropped_runs += 1
+            dropped_samples += length
+            for idx in range(start, end):
+                keep[idx] = False
+    cleaned = [row for row, is_kept in zip(candidates, keep) if is_kept]
     sortable = all(_sample_time(x) is not None for x in cleaned[: min(len(cleaned), 20)])
     if sortable:
         cleaned.sort(key=lambda x: _sample_time(x) or 0.0)
@@ -282,6 +337,11 @@ def _sanitize_samples(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
         "removed_duplicate_or_stale": removed_duplicate,
         "removed_jumps": removed_jump,
         "provider_transition_samples_skipped": provider_transition_samples_skipped,
+        "gap_samples_bridged": bridged_samples,
+        "gap_samples_dropped": dropped_samples,
+        "gap_runs_dropped": dropped_runs,
+        "gap_bridge_max_samples": _GAP_BRIDGE_MAX_SAMPLES,
+        "gap_bridge_max_seconds": _GAP_BRIDGE_MAX_SECONDS,
     }
 
 
@@ -509,6 +569,18 @@ def _runway_ident(meta: dict[str, Any], arrival: bool) -> str:
 def analyse_pirep(meta: dict[str, Any], samples: list[dict[str, Any]]) -> dict[str, Any]:
     raw_rows = [dict(x) for x in samples if isinstance(x, dict)]
     rows, data_quality = _sanitize_samples(raw_rows)
+    if data_quality.get("input_samples"):
+        _LOG.info(
+            "PIREP sample quality: input=%s kept=%s dup_or_stale=%s jumps=%s provider_transitions=%s gap_bridged=%s gap_dropped=%s gap_runs_dropped=%s",
+            data_quality.get("input_samples"),
+            data_quality.get("kept_samples"),
+            data_quality.get("removed_duplicate_or_stale"),
+            data_quality.get("removed_jumps"),
+            data_quality.get("provider_transition_samples_skipped"),
+            data_quality.get("gap_samples_bridged"),
+            data_quality.get("gap_samples_dropped"),
+            data_quality.get("gap_runs_dropped"),
+        )
     if not rows:
         return {"ok": False, "reason": "No valid telemetry samples", "version": ANALYSIS_VERSION, "data_quality": data_quality}
     takeoff_idx = _first_transition(rows, True, False)
