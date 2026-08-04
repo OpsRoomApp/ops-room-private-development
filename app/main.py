@@ -20,6 +20,7 @@ from .data_loader import airport_option, airport_to_dict, load_airports, logo_st
 from .simconnect_position import read_position, simconnect_diagnostics, radio_state, set_radio_frequency, swap_radio, autopilot_state, set_autopilot_target, set_autopilot_action
 from .vatsim_client import get_vatsim_data, CACHE_SECONDS
 from .weather_client import fetch_metar, fetch_realworld_atis
+from . import nms_client
 from .realworld import router as realworld_router, _DEBUG_ROUTER as realworld_debug_router, start_background_refresh
 from .camera_state import get_target, set_target, set_view as set_camera_view_state, reset_view as reset_camera_view_state, release_camera as release_camera_state
 from .scratchpad import scratchpad_status, scratchpad_get_page, scratchpad_save_page, scratchpad_clear_page
@@ -81,7 +82,7 @@ try:
 except Exception:
     def raas_clip_path_for_name(filename: str):
         return None
-from .notifications import status as notification_status
+from .notifications import status as notification_status, publish as notification_publish
 from .host_attention import flash_host
 from .obs_branding import status as obs_branding_status, save_logo as obs_save_logo, clear_logo as obs_clear_logo, logo_file as obs_logo_file
 from .airline_theme import theme_status, airline_background_file
@@ -101,7 +102,7 @@ from .logbook import (
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="OPS ROOM", version="0.25.60")
+app = FastAPI(title="OPS ROOM", version="0.25.61")
 app.include_router(realworld_router)
 app.include_router(realworld_debug_router)
 app.add_middleware(GZipMiddleware, minimum_size=512)
@@ -111,12 +112,17 @@ app.add_middleware(GZipMiddleware, minimum_size=512)
 def _opsroom_startup_autofetch_ofp() -> None:
     """Warm telemetry and SimBrief caches without blocking the UI after app start."""
     start_telemetry_engine()
-    # v0.25.59: start real-world flight background refresh loop
+    # v0.25.60: start real-world flight background refresh loop
     try:
         start_background_refresh()
     except Exception as exc:
         _LOGGER.debug("RealWorld background refresh start skipped: %s", exc)
-    # v0.25.59: purge stale ChartFox cache files from previous builds on every cold start.
+    # v0.25.60: start FAA NMS TFR/FDC proximity alerting (opt-in)
+    try:
+        start_nms_tfr_alerting()
+    except Exception as exc:
+        _LOGGER.debug("NMS TFR alerting start skipped: %s", exc)
+    # v0.25.60: purge stale ChartFox cache files from previous builds on every cold start.
     def _chartfox_cleanup() -> None:
         try:
             result = chartfox_force_cache_cleanup()
@@ -914,6 +920,156 @@ def briefing_operational(force_refresh: bool = False) -> dict:
     return operational_briefing(force=force_refresh)
 
 
+# ── FAA NMS-API NOTAM proxy client (v0.25.60) ────────────────────────────
+# The desktop app talks only to the opsroom.live proxy, which holds the NMS
+# KEY/SECRET. Credentials never exist on this machine.
+
+
+@app.get("/api/nms/status")
+def nms_status_get() -> dict:
+    result = nms_client.nms_status()
+    if not result.get("ok"):
+        return {"ok": False, "configured": nms_client.nms_configured(), "error": result.get("error", "NMS proxy unavailable")}
+    result.setdefault("configured", nms_client.nms_configured())
+    return result
+
+
+@app.get("/api/nms/notams")
+def nms_notams_get(
+    location: str = "",
+    latitude: float | None = None,
+    longitude: float | None = None,
+    radius: float | None = None,
+    classification: str = "",
+    feature: str = "",
+) -> dict:
+    if location:
+        return nms_client.fetch_notams_by_location(location, classification=classification, feature=feature)
+    if latitude is not None and longitude is not None and radius is not None:
+        return nms_client.fetch_notams_by_geo(latitude, longitude, radius)
+    return {"ok": False, "error": "Provide a location, or latitude+longitude+radius."}
+
+
+@app.get("/api/nms/checklist")
+def nms_checklist_get(location: str = "", classification: str = "") -> dict:
+    if not location:
+        return {"ok": False, "error": "A location is required."}
+    return nms_client.fetch_checklist(location, classification=classification)
+
+
+@app.get("/api/nms/notams/{nms_id}")
+def nms_notam_detail_get(nms_id: str) -> dict:
+    return nms_client.fetch_notam_by_id(nms_id)
+
+
+@app.get("/api/nms/search")
+def nms_search_get(text: str = "") -> dict:
+    if not text.strip():
+        return {"ok": False, "error": "A search text is required."}
+    return nms_client.search_notams(text)
+
+
+@app.get("/api/nms/initial-load")
+def nms_initial_load_get(classification: str = "") -> dict:
+    return nms_client.fetch_initial_load(classification=classification)
+
+
+# ── FAA NMS TFR/FDC proximity alerting (v0.25.60, opt-in) ────────────────
+# Enabled with OPSROOM_NMS_TFR_ALERTING=1 (and the NMS integration enabled).
+# Polls geo NOTAMs around the live aircraft and publishes a critical
+# notification per NEW FDC/TFR entry (deduped by 16-digit nmsId), which the
+# frontend notification drawer already surfaces. Never throws into the app.
+_NMS_TFR_SEEN: set[str] = set()
+_NMS_TFR_SEEN_LOCK = threading.Lock()
+_NMS_TFR_POLL_SECONDS = 60.0
+
+
+def _nms_tfr_candidate(feature: dict) -> bool:
+    """True when a GeoJSON feature is a real TFR / restricted / prohibited /
+    danger area -- NOT every FDC NOTAM (routine procedure changes are common
+    and must never trigger a critical alert)."""
+    try:
+        props = feature.get("properties") or {}
+        core = props.get("coreNOTAMData") or {}
+        notam = core.get("notam") or {}
+        classification = str(notam.get("classification") or "").upper()
+        selection = str(notam.get("selectionCode") or "").upper()
+        text = str(notam.get("text") or "").upper()
+        airspace_signal = selection.startswith("QRT") or any(
+            token in text for token in ("TFR", "RESTRICTED AREA", "PROHIBITED AREA", "DANGER AREA", "TEMPORARY FLIGHT RESTRICTION")
+        )
+        if classification == "FDC":
+            return airspace_signal
+        return selection.startswith("QRT") and airspace_signal
+    except Exception:
+        return False
+
+
+def _nms_tfr_alert_loop() -> None:
+    """Background daemon: position → geo NOTAM query → critical notification."""
+    import time as _time
+
+    while True:
+        try:
+            cfg = nms_client.tfr_alerting_config()
+            if cfg.get("enabled"):
+                pos = read_position(force=False)
+                lat = pos.get("lat")
+                lon = pos.get("lon")
+                if pos.get("ok") and lat is not None and lon is not None:
+                    result = nms_client.fetch_notams_by_geo(float(lat), float(lon), float(cfg.get("radius_nm") or 25))
+                    if result.get("ok"):
+                        for feature in result.get("features") or []:
+                            if not _nms_tfr_candidate(feature):
+                                continue
+                            try:
+                                props = feature.get("properties") or {}
+                                core = props.get("coreNOTAMData") or {}
+                                notam = core.get("notam") or {}
+                                nms_id = str(notam.get("id") or "").strip()
+                                ident = str(notam.get("number") or notam.get("id") or "TFR").strip()
+                                text = str(notam.get("text") or "").strip()
+                                location = str(notam.get("icaoLocation") or notam.get("location") or "").strip()
+                                if not nms_id:
+                                    continue
+                                with _NMS_TFR_SEEN_LOCK:
+                                    if nms_id in _NMS_TFR_SEEN:
+                                        continue
+                                    _NMS_TFR_SEEN.add(nms_id)
+                                    if len(_NMS_TFR_SEEN) > 512:
+                                        # Trim the oldest half instead of wiping
+                                        # everything, so previously-alerted TFRs
+                                        # never re-alert after the cap is hit.
+                                        _NMS_TFR_SEEN = set(sorted(_NMS_TFR_SEEN)[-256:])
+                                location_part = f" at {location}" if location else ""
+                                notification_publish(
+                                    source="FAA NMS",
+                                    title=f"TFR NOTAM {ident} near your position{location_part}",
+                                    message=(text[:320] + ("…" if len(text) > 320 else "")) or "A TFR/FDC NOTAM is active near your aircraft.",
+                                    priority="critical",
+                                    page="map",
+                                    tag=f"nms-tfr-{nms_id}",
+                                    persistent=True,
+                                )
+                            except Exception:
+                                continue
+        except Exception as exc:
+            _LOGGER.debug("NMS TFR alert poll skipped: %s", exc)
+        _time.sleep(_NMS_TFR_POLL_SECONDS)
+
+
+def start_nms_tfr_alerting() -> None:
+    """Start the TFR proximity monitor as a daemon thread (idempotent)."""
+    if not nms_client.tfr_alerting_config().get("enabled"):
+        _LOGGER.debug("NMS TFR alerting is not enabled (OPSROOM_NMS_TFR_ALERTING=1 to enable)")
+        return
+    if getattr(start_nms_tfr_alerting, "_started", False):
+        return
+    start_nms_tfr_alerting._started = True  # type: ignore[attr-defined]
+    threading.Thread(target=_nms_tfr_alert_loop, name="OpsRoom-NMS-TFR", daemon=True).start()
+    _LOGGER.info("NMS TFR/FDC proximity alerting started")
+
+
 @app.get("/api/simbrief/ofp-image/{filename}")
 def simbrief_ofp_image(filename: str, download: bool = False):
     path = cached_ofp_file(filename) or ensure_current_ofp_asset(filename)
@@ -1279,7 +1435,7 @@ async def chartfox_oauth_authorize_get(redirect_uri: str = "", request: Request 
 async def chartfox_oauth_callback_get(code: str = "", state: str = "", error: str = "") -> HTMLResponse:
     """OAuth callback completion page.
 
-    0.25.59 polish: build a JSON payload describing the result and inject
+    0.25.60 polish: build a JSON payload describing the result and inject
     it into the callback HTML as an embedded JS string literal in place of
     the previous ``_CHARTFOX_CALLBACK_HTML + urlencode({...})`` pattern.
 
@@ -2248,7 +2404,7 @@ def server_qr(request: Request) -> Response:
 def health() -> dict:
     return {
         "ok": True,
-        "version": "0.25.60",
+        "version": "0.25.61",
         "product": "OPS ROOM",
         "refresh_seconds": CACHE_SECONDS,
         "simconnect": simconnect_diagnostics(),
@@ -2273,7 +2429,7 @@ async def frontend_log(request: Request) -> dict:
             "page": str(payload.get("page") or "")[:80],
             "detail": str(payload.get("detail") or "")[:1200],
             "href": str(payload.get("href") or "")[:500],
-            "version": str(payload.get("version") or "0.25.60")[:40],
+            "version": str(payload.get("version") or "0.25.61")[:40],
         }
         with (log_dir / "frontend_errors.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -2503,7 +2659,7 @@ def charts_briefing_get() -> dict:
     return briefing_charts()
 
 
-# 0.25.59 polish: removed six legacy OAuth handlers that were silently
+# 0.25.60 polish: removed six legacy OAuth handlers that were silently
 # overriding the canonical block above (lines 1185-1316). Python silently
 # rebinds the function-name, so the most-recent ``def chartfox_oauth_callback_get``
 # wins at import time, and FastAPI then serves the LATEST-registered handler

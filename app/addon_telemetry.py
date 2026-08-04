@@ -408,7 +408,7 @@ def enrich_telemetry(sample: dict[str, Any], offset_reader: Callable[[list[tuple
             if fenix_specs:
                 try:
                     probe_specs = fenix_specs[:5]
-                    # v0.25.59: SimConnect rejects "f" as a units token and answers
+                    # v0.25.60: SimConnect rejects "f" as a units token and answers
                     # SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID, flooding the log on every
                     # telemetry tick. "Number" is the correct generic float units.
                     lvar_requests = [(s.lvar, "Number") for s in probe_specs]
@@ -459,7 +459,7 @@ def enrich_telemetry(sample: dict[str, Any], offset_reader: Callable[[list[tuple
     # relying on FSUIPC WASM offset copies, which have historically been unreliable
     # for Fenix aircraft. Falls back to FSUIPC offsets if SimConnect is unavailable.
     if family["key"] == "fenix_a32x" and simconnect_reader and active_specs:
-        # v0.25.59: "f" is not a valid SimConnect units token. Passing it made
+        # v0.25.60: "f" is not a valid SimConnect units token. Passing it made
         # AddToDataDefinition fail and every L:Var read raised
         # SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID — thousands of log lines per
         # session (each flushed to disk) and no Fenix data ever read.

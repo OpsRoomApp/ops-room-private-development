@@ -23,7 +23,7 @@ FALLBACK_MANIFEST_URL = "https://raw.githubusercontent.com/OpsRoomApp/ops-room-r
 DEFAULT_MANIFEST_URL = PRIMARY_MANIFEST_URL
 STATE_FILE = "update_state.json"
 DOWNLOAD_TIMEOUT = 25
-DEFAULT_VERSION = "0.25.60"
+DEFAULT_VERSION = "0.25.61"
 
 
 @dataclass(frozen=True)
@@ -162,7 +162,7 @@ def _validate_manifest(data: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Update manifest fallback download URL must be an HTTPS ZIP.")
     if len(checksum) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in checksum):
         raise ValueError("Update manifest SHA256 is missing or invalid.")
-    # v0.25.59: Normalise optional fields for downstream consumers
+    # v0.25.60: Normalise optional fields for downstream consumers
     if fallback_url:
         data["fallback_download_url"] = fallback_url
     data["release_notes"] = str(data.get("release_notes") or "").strip()

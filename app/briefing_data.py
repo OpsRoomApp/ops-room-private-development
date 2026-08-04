@@ -14,6 +14,7 @@ import requests
 
 from .settings_store import load_settings
 from .simbrief_client import cached_ofp_file, cached_plan, ofp_cache_filename
+from . import nms_client
 
 _LOCK = threading.RLock()
 _CACHE: dict[str, Any] | None = None
@@ -487,6 +488,46 @@ def _notam_group_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     return result
 
 
+def _nms_live_briefing(plan: dict[str, Any]) -> dict[str, Any]:
+    """v0.25.60: FAA NMS live NOTAM enrichment for the current flight.
+
+    Pure additive: SimBrief ``notams`` are never replaced. The NMS provider
+    is an optional source that is only consulted when the integration is
+    enabled and a shared token is configured, and any failure degrades to
+    ``{"ok": False}`` -- the frontend keeps the flight-plan NOTAMs.
+    """
+    empty = {"ok": False, "enabled": False, "notams": [], "groups": {}, "sources": [], "state": "disabled"}
+    # v0.25.60: NMS config is env-driven (OPSROOM_NMS_*); there is no
+    # settings-store block so briefing_data.py stays release-baseline-safe.
+    if not nms_client.nms_enabled():
+        return empty
+    if not nms_client.nms_configured():
+        return empty
+    try:
+        origin = (plan.get("origin") or {}).get("icao") or ""
+        destination = (plan.get("destination") or {}).get("icao") or ""
+        alternates = [
+            (item.get("icao") or "") for item in (plan.get("alternates") or []) if isinstance(item, dict)
+        ]
+        if not origin and not destination:
+            return empty
+        package = nms_client.route_notams(origin, destination, alternates)
+        if not package.get("ok"):
+            return {"ok": False, "enabled": True, "notams": [], "groups": {}, "sources": [], "state": "unavailable", "error": package.get("error")}
+        rows = package.get("notams") or []
+        return {
+            "ok": True,
+            "enabled": True,
+            "notams": rows,
+            "groups": _notam_group_counts(rows),
+            "sources": package.get("sources") or [],
+            "state": package.get("state", "ok"),
+            "count": package.get("count", len(rows)),
+        }
+    except Exception as exc:
+        return {"ok": False, "enabled": True, "notams": [], "groups": {}, "sources": [], "state": "unavailable", "error": type(exc).__name__}
+
+
 def operational_briefing(force: bool = False) -> dict[str, Any]:
     global _CACHE, _CACHE_MONO, _CACHE_KEY
     plan = _current_plan()
@@ -553,6 +594,12 @@ def operational_briefing(force: bool = False) -> dict[str, Any]:
     notams = _dedupe(notams)
     sigmets = _dedupe(sigmets)
 
+    # v0.25.60: FAA NMS live NOTAM enrichment. Additive only -- the SimBrief
+    # ``notams`` array above is never replaced. The frontend selects the
+    # default source (Live when available, otherwise Flight plan).
+    nms_live = _nms_live_briefing(plan)
+    live_notams = [dict(row) for row in (nms_live.get("notams") or []) if isinstance(row, dict)]
+
     source = {
         "name": "SimBrief OFP data",
         "state": "ok",
@@ -570,6 +617,14 @@ def operational_briefing(force: bool = False) -> dict[str, Any]:
         "flight": {"callsign": plan.get("callsign"), "identifiers": identifiers, "route": plan.get("route")},
         "notams": notams,
         "notam_groups": _notam_group_counts(notams),
+        "notams_live": live_notams,
+        "notam_groups_live": _notam_group_counts(live_notams),
+        "notams_live_state": {
+            "enabled": bool(nms_live.get("enabled")),
+            "state": nms_live.get("state", "disabled"),
+            "count": len(live_notams),
+            "error": nms_live.get("error"),
+        },
         "hazards": {"sections": hazard_sections},
         "sigmets": sigmets,
         "sigmet_summary": "No current SIGMETs were included in the SimBrief route briefing." if not sigmets else "",
@@ -590,6 +645,8 @@ def operational_briefing(force: bool = False) -> dict[str, Any]:
         },
         "sources": [source],
     }
+    if nms_live.get("sources"):
+        result["sources"].extend([dict(item) for item in nms_live["sources"] if isinstance(item, dict)])
     with _LOCK:
         _CACHE = result
         _CACHE_MONO = now

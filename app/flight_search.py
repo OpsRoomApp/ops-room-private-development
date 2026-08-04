@@ -87,7 +87,7 @@ def search_index(query: str) -> list[dict[str, Any]]:
         if all_matched is None:
             return []
         results = [_flights[i] for i in sorted(all_matched)]
-        # v0.25.59: exact-match ranking boost
+        # v0.25.60: exact-match ranking boost
         _boost_exact_matches(results, terms)
         results.sort(key=lambda f: -(f.get("rank_score") or 0))
         return results
@@ -130,7 +130,7 @@ def _direct_field_search(terms: list[str]) -> list[dict[str, Any]]:
 
 
 def _boost_exact_matches(results: list[dict[str, Any]], terms: list[str]) -> None:
-    """v0.25.59: boost rank_score for exact-match results so they sort above
+    """v0.25.60: boost rank_score for exact-match results so they sort above
     prefix-only matches.
 
     For each search term, if a flight has an exact field match (after

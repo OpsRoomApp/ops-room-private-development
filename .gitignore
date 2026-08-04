@@ -26,3 +26,6 @@ build/
 
 # Navigation databases
 app/data/navigation/*.sqlite
+
+# FAA NMS-API reference docs & sample credentials (keep out of VCS)
+FAA NMS API/

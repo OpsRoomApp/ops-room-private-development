@@ -1362,7 +1362,7 @@ def _read_simconnect_lvars(requests: list[tuple[str, str]]) -> list[Any]:
     values: list[Any] = []
     for lvar, fmt in requests:
         try:
-            # v0.25.59: "f"/"float" are not valid SimConnect units tokens. Passing
+            # v0.25.60: "f"/"float" are not valid SimConnect units tokens. Passing
             # them makes AddToDataDefinition fail and every L:Var read raise
             # SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID (log flood + no data).
             # Normalise to the correct generic float units token defensively.

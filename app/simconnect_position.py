@@ -42,7 +42,7 @@ _REPLAY_FRAME_EVENT_ID: Any | None = None
 _REPLAY_FRAME_ORIG_HANDLER: Any | None = None
 _REPLAY_FRAME_LAST_MONO = 0.0
 
-# v0.25.59 — Two-tier Black Box polling: low-rate SimVars (engine flags,
+# v0.25.60 — Two-tier Black Box polling: low-rate SimVars (engine flags,
 # parking brake, flaps, gear, spoilers, wind, sim rate, pause/slew, reverser,
 # body velocity, stall/overspeed, aircraft info) are cached and refreshed at
 # ~2 Hz independent of the high-rate (position/attitude/speed) loop.  This
@@ -1035,7 +1035,7 @@ def _read_low_rate_tier(aq: Any) -> dict[str, Any]:
 
 
 def _read_position_minimal_uncached() -> dict[str, Any]:
-    """Black Box essentials — v0.25.59 two-tier polling.
+    """Black Box essentials — v0.25.60 two-tier polling.
 
     High-rate vars (position, attitude, speeds) are read every call (~20
     SimConnect subscriptions).  Low-rate vars (engine flags, surfaces, wind,

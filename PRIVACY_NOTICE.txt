@@ -1,4 +1,4 @@
-OPS ROOM - PRIVACY POLICY & TERMS OF SERVICE (v0.25.59)
+OPS ROOM - PRIVACY POLICY & TERMS OF SERVICE (v0.25.61)
 
 1. LOCAL STORAGE & DATA PRIVACY
 All flight logs, kneeboard notes, custom charts, and aircraft profile settings are saved locally on your personal machine. OPS ROOM does not harvest or sell personal identifying information.

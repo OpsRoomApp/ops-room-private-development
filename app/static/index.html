@@ -16,9 +16,9 @@
   <link rel="icon" href="/static/icons/opsroom-192.png" />
   <link rel="apple-touch-icon" href="/static/icons/opsroom-192.png" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.9.0/ol.css" />
-  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-60" />
-  <script src="/static/pdf.min.js?v=0-25-60"></script>
-  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js?v=0-25-60';</script>
+  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-61" />
+  <script src="/static/pdf.min.js?v=0-25-61"></script>
+  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js?v=0-25-61';</script>
 </head>
 <body>
   <div id="raasGlobalAlert" class="raas-global-alert" aria-live="assertive" hidden></div>
@@ -117,7 +117,7 @@
         <button class="nav-item" data-page="system" aria-label="SYSTEM">SYSTEM</button>
       </nav>
       <div class="rail-footer">
-        <span>OPS ROOM 0.25.60 PUBLIC RELEASE</span>
+        <span>OPS ROOM 0.25.61 PUBLIC RELEASE</span>
         <span>LAN CONSOLE</span>
         <span>SIMULATION USE ONLY</span>
       </div>
@@ -528,21 +528,23 @@
             <header><span id="mapFlight">NO ACTIVE ROUTE</span><span id="mapCounts">0 AIRCRAFT</span></header>
             <div id="mapAirlineIdentity" class="module-airline-identity compact map-airline-identity"></div>
             <div class="map-toolbar">
-              <div class="map-mode-buttons"><button class="control-button active" data-map-mode="world" type="button">WORLD</button><button class="control-button" data-map-mode="route" type="button">ROUTE</button><button class="control-button" data-map-mode="follow" type="button">FOLLOW</button><button id="mapResetView" class="control-button" type="button">RESET VIEW</button><button id="mapNorthUp" class="control-button" type="button">NORTH UP</button></div>
-              <div class="map-preset-buttons" aria-label="Live map presets"><button class="control-button active" data-map-preset="clean" type="button">CLEAN</button><button class="control-button" data-map-preset="route" type="button">ROUTE</button><button class="control-button" data-map-preset="airport" type="button">AIRPORT</button><button class="control-button" data-map-preset="network" type="button">NETWORK</button></div>
+              <div class="map-mode-buttons"><button class="control-button active" data-map-mode="world" type="button">WORLD</button><button class="control-button" data-map-mode="route" type="button">ROUTE</button><button class="control-button" data-map-mode="follow" type="button">FOLLOW</button><button id="mapResetView" class="control-button" type="button">RESET VIEW</button><button id="mapNorthUp" class="control-button" type="button">NORTH UP</button><button id="mapCenterAircraft" class="control-button map-center-aircraft" type="button" title="Recenter map on your aircraft" aria-label="Recenter map on your aircraft"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="3.2" stroke="currentColor" stroke-width="1.3"/><path d="M6 0v2.6M6 9.4V12M0 6h2.6M9.4 6H12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>AIRCRAFT</button></div>
+              <div class="map-preset-buttons" aria-label="Live map presets"><button class="control-button active" data-map-preset="clean" type="button">CLEAN</button><button class="control-button" data-map-preset="route" type="button">ROUTE</button><button class="control-button" data-map-preset="airport" type="button">AIRPORT</button><button class="control-button" data-map-preset="network" type="button">NETWORK</button><button id="mapNotamToggle" class="control-button" type="button" aria-pressed="false" title="Toggle FAA NMS NOTAM layer">NOTAMS</button></div>
               <details class="map-filter-menu"><summary>FILTERS</summary><div class="map-filter-grid">
                 <label><input id="mapLayerTraffic" type="checkbox" checked /> TRAFFIC</label><label><input id="mapLayerControllers" type="checkbox" checked /> ATC</label><label><input id="mapLayerCoverage" type="checkbox" /> ATC COVERAGE</label>
                 <label><input id="mapLayerAirports" type="checkbox" checked /> AIRPORTS</label><label><input id="mapLayerRunways" type="checkbox" checked /> RUNWAYS</label><label><input id="mapLayerSurface" type="checkbox" checked /> TAXIWAYS / APRONS / STANDS</label>
                 <label><input id="mapLayerTaxiLabels" type="checkbox" checked /> TAXIWAY LABELS</label><label><input id="mapLayerStandLabels" type="checkbox" checked /> STAND LABELS</label>
                 <label><input id="mapLayerNavaids" type="checkbox" /> NAVAIDS</label><label><input id="mapLayerWaypoints" type="checkbox" /> WAYPOINTS</label><label><input id="mapLayerAirways" type="checkbox" /> AIRWAYS</label><label><input id="mapLayerBoundaries" type="checkbox" /> BOUNDARIES</label>
+                <label><input id="mapLayerNotams" type="checkbox" /> NOTAMS <small>FAA NMS</small></label>
               </div></details>
+              <div class="map-notam-filters" id="mapNotamFilters" hidden aria-label="NOTAM classification filters"><span>NOTAMS</span><button type="button" data-notam-filter="all" class="active">ALL</button><button type="button" data-notam-filter="fdc">FDC/TFR</button><button type="button" data-notam-filter="rwy">RWY</button><button type="button" data-notam-filter="obst">OBST</button><button type="button" data-notam-filter="nav">NAV</button><button type="button" data-notam-filter="airspace">AIRSPACE</button></div>
             </div>
             <div class="map-viewport"><div id="liveMap" class="openlayers-map" role="img" aria-label="OPS ROOM online live map"></div></div>
             <div class="map-provider"><span>ONLINE VECTOR MAP</span><span>© OPENSTREETMAP CONTRIBUTORS · PROTOMAPS · OPENLAYERS</span></div>
           </section>
           <aside class="panel map-information-panel">
             <header><span>Map information</span><span>Live</span></header>
-            <div class="map-legend"><div><i class="legend-own"></i>OWN AIRCRAFT</div><div><i class="legend-route"></i>SIMBRIEF ROUTE</div><div><i class="legend-traffic"></i>VATSIM TRAFFIC</div><div><i class="legend-atc"></i>ONLINE ATC</div><div><i class="legend-coverage"></i>ATC COVERAGE</div><div><i class="legend-airport"></i>AIRPORTS</div><div><i class="legend-surface"></i>LOCAL SURFACE</div></div>
+            <div class="map-legend"><div><i class="legend-own"></i>OWN AIRCRAFT</div><div><i class="legend-route"></i>SIMBRIEF ROUTE</div><div><i class="legend-traffic"></i>VATSIM TRAFFIC</div><div><i class="legend-atc"></i>ONLINE ATC</div><div><i class="legend-coverage"></i>ATC COVERAGE</div><div><i class="legend-airport"></i>AIRPORTS</div><div><i class="legend-surface"></i>LOCAL SURFACE</div><div><i class="legend-notam"></i>NOTAMS (FDC/TFR RED)</div></div>
             <div class="map-selected"><span>SELECTED ITEM</span><b id="mapSelected">SELECT A MAP SYMBOL</b></div>
             <div class="map-selected map-aviation-state"><span>AVIATION / SURFACE STATUS</span><b id="mapAviationStatus">AVIATION LAYERS STANDBY</b></div>
             <div class="map-controller-list"><span>ONLINE CONTROLLERS</span><div id="mapControllerList">NO CONTROLLERS IN VIEW</div></div>
@@ -985,9 +987,9 @@
 
   <aside id="notificationDrawer" class="notification-drawer" hidden><header><strong>OPS ROOM NOTIFICATIONS</strong><div class="notification-actions"><button id="notificationClear" type="button">Mark all read</button><button id="notificationClose" type="button" aria-label="Close notifications">Close</button></div></header><div id="notificationHistory" class="notification-history"><div class="network-empty">No notifications</div></div></aside>
   <div id="opsToast" class="ops-toast" style="display:none!important" hidden data-priority="operational"><div><span id="opsToastSource">OPS ROOM</span><strong id="opsToastFrom">NOTIFICATION</strong><p id="opsToastText"></p></div><div class="toast-actions"><button id="opsToastOpen" type="button">Open</button><button id="opsToastClose" type="button">Dismiss</button></div></div>
-  <!-- v0.25.59: Thermal receipt preview modal -->
+  <!-- v0.25.60: Thermal receipt preview modal -->
   <div id="printerPreviewModal"><div class="printer-preview-dialog"><div class="printer-preview-header"><span>80MM RECEIPT PREVIEW</span><button id="printerPreviewClose" type="button" aria-label="Close preview">&times;</button></div><div class="printer-preview-body" id="printerPreviewBody"></div><div class="printer-preview-footer"><button id="printerPreviewCopyBtn" class="printer-preview-btn-copy" type="button">COPY RAW TEXT</button><button id="printerPreviewCloseBtn" class="printer-preview-btn-close" type="button">CLOSE</button></div></div></div>
   <script src="https://cdn.jsdelivr.net/npm/ol@10.9.0/dist/ol.js"></script>
-  <script src="/static/opsroom.js?v=0-25-60"></script>
+  <script src="/static/opsroom.js?v=0-25-61"></script>
 </body>
 </html>

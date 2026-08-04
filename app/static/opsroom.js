@@ -58,6 +58,7 @@ let olNavaidLayer = null;
 let olAirwayLayer = null;
 let olWaypointLayer = null;
 let olBoundaryLayer = null;
+let olNotamLayer = null;
 let olSurfaceLayer = null;
 let olRunwaySurfaceLayer = null;
 let olTaxiSurfaceLayer = null;
@@ -166,15 +167,15 @@ let briefingChartOwnshipTimer=null;
 let cfPdfState = { pageNum: 1, pageRendering: false, pageNumPending: null,
   scale: 1.0, rotation: 0, darkMode: false,
   canvas: null, ctx: null, container: null,
-  nativeWidth: 595, nativeHeight: 842,  // v0.25.59: PDF page native dims for annotation anchoring
+  nativeWidth: 595, nativeHeight: 842,  // v0.25.60: PDF page native dims for annotation anchoring
   isPanning: false, panStart: {x:0,y:0}, panOffset: {x:0,y:0}, panMoved: false };
 // v0.25.16 ChartFox charts browser implementation (list + preview with ownship overlay and pin, ~1500 lines). Legacy openChartFoxChart/briefingChart* block remains for export-to-PIREP step. Do not regress.
 let cfState = { airport: null, items: [], groups: [], activeChartId: null,
   promoteTab: null,                // v0.25.16: tabs are sort-promotion, not filter toggle
   pins: [], previewTimer: null,
-  _fetchingAirports: {},           // v0.25.59: in-flight dedup map cleared on every loadCharts()
+  _fetchingAirports: {},           // v0.25.60: in-flight dedup map cleared on every loadCharts()
   };
-// v0.25.59 — Chart Viewer Annotation/Scratchpad overlay state (pen matches Scratchpad)
+// v0.25.60 — Chart Viewer Annotation/Scratchpad overlay state (pen matches Scratchpad)
 let cfAnnotation = { canvas: null, ctx: null, active: false,
   tool: 'pen', color: '#ff3333', width: 3.5, opacity: 0.85,
   strokes: [], undoStack: [], currentStroke: null,
@@ -186,7 +187,7 @@ const RAIL_COLLAPSED_KEY = 'opsroom-classic-rail-collapsed-v1815';
 
 const $ = id => document.getElementById(id);
 
-// v0.25.59: minimal showToast replacement — uses browser Notification API
+// v0.25.60: minimal showToast replacement — uses browser Notification API
 // when available with permission, falls back to console logging.
 // Previously rendered a bottom-left badge that was removed per user request.
 // The 34 existing call sites now route through this no-DOM logger.
@@ -200,7 +201,7 @@ function showToast(title, subtitle, detail, level){
   }else{
     console.info(prefix, msg);
   }
-  // v0.25.59: attempt browser Notification API for user-visible toast.
+  // v0.25.60: attempt browser Notification API for user-visible toast.
   // Fails gracefully on permission denied, not-supported, or http origins.
   try{
     if(typeof Notification !== 'undefined' && Notification.permission === 'granted'){
@@ -420,7 +421,7 @@ async function safeJsonResponse(response){
 
 function reportFrontendError(source, detail){
   try{
-    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.60', ts:new Date().toISOString()};
+    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.61', ts:new Date().toISOString()};
     lastFrontendError = payload.detail;
     navigator.sendBeacon?.('/api/frontend/log', new Blob([JSON.stringify(payload)], {type:'application/json'})) || fetch('/api/frontend/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true}).catch(()=>{});
   }catch(_){ }
@@ -826,15 +827,24 @@ async function loadStatusNotams(force=false){
 function renderStatusNotams(data){
   const target=$('advisoryNotams');if(!target)return;
   const notams=Array.isArray(data?.notams)?data.notams:[];
+  const live=Array.isArray(data?.notams_live)?data.notams_live:[];
   const pick=(scope)=>notams.filter(n=>n.scope_key===scope).slice(0,3);
+  const livePick=(scope)=>live.filter(n=>n.scope_key===scope).slice(0,3);
   const dep=pick('departure'),arr=pick('destination');
-  if(!dep.length&&!arr.length){target.hidden=true;return}
-  const row=(n,tag)=>{
+  const liveDep=livePick('departure'),liveArr=livePick('destination');
+  if(!dep.length&&!arr.length&&!liveDep.length&&!liveArr.length){target.hidden=true;return}
+  const row=(n,tag,liveTag=false)=>{
     const txt=String(n.text||'').replace(/\s+/g,' ').trim();
-    return `<div class="advisory advisory-notam"><time>${escapeHtml(tag)}</time><span class="level">${escapeHtml(String(n.location||n.id||'NOTAM').split(' ')[0])}</span><span><b>${escapeHtml(String(n.id||''))}</b> ${escapeHtml(txt.length>110?txt.slice(0,110)+'…':txt)}</span></div>`;
+    return `<div class="advisory advisory-notam"><time>${escapeHtml(tag)}</time><span class="level">${escapeHtml(String(n.location||n.id||'NOTAM').split(' ')[0])}</span><span>${liveTag?'<i class="briefing-source-chip live">LIVE</i> ':''}<b>${escapeHtml(String(n.id||''))}</b> ${escapeHtml(txt.length>110?txt.slice(0,110)+'…':txt)}</span></div>`;
   };
+  // v0.25.60: flight-plan DEP/ARR rows are rendered exactly as before; a
+  // labelled live FAA NMS group is appended below when data exists.
+  let html=`<div class="advisory-notams-title">ROUTE NOTAMS · ${dep.length+arr.length} CLOSEST</div>`+[...dep.map(n=>row(n,'DEP')),...arr.map(n=>row(n,'ARR'))].join('');
+  if(liveDep.length||liveArr.length){
+    html+=`<div class="advisory-notams-title live">LIVE NOTAMS · FAA NMS</div>`+[...liveDep.map(n=>row(n,'DEP',true)),...liveArr.map(n=>row(n,'ARR',true))].join('');
+  }
   target.hidden=false;
-  target.innerHTML=`<div class="advisory-notams-title">ROUTE NOTAMS · ${dep.length+arr.length} CLOSEST</div>`+[...dep.map(n=>row(n,'DEP')),...arr.map(n=>row(n,'ARR'))].join('');
+  target.innerHTML=html;
 }
 
 async function loadSummary(probe=false){
@@ -1043,6 +1053,10 @@ let briefingSection='overview';
 let operationalBriefingLoadedAt=0;
 let operationalBriefingData=null;
 let briefingNotamFilter='all';
+// v0.25.60: FAA NMS live NOTAMs are the default source when available;
+// 'flightplan' / 'combined' are opt-in alternatives. Persisted like other
+// module preferences. 'auto' means: live if notams_live has data, else plan.
+let briefingNotamSource=localStorage.getItem('opsroom-notam-source')||'auto';
 async function setBriefingSection(name){
   briefingSection=String(name||'overview').toLowerCase();
   document.querySelectorAll('[data-briefing-section]').forEach(panel=>{panel.hidden=panel.dataset.briefingSection!==briefingSection});
@@ -1078,18 +1092,56 @@ function briefingNoticeCard(item){
   if(item.effective_utc)validity.push(`EFFECTIVE ${briefingDateTime(item.effective_utc)}`);
   if(item.permanent)validity.push('EXPIRES PERMANENT');else if(item.expires_utc)validity.push(`EXPIRES ${briefingDateTime(item.expires_utc)}${item.expires_estimated?' EST':''}`);
   const badges=[item.category,item.status,item.qcode].filter(Boolean);
-  return `<article class="briefing-notice" data-notam-scope="${escapeHtml(item.scope_key||'enroute')}"><header><div><strong>${escapeHtml(item.id||'NOTICE')}</strong><small>${escapeHtml(item.scope||item.location||'Flight briefing')}</small></div><span>${escapeHtml(item.location_name||item.location||item.source||'SIMBRIEF')}</span></header>${badges.length?`<div class="briefing-notice-badges">${badges.map(x=>`<i>${escapeHtml(x)}</i>`).join('')}</div>`:''}<pre>${escapeHtml(item.text||'')}</pre>${validity.length||item.schedule?`<footer><span>${escapeHtml(validity.join(' · '))}</span>${item.schedule?`<span>${escapeHtml(item.schedule)}</span>`:''}</footer>`:''}${item.raw&&item.raw.trim()!==String(item.text||'').trim()?`<details><summary>RAW ICAO NOTAM</summary><pre>${escapeHtml(item.raw)}</pre></details>`:''}</article>`;
+  // v0.25.60: source chip distinguishes live FAA NMS rows from flight-plan rows.
+  const src=String(item.source||'').toUpperCase();
+  const sourceChip=src==='FAA NMS'?`<i class="briefing-source-chip live">LIVE</i>`:(src?`<i class="briefing-source-chip">${escapeHtml(src)}</i>`:'');
+  return `<article class="briefing-notice" data-notam-scope="${escapeHtml(item.scope_key||'enroute')}"><header><div><strong>${escapeHtml(item.id||'NOTICE')}</strong><small>${escapeHtml(item.scope||item.location||'Flight briefing')}</small></div><span>${escapeHtml(item.location_name||item.location||item.source||'SIMBRIEF')}</span></header>${(badges.length||sourceChip)?`<div class="briefing-notice-badges">${sourceChip}${badges.map(x=>`<i>${escapeHtml(x)}</i>`).join('')}</div>`:''}<pre>${escapeHtml(item.text||'')}</pre>${validity.length||item.schedule?`<footer><span>${escapeHtml(validity.join(' · '))}</span>${item.schedule?`<span>${escapeHtml(item.schedule)}</span>`:''}</footer>`:''}${item.raw&&item.raw.trim()!==String(item.text||'').trim()?`<details><summary>RAW ICAO NOTAM</summary><pre>${escapeHtml(item.raw)}</pre></details>`:''}</article>`;
 }
 function briefingNotices(rows,emptyText){
   const items=Array.isArray(rows)?rows:[];
   if(!items.length)return `<div class="briefing-operational-empty">${escapeHtml(emptyText)}</div>`;
   return `<div class="briefing-notice-list">${items.map(briefingNoticeCard).join('')}</div>`;
 }
+// v0.25.60: resolve which row set the NOTAMs tab shows, based on the source
+// selector (auto → live when available, otherwise flight plan).
+function briefingNotamRowSets(data){
+  const plan=Array.isArray(data?.notams)?data.notams:[];
+  const live=Array.isArray(data?.notams_live)?data.notams_live:[];
+  let source=briefingNotamSource;
+  if(source==='auto') source=live.length?'live':'flightplan';
+  let rows;
+  if(source==='live') rows=live;
+  else if(source==='flightplan') rows=plan;
+  else{
+    // Combined: flight-plan first, then live rows whose id/location don't collide.
+    const seen=new Set(plan.map(r=>`${String(r.id||'').toUpperCase()}:${String(r.location||'').toUpperCase()}`));
+    rows=[...plan,...live.filter(r=>!seen.has(`${String(r.id||'').toUpperCase()}:${String(r.location||'').toUpperCase()}`))];
+  }
+  return {plan,live,rows,source};
+}
+function briefingNotamGroupCounts(rows){
+  const counts={all:rows.length,departure:0,destination:0,alternate:0,enroute:0};
+  rows.forEach(r=>{const k=String(r.scope_key||'enroute');if(k in counts)counts[k]++});
+  return counts;
+}
 function renderBriefingNotams(data){
   const target=$('briefingNotams');if(!target)return;
-  const rows=Array.isArray(data?.notams)?data.notams:[],counts=data?.notam_groups||{};
+  const sets=briefingNotamRowSets(data);
+  const rows=sets.rows,counts=briefingNotamGroupCounts(rows);
   const filters=[['all','ALL'],['departure','DEPARTURE'],['destination','DESTINATION'],['alternate','ALTERNATE'],['enroute','EN-ROUTE']];
-  target.innerHTML=`${briefingSourceLine(data)}<div class="briefing-notam-tools"><div class="briefing-filter-chips">${filters.map(([key,label])=>`<button type="button" data-notam-filter="${key}" class="${briefingNotamFilter===key?'active':''}">${label}<b>${Number(counts[key]??(key==='all'?rows.length:0))}</b></button>`).join('')}</div><label class="briefing-notam-search"><span>SEARCH</span><input id="briefingNotamSearch" type="search" placeholder="ID, airport, runway, approach, airspace..." autocomplete="off"></label></div><div id="briefingNotamResults"></div>`;
+  const liveCount=sets.live.length,planCount=sets.plan.length;
+  const resolved=sets.source;
+  const selector=`<div class="briefing-notam-source" role="tablist">`+
+    `<button type="button" data-notam-source="live" class="${resolved==='live'?'active':''}">LIVE NOTAMS<b>${liveCount}</b></button>`+
+    `<button type="button" data-notam-source="flightplan" class="${resolved==='flightplan'?'active':''}">FLIGHT PLAN<b>${planCount}</b></button>`+
+    `<button type="button" data-notam-source="combined" class="${resolved==='combined'?'active':''}">COMBINED<b>${sets.rows.length}</b></button>`+
+    `</div>`;
+  target.innerHTML=`${briefingSourceLine(data)}${selector}<div class="briefing-notam-tools"><div class="briefing-filter-chips">${filters.map(([key,label])=>`<button type="button" data-notam-filter="${key}" class="${briefingNotamFilter===key?'active':''}">${label}<b>${Number(counts[key]??(key==='all'?rows.length:0))}</b></button>`).join('')}</div><label class="briefing-notam-search"><span>SEARCH</span><input id="briefingNotamSearch" type="search" placeholder="ID, airport, runway, approach, airspace..." autocomplete="off"></label></div><div id="briefingNotamResults"></div>`;
+  target.querySelectorAll('[data-notam-source]').forEach(button=>button.addEventListener('click',()=>{
+    briefingNotamSource=button.dataset.notamSource||'auto';
+    try{localStorage.setItem('opsroom-notam-source',briefingNotamSource)}catch(_){}
+    renderBriefingNotams(operationalBriefingData||data);
+  }));
   target.querySelectorAll('[data-notam-filter]').forEach(button=>button.addEventListener('click',()=>{briefingNotamFilter=button.dataset.notamFilter||'all';target.querySelectorAll('[data-notam-filter]').forEach(x=>x.classList.toggle('active',x===button));applyBriefingNotamFilter()}));
   $('briefingNotamSearch')?.addEventListener('input',applyBriefingNotamFilter);
   applyBriefingNotamFilter();
@@ -1097,7 +1149,8 @@ function renderBriefingNotams(data){
 function applyBriefingNotamFilter(){
   const target=$('briefingNotamResults');if(!target||!operationalBriefingData)return;
   const query=String($('briefingNotamSearch')?.value||'').trim().toUpperCase();
-  const rows=(operationalBriefingData.notams||[]).filter(row=>{
+  const sets=briefingNotamRowSets(operationalBriefingData);
+  const rows=sets.rows.filter(row=>{
     if(briefingNotamFilter!=='all'&&String(row.scope_key||'enroute')!==briefingNotamFilter)return false;
     if(!query)return true;
     return [row.id,row.location,row.location_name,row.category,row.status,row.qcode,row.text,row.raw].some(value=>String(value||'').toUpperCase().includes(query));
@@ -1199,7 +1252,7 @@ function renderBriefing(plan){
     <div class="briefing-section-panel" data-briefing-section="notams" hidden><section class="panel briefing-panel"><header><span>Route-relevant NOTAMs</span><span>Structured SimBrief OFP data</span></header><div id="briefingNotams"></div></section></div>
     <div class="briefing-section-panel" data-briefing-section="hazards" hidden><section class="panel briefing-panel"><header><span>Aviation weather hazards</span><span>AIRMET · SIGMET · TC · VA</span></header><div id="briefingHazards"></div></section></div>
     <div class="briefing-section-panel" data-briefing-section="sigwx" hidden><section class="panel briefing-panel"><header><span>SIGWX</span><span>Separate SimBrief chart images</span></header><div id="briefingSigwx"></div></section></div>
-    <div class="briefing-section-panel" data-briefing-section="charts" hidden><section class="panel briefing-panel" id="briefingChartFoxSection"><header><span>ChartFox charts</span><span>ChartFox API</span></header><div id="briefingChartFoxPanel" class="bridge-charts-panel"><b>LOADING CHARTFOX...</b></div></section><section class="panel briefing-panel"><header><span>SimBrief briefing charts</span><span>Route · winds · vertical profile</span></header><div id="briefingSimbriefCharts"></div></section><!-- v0.25.59 RC: legacy briefingChartViewer + briefingChartFrame iframe removed (was a hidden dead block that confused users who saw "chartfox.org refused to connect"). ChartFox charts render exclusively through cfRenderPreview (img via proxy + PDF.js canvas). --></div>
+    <div class="briefing-section-panel" data-briefing-section="charts" hidden><section class="panel briefing-panel" id="briefingChartFoxSection"><header><span>ChartFox charts</span><span>ChartFox API</span></header><div id="briefingChartFoxPanel" class="bridge-charts-panel"><b>LOADING CHARTFOX...</b></div></section><section class="panel briefing-panel"><header><span>SimBrief briefing charts</span><span>Route · winds · vertical profile</span></header><div id="briefingSimbriefCharts"></div></section><!-- v0.25.60 RC: legacy briefingChartViewer + briefingChartFrame iframe removed (was a hidden dead block that confused users who saw "chartfox.org refused to connect"). ChartFox charts render exclusively through cfRenderPreview (img via proxy + PDF.js canvas). --></div>
     <div class="briefing-section-panel" data-briefing-section="ofp" hidden><section id="briefingOfpPanel" class="panel briefing-panel ofp-embed-panel"><header><span>Operational flight plan</span><span></span></header>${(()=>{const pdf=plan.files?.pdf_local||plan.files?.pdf;const src=`/api/simbrief/ofp-view?theme=${encodeURIComponent(briefingOfpTheme)}`;return `<div class="briefing-ofp-actions"><div class="ofp-theme-buttons"><button id="ofpThemeDark" class="${briefingOfpTheme==='dark'?'active':''}" type="button">DARK</button><button id="ofpThemeLight" class="${briefingOfpTheme==='light'?'active':''}" type="button">LIGHT</button></div><div class="ofp-reader-actions"><span class="page-readout">OFP reader</span>${pdf?`<a class="control-button" href="${escapeHtml(pdf)}" target="opsroom-ofp-pdf" rel="noopener">Open SimBrief PDF</a>`:''}</div></div><iframe id="briefingOfpFrame" class="briefing-ofp-frame" src="${escapeHtml(src)}" title="Operational Flight Plan"></iframe>`;})()}</section></div>
     <div id="briefingImageViewer" class="briefing-image-viewer" hidden><div class="briefing-image-viewer-head"><strong id="briefingImageViewerTitle">SIMBRIEF CHART</strong><div><span id="briefingImageZoomReadout">100%</span><button id="briefingImageZoomOut" type="button">−</button><button id="briefingImageZoomIn" type="button">+</button><button id="briefingImageZoomReset" type="button">RESET</button><a id="briefingImageViewerDownload" href="#" download>DOWNLOAD</a><button id="briefingImageViewerClose" type="button">CLOSE</button></div></div><div id="briefingImageViewerStage" class="briefing-image-viewer-stage"><img id="briefingImageViewerImg" alt="Expanded SimBrief chart"></div></div>`;
   document.querySelectorAll('[data-briefing-tab]').forEach(button=>button.addEventListener('click',()=>setBriefingSection(button.dataset.briefingTab)));
@@ -1271,10 +1324,10 @@ async function chartfox_open_authorization_window(){
       if(status && status.has_token){
         clearInterval(chartfoxOAuthPollTimer);
         chartfoxOAuthPollTimer = null;
-        // v0.25.59: clear stale in-flight dedup entries so loadCharts()
+        // v0.25.60: clear stale in-flight dedup entries so loadCharts()
         // makes fresh API calls instead of returning cached failures.
         cfState._fetchingAirports = {};
-        // v0.25.59: do NOT auto-close the OAuth popup. The callback page
+        // v0.25.60: do NOT auto-close the OAuth popup. The callback page
         // now shows a DONE button the user must click to close it. The
         // chart list still refreshes as soon as the token is available.
         // fire-and-forget toast: must never block loadCharts().
@@ -1421,7 +1474,7 @@ async function loadCharts(){
   cfPanel=$('briefingChartFoxPanel');
   if(!cfPanel)return;
   chartfoxAirportPanels={};
-  // v0.25.59: clear stale in-flight dedup entries before any fresh API call.
+  // v0.25.60: clear stale in-flight dedup entries before any fresh API call.
   // Stale failed promises from a previous (pre-auth) run otherwise block
   // cfInitAirportCharts from making a new API call after reconnect.
   cfState._fetchingAirports = {};
@@ -1459,7 +1512,7 @@ async function loadCharts(){
       </div>
     </div>
   </div>`;
-  // v0.25.59: search wiring is the sole responsibility of cfWireSearchBox() which properly
+  // v0.25.60: search wiring is the sole responsibility of cfWireSearchBox() which properly
   // handles debounce, keyboard ArrowDown/ArrowUp/Escape/Enter navigation, click-outside
   // dismissal, and focus re-fetch. Duplicate listeners here cause double-firing per keystroke.
   // The loadCharts shell rebuild is async; cfInitAirportCharts wires cfWireSearchBox after it.
@@ -1539,7 +1592,7 @@ async function loadChartFoxGrouped(container, icao){
 // v0.25.9: Drive the new cf-* sidebar / preview / pin / overlay UI.
 function cfInitAirportCharts(container, icao){
   var cleanIcao = String(icao || '').trim().toUpperCase().slice(0, 4);
-  // v0.25.59: in-flight dedup — if a grouped fetch is already in progress
+  // v0.25.60: in-flight dedup — if a grouped fetch is already in progress
   // for this airport, return the existing promise instead of starting a
   // duplicate.  This guards direct callers (loadChartFoxGrouped, search) as
   // well as cfLoadAirport.
@@ -1548,7 +1601,7 @@ function cfInitAirportCharts(container, icao){
     console.warn('[OPS ROOM][chartfox-dedup-hit]', {icao: cleanIcao, returning: 'stale in-flight promise — this may be a failed promise from before auth'});
     return cfState._fetchingAirports[cleanIcao];
   }
-  // v0.25.59 diagnostic: log pre-call state to diagnose SESSION EXPIRED false positives.
+  // v0.25.60 diagnostic: log pre-call state to diagnose SESSION EXPIRED false positives.
   console.info('[OPS ROOM][chartfox-pre-call]', {
     icao: cleanIcao,
     fetchingAirportsKeys: Object.keys(cfState._fetchingAirports),
@@ -1570,7 +1623,7 @@ function cfInitAirportCharts(container, icao){
   cfRenderQuickPicks();
   cfRenderPinnedStrip();
   cfWireSearchBox();
-  // v0.25.59 diagnostic: perform a real OAuth status check. Runs synchronously
+  // v0.25.60 diagnostic: perform a real OAuth status check. Runs synchronously
   // before the fetch so cfState.chartfox_oauth_connected is accurate for the API call.
   var _cfOauthCheckDone = chartfox_oauth_status_direct().then(function(st){
     console.info('[OPS ROOM][chartfox-oauth-check]', {icao: cleanIcao, hasToken: st.has_token});
@@ -1592,7 +1645,7 @@ function cfInitAirportCharts(container, icao){
           oauthMatch: String((data && data.error) || '').toLowerCase().includes('oauth'),
           cfFetchingAirports: Object.keys(cfState._fetchingAirports || {}),
         });
-        // v0.25.59: render errors into the SIDEBAR, not the outer container.
+        // v0.25.60: render errors into the SIDEBAR, not the outer container.
         // Destroying the outer container (cfPanel.innerHTML='') was destroying
         // the entire shell — search bar, tabs, connect bar, preview — leaving
         // nothing but the error message even after OAuth reconnect succeeded.
@@ -1616,7 +1669,7 @@ function cfInitAirportCharts(container, icao){
           );
         }
         cfState.groups = []; cfState.items = [];
-        // v0.25.59: do NOT call cfRenderSidebar() here — the sidebar already
+        // v0.25.60: do NOT call cfRenderSidebar() here — the sidebar already
         // shows the SESSION EXPIRED / error message. Calling cfRenderSidebar()
         // would overwrite it with a generic "NO CHARTS AVAILABLE" placeholder
         // since cfState.groups is empty.
@@ -1634,7 +1687,7 @@ function cfInitAirportCharts(container, icao){
         preview.innerHTML = `<div class="cf-preview-message">SELECT A CHART TO PREVIEW<br><small>OWN POSITION WILL APPEAR HERE WHEN CHART HAS GEO REFERENCE</small></div><div class="cf-preview-overlay" id="cfPreviewOverlay" hidden><svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg"><polygon points="20,4 30,32 20,26 10,32" fill="#aaa98d" stroke="#1a2016" stroke-width="2.4" stroke-linejoin="round"/></svg></div>`;
       }
     }))      .catch(error => {
-        // v0.25.59: render catch-block errors into sidebar, preserving outer shell.
+        // v0.25.60: render catch-block errors into sidebar, preserving outer shell.
         const sidebar = $('cfSidebar');
         if (sidebar) {
           sidebar.innerHTML = `<div class="cf-empty">FAILED TO LOAD CHARTFOX CHARTS<br><small>${escapeHtml((error && error.message) || '')}</small></div>`;
@@ -1735,7 +1788,7 @@ function cfRenderRow(chart, isPinned){
     const typeKey = chart.type_key || '';
     const type = chart.type != null ? String(chart.type) : '';
     const runways = Array.isArray(chart.runways) ? chart.runways.filter(Boolean).map(escapeHtml).join(' / ') : '';    const meta = JSON.stringify({ title: chart.title || '', type: chart.type, type_key: chart.type_key, category: chart.category || chart.group_name || chart.type_key }).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');    const isActive = id && id === cfState.activeChartId;
-    // v0.25.59: outer is a div role="button" so the inner pin <button> is valid HTML;
+    // v0.25.60: outer is a div role="button" so the inner pin <button> is valid HTML;
     // browsers would otherwise hoist the inner button out of the outer one and break layout.
     return `<div role="button" tabindex="0" class="cf-row${isActive ? ' cf-row-active' : ''}" data-cf-chart-id="${escapeHtml(id)}" data-cf-chart-meta="${meta}" aria-current="${isActive ? 'true' : 'false'}"><div class="cf-row-info"><div class="cf-row-title">${escapeHtml(titleRaw)}${code}</div><div class="cf-row-meta">${escapeHtml(icao)} &middot; ${escapeHtml(typeKey || type)}${runways?` &middot; RWY ${runways}`:''}</div></div><button type="button" class="cf-pin-btn${isPinned ? ' cf-pin-btn-active' : ''}" data-cf-chart-id="${escapeHtml(id)}" data-cf-chart-meta="${meta}" title="${isPinned ? 'Unpin' : 'Pin'}" aria-label="${isPinned ? 'Unpin chart' : 'Pin chart'}" aria-pressed="${isPinned ? 'true' : 'false'}">${isPinned ? '\u2605' : '\u2606'}</button></div>`;
   }
@@ -1883,7 +1936,7 @@ function cfRenderPinnedStrip() {
   });
 
   // Click handler for unpin buttons
-  // v0.25.59: preventDefault prevents chip click from bubbling to chart load handler
+  // v0.25.60: preventDefault prevents chip click from bubbling to chart load handler
   Array.from(scroll.querySelectorAll('.cf-pinned-unpin')).forEach(function(btn) {
     btn.addEventListener('click', function(e) {
       e.stopPropagation();
@@ -2083,7 +2136,7 @@ async function cfRenderPdfPage(pdfDoc, pageNum, canvas, scale) {
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     cfPdfState.viewport = viewport;
-    // v0.25.59: capture native page dimensions at scale=1.0 for annotation anchoring
+    // v0.25.60: capture native page dimensions at scale=1.0 for annotation anchoring
     cfPdfState.nativeWidth = viewport.width / scale;
     cfPdfState.nativeHeight = viewport.height / scale;
     const ctx = canvas.getContext('2d');
@@ -2091,7 +2144,7 @@ async function cfRenderPdfPage(pdfDoc, pageNum, canvas, scale) {
     await page.render({ canvasContext: ctx, viewport }).promise;
   } catch(e){ cfPdfState.pageRendering = false; /* render error, silently handled */ }
   cfPdfState.pageRendering = false;
-  // v0.25.59: resize annotation canvas to match new PDF dimensions and redraw
+  // v0.25.60: resize annotation canvas to match new PDF dimensions and redraw
   if (cfAnnotation.canvas) {
     cfAnnotation.canvas.width = canvas.width;
     cfAnnotation.canvas.height = canvas.height;
@@ -2189,7 +2242,7 @@ function cfInitPdfCanvas(container, canvas, pdfDoc, chartName, viewUrl, proxyUrl
     origTop = cfPdfState.panOffset.y;
     canvas.style.cursor = 'grabbing';
   });
-  var panWrap = wrap; // v0.25.59: pan the wrapper so both PDF + annotation canvases move together
+  var panWrap = wrap; // v0.25.60: pan the wrapper so both PDF + annotation canvases move together
   window.addEventListener('mousemove', (e) => {
     if (!isPanning) return;
     var dx = e.clientX - startX;
@@ -2284,7 +2337,7 @@ async function cfRenderPreview(chartId, icao, meta){
       isPdf = (Number(chart.source_url_type) === 0);
     }
 
-    // v0.25.59: removed endsWith('.pdf') extension guessing — use source_url_type
+    // v0.25.60: removed endsWith('.pdf') extension guessing — use source_url_type
     // when available. When unavailable, fall through to view_url (unsafe to guess file type).
     if (!targetUrl && chart.url) {
       if (chart.source_url_type != null) {
@@ -2314,7 +2367,7 @@ async function cfRenderPreview(chartId, icao, meta){
       : '<div class="cf-attribution" style="font-size:0.65rem;color:var(--muted, #aaa98d);padding:0.3rem 0.5rem;text-align:right">Charts via ChartFox</div>';
 
     // Guard: source_url_type=2 is HTML (interactive viewer).
-    // v0.25.59: if allows_iframe && !requires_preauth, embed in iframe.
+    // v0.25.60: if allows_iframe && !requires_preauth, embed in iframe.
     // Otherwise show an external link.
     var isHtml = targetUrl && Number(chart.source_url_type) === 2;
     var canIframeHtml = isHtml && chart.allows_iframe && !chart.requires_preauth;
@@ -2347,7 +2400,7 @@ async function cfRenderPreview(chartId, icao, meta){
       }
     } else if (isHtml && canIframeHtml) {
       // --- HTML interactive viewer: embed in iframe (allows_iframe=true, no preauth) ---
-      // v0.25.59: iframe may be blocked by X-Frame-Options on external AIP sites.
+      // v0.25.60: iframe may be blocked by X-Frame-Options on external AIP sites.
       // If load fails, the onerror handler replaces the iframe with an external link.
       var iframeId = 'cfHtmlIframe_' + chartId.replace(/[^a-zA-Z0-9]/g, '');
       var iframeHtml = '<iframe id="' + iframeId + '" class="cf-preview-iframe" src="' + escapeAttr(targetUrl) + '" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" referrerpolicy="no-referrer" title="' + escapeHtml(chartName) + '" onerror="var f=document.getElementById(\'' + iframeId + '\');if(f){f.style.display=\'none\';var fb=f.nextElementSibling;if(fb)fb.hidden=false;}"></iframe>';
@@ -2405,7 +2458,7 @@ function cfStartOverlayTimer(img, georef){
       overlay.style.top = `${(data.y_px * scaleY).toFixed(1)}px`;
       const h = typeof data.heading_deg === 'number' ? data.heading_deg : 0;
       overlay.style.transform = `translate(-50%,-50%) rotate(${h.toFixed(1)}deg)`;
-      // v0.25.59: also plot client-side ownship dot when georef data is present
+      // v0.25.60: also plot client-side ownship dot when georef data is present
       if (georef && typeof data.lat === 'number' && typeof data.lon === 'number') {
         cfPlotOwnship(georef, data.lon, data.lat, h);
       }
@@ -2434,7 +2487,7 @@ function cfLoadPins(){
   } catch (_) {}
 }
 
-// v0.25.59 — Geo-Reference Engine: WGS84→EPSG:3857→Chart Canvas Point
+// v0.25.60 — Geo-Reference Engine: WGS84→EPSG:3857→Chart Canvas Point
 /** Transforms WGS84 (Lat/Lon) to EPSG:3857 (Spherical Mercator) */
 function wgs84ToEPSG3857(lon, lat) {
   const x = (lon * 20037508.34) / 180;
@@ -2462,7 +2515,7 @@ function worldToChartPoint(coord, geoMeta, renderedHeight) {
 }
 
 /**
- * v0.25.59: Plot ownship position on geo-referenced chart.
+ * v0.25.60: Plot ownship position on geo-referenced chart.
  * Called by cfStartOverlayTimer when georef data + live telemetry are available.
  */
 function cfPlotOwnship(georef, lon, lat, heading) {
@@ -2729,7 +2782,7 @@ async function loadFlight(force=false){
     const response = await fetch(`/api/simbrief/latest?force_refresh=${force?'true':'false'}&sync_fenix=false`,{cache:'no-store'});
     if(!response.ok) throw new Error(`HTTP ${response.status}`);
     flightPlan = await response.json();
-    // v0.25.59: wrap every downstream render + side-effect with _safeRender so a
+    // v0.25.60: wrap every downstream render + side-effect with _safeRender so a
     // single throwing helper surfaces the actual culprit via the on-page trace
     // badge + /api/frontend/log, instead of aborting loadFlight and leaving the
     // Status Board showing the generic JS error message.
@@ -2998,7 +3051,7 @@ async function selectDispatchRoute(route){
   }catch(error){$('dispatchResultCount').textContent=`SELECT FAILED: ${friendlyError(error.message)}`}
 }
 
-// v0.25.59: Dispatch tab switching
+// v0.25.60: Dispatch tab switching
 function switchDispatchTab(tabName,evt){
   document.querySelectorAll('.dispatch-tab-btn').forEach(function(btn){btn.classList.remove('active');});
   if(evt&&evt.currentTarget)evt.currentTarget.classList.add('active');
@@ -3012,7 +3065,7 @@ function switchDispatchTab(tabName,evt){
   }
 }
 
-// v0.25.59: Real-world flight search via local FR24 + ADSBDB enrichment pipeline
+// v0.25.60: Real-world flight search via local FR24 + ADSBDB enrichment pipeline
 function clearRealworldInputs(){
   var fields=['rw-origin','rw-dest','rw-callsign','rw-aircraft'];
   for(var i=0;i<fields.length;i++){
@@ -3038,7 +3091,7 @@ async function performRealworldSearch(){
     if(aircraft)params.set('aircraft',aircraft);
     if(includeGA)params.set('include_ga','true');
     if(includeGliders)params.set('include_gliders','true');
-    // v0.25.59: use local pipeline (full ADSBDB enrichment) and fall back to VPS
+    // v0.25.60: use local pipeline (full ADSBDB enrichment) and fall back to VPS
     var apiUrl=window.location.origin+'/api/v1/realworld/search?'+params.toString();
     var resp=await fetch(apiUrl,{method:'GET',headers:{'Accept':'application/json'}});
     if(!resp.ok)throw new Error('HTTP '+resp.status+': '+resp.statusText);
@@ -3061,7 +3114,7 @@ function renderRealworldResults(flights){
   if(!container)return;
   container.innerHTML='';
   flights.forEach(function(flight){
-    // v0.25.59: temporary debug output to verify backend→frontend field contract
+    // v0.25.60: temporary debug output to verify backend→frontend field contract
     console.log("REALWORLD FLIGHT CARD DATA", flight);
     var card=document.createElement('div');
     card.className='rw-flight-card';
@@ -3569,7 +3622,7 @@ function initPrinterSettings(){
   loadPrinterStatus();
 }
 
-// v0.25.59: Virtual thermal receipt preview
+// v0.25.60: Virtual thermal receipt preview
 async function previewPrinterReceipt(){
   const btn = $('printerPreviewBtn');
   if (btn) btn.textContent = 'GENERATING...';
@@ -3857,8 +3910,87 @@ function coverageStyle(feature){
   const isCentre=facility>=7;
   return new ol.style.Style({fill:new ol.style.Fill({color:isCentre?'rgba(48,132,176,.09)':'rgba(65,166,190,.07)'}),stroke:new ol.style.Stroke({color:isCentre?'rgba(79,177,219,.70)':'rgba(82,190,211,.55)',width:isCentre?1.5:1,lineDash:isCentre?[8,5]:[4,5]})});
 }
+// v0.25.60: FAA NMS NOTAM layer styling -- FDC/TFR red, runway closures
+// amber, obstacles orange, everything else blue. Respects mapNotamFilter.
+let mapNotamFilter='all';
+function notamStyle(feature){
+  const classification=String(feature.get('classification')||'').toUpperCase();
+  const qcode=String(feature.get('qcode')||'').toUpperCase();
+  const geometry=feature.getGeometry()?.getType?.()||'';
+  const isFdc=classification==='FDC'||qcode.startsWith('QRT');
+  const isRwy=qcode.startsWith('QMR');
+  const isObst=classification==='OBSTACLES'||qcode.startsWith('QOB')||/(CRANE|OBST)/.test(String(feature.get('text')||''));
+  const isAirspace=qcode.startsWith('QRT')||qcode.startsWith('QTT');
+  if(mapNotamFilter==='fdc'&&!isFdc)return null;
+  if(mapNotamFilter==='rwy'&&!isRwy)return null;
+  if(mapNotamFilter==='obst'&&!isObst)return null;
+  if(mapNotamFilter==='nav'&&!(qcode.startsWith('QNV')||qcode.startsWith('QNA')))return null;
+  if(mapNotamFilter==='airspace'&&!isAirspace)return null;
+  const fill=isFdc?'rgba(224,60,52,.24)':isRwy?'rgba(240,190,60,.22)':isObst?'rgba(255,150,60,.30)':'rgba(90,170,220,.18)';
+  const stroke=isFdc?'#ff5b52':isRwy?'#f0be3c':isObst?'#ff9640':'#5aaade';
+  if(geometry.includes('Polygon')){
+    return new ol.style.Style({fill:new ol.style.Fill({color:fill}),stroke:new ol.style.Stroke({color:stroke,width:isFdc?2.2:1.4,lineDash:isFdc?[8,5]:undefined})});
+  }
+  return new ol.style.Style({image:new ol.style.Circle({radius:isFdc?7:5,fill:new ol.style.Fill({color:stroke}),stroke:new ol.style.Stroke({color:'#0d1112',width:1.6})})});
+}
+// v0.25.60: fetch NMS GeoJSON NOTAMs around the current map viewport.
+let mapNotamRequestSeq=0;
+async function loadNotamLayer(){
+  if(!olMap||!olNotamLayer)return;
+  const src=olNotamLayer.getSource();if(!src)return;
+  const on=mapLayerChecked('mapLayerNotams',false);
+  if(!on){src.clear();if($('mapNotamFilters'))$('mapNotamFilters').hidden=true;return}
+  if($('mapNotamFilters'))$('mapNotamFilters').hidden=false;
+  const requestId=++mapNotamRequestSeq;
+  const center=ol.proj.toLonLat(olMap.getView().getCenter());
+  // Radius from the visible viewport diagonal (NM), capped to protect the
+  // proxy -- so the layer stays in sync while panning/zooming.
+  let radius=40;
+  try{
+    const parts=currentBboxParam().split(',').map(Number);
+    if(parts.length===4&&parts.every(Number.isFinite)){
+      const cLat=(parts[1]+parts[3])/2,cLon=(parts[0]+parts[2])/2;
+      radius=Math.max(10,Math.min(200,Math.round(mapDistanceNm(cLat,cLon,parts[1],parts[2]))));
+    }
+  }catch{}
+  updateMapAviationStatus('NOTAM LAYER LOADING');
+  try{
+    const r=await fetch(`/api/nms/notams?latitude=${Number(center[1]).toFixed(4)}&longitude=${Number(center[0]).toFixed(4)}&radius=${radius}`,{cache:'no-store'});
+    const d=await safeJsonResponse(r);
+    if(requestId!==mapNotamRequestSeq)return;
+    if(!d?.ok){updateMapAviationStatus('NOTAM LAYER UNAVAILABLE');return}
+    src.clear();
+    const raw=Array.isArray(d.features)?d.features:[];
+    const reader=new ol.format.GeoJSON();
+    raw.forEach(item=>{
+      let feature;
+      try{feature=reader.readFeature(item,{dataProjection:'EPSG:4326',featureProjection:'EPSG:3857'})}catch{return}
+      if(!feature)return;
+      const props=item.properties||{};const core=props.coreNOTAMData||{};const notam=core.notam||{};
+      const classification=String(notam.classification||props.classification||'').toUpperCase();
+      const qcode=String(notam.selectionCode||props.selectionCode||'').toUpperCase();
+      const text=String(notam.text||props.text||'');
+      const ident=String(notam.number||notam.id||'NOTAM');
+      const location=String(notam.icaoLocation||notam.location||props.icaoLocation||'');
+      feature.set('classification',classification);
+      feature.set('qcode',qcode);
+      feature.set('text',text);
+      feature.set('title',`${ident} · ${location||'NOTAM'}${classification?` [${classification}]`:''}`);
+      feature.set('notamText',text);
+      src.addFeature(feature);
+    });
+    olNotamLayer.changed();
+    updateMapAviationStatus(`NOTAM LAYER: ${src.getFeatures().length} ACTIVE`);
+  }catch(e){if(requestId===mapNotamRequestSeq)updateMapAviationStatus(`NOTAM LAYER LIMITED: ${friendlyError(e.message)}`)}
+}
+function applyMapNotamFilter(value){
+  mapNotamFilter=String(value||'all');
+  document.querySelectorAll('[data-notam-filter]').forEach(b=>b.classList.toggle('active',b.dataset.notamFilter===mapNotamFilter));
+  olNotamLayer?.changed();
+}
 
 function mapLayerChecked(id,defaultValue=false){const el=$(id);return el?!!el.checked:!!defaultValue}
+function syncMapNotamToggle(){const btn=$('mapNotamToggle');if(!btn)return;const on=mapLayerChecked('mapLayerNotams',false);btn.classList.toggle('active',on);btn.setAttribute('aria-pressed',on?'true':'false')}
 function updateMapAviationStatus(text){const el=$('mapAviationStatus');if(!el)return;const next=String(text||'');if(el.textContent!==next)el.textContent=next}
 
 function surfaceZoomMode(zoom=null){
@@ -4104,6 +4236,9 @@ async function refreshAviationLayers(){
       const r=await fetch(`/api/livemap/layers/airspaces?bbox=${encodeURIComponent(bbox)}&limit=900`,{cache:'no-store'});const d=await r.json();const boundarySrc=olBoundaryLayer.getSource();boundarySrc.clear();
       (d.items||[]).forEach(item=>{const f=boundaryFeature(item);if(f)boundarySrc.addFeature(f)});
     } else olBoundaryLayer?.getSource()?.clear();
+    // v0.25.60: keep the live NOTAM layer in sync with the viewport (only
+    // fires when the NOTAMS layer toggle is on).
+    if(mapLayerChecked('mapLayerNotams',false))await loadNotamLayer();
     await maybeAutoLoadAirportSurface(airportItems,zoom);
     if(!mapSurfaceLoadingIcao&&$('mapAviationStatus')?.textContent?.startsWith('LOADING'))updateMapAviationStatus(mapSurfaceStatusText());
   }catch(e){updateMapAviationStatus(`AVIATION LAYERS LIMITED: ${friendlyError(e.message)}`)}
@@ -4267,11 +4402,13 @@ function initOnlineMap(){
   olWaypointLayer=makeVectorLayer(waypointStyle,21);
   olAirwayLayer=makeVectorLayer(airwayStyle,9);
   olBoundaryLayer=makeVectorLayer(boundaryStyle,7);
+  olNotamLayer=makeVectorLayer(notamStyle,8);
+  olNotamLayer.setVisible(mapLayerChecked('mapLayerNotams',false));
   olRunwaySurfaceLayer=new ol.layer.Vector({source:new ol.source.Vector({wrapX:false}),style:runwaySurfaceStyle,zIndex:34,renderMode:'vector',renderBuffer:1200,updateWhileAnimating:true,updateWhileInteracting:true});
   olTaxiSurfaceLayer=new ol.layer.Vector({source:new ol.source.Vector({wrapX:false}),style:taxiSurfaceStyle,zIndex:33,renderMode:'vector',renderBuffer:1200,updateWhileAnimating:true,updateWhileInteracting:true});
   olSurfaceLayer=olTaxiSurfaceLayer;
   olSurfaceLabelLayer=makeVectorLayer(surfaceLabelStyle,35,{declutter:true,updateWhileAnimating:true,updateWhileInteracting:true});
-  olMap=new ol.Map({target:'liveMap',layers:[olRasterFallbackLayer,olBaseLayer,olBoundaryLayer,olAirwayLayer,olCoverageLayer,olRouteLayer,olTaxiSurfaceLayer,olRunwaySurfaceLayer,olSurfaceLabelLayer,olAirportLayer,olRouteAirportLayer,olWaypointLayer,olNavaidLayer,olControllerLayer,olTrafficLayer,olOwnshipLayer],view:new ol.View({center:initial.center,zoom:initial.zoom,minZoom:2,maxZoom:19,enableRotation:true,rotation:initial.rotation||0}),controls:ol.control.defaults.defaults({attribution:false,zoom:true,rotate:true})});
+  olMap=new ol.Map({target:'liveMap',layers:[olRasterFallbackLayer,olBaseLayer,olBoundaryLayer,olNotamLayer,olAirwayLayer,olCoverageLayer,olRouteLayer,olTaxiSurfaceLayer,olRunwaySurfaceLayer,olSurfaceLabelLayer,olAirportLayer,olRouteAirportLayer,olWaypointLayer,olNavaidLayer,olControllerLayer,olTrafficLayer,olOwnshipLayer],view:new ol.View({center:initial.center,zoom:initial.zoom,minZoom:2,maxZoom:19,enableRotation:true,rotation:initial.rotation||0}),controls:ol.control.defaults.defaults({attribution:false,zoom:true,rotate:true})});
   mapAutoFramePending=!mapHasStoredView;
   olMap.on('moveend',()=>{saveMapView();});
   olMap.on('singleclick',event=>{
@@ -4412,16 +4549,28 @@ function applyMapView(data,force=false){
 function setMapMode(mode,reset=true){mapMode=mode;localStorage.setItem('opsroom-map-mode',mode);if(reset){mapAutoFramePending=true;applyMapView(mapData||{},true);mapAutoFramePending=false}}
 function resetMapView(){localStorage.removeItem('opsroom-map-view-v2');mapHasStoredView=false;mapAutoFramePending=true;if(olMap)olMap.getView().setRotation(0);applyMapView(mapData||{},true);mapAutoFramePending=false}
 function resetMapNorthUp(){if(!olMap)return;olMap.getView().animate({rotation:0,duration:220});setTimeout(saveMapView,260);$('mapSelected').textContent='MAP ORIENTATION RESET NORTH UP'}
+function mapCenterOnAircraft(){
+  if(!olMap)return;
+  const own=mapData?.ownship;
+  if(own&&Number.isFinite(Number(own.lat))&&Number.isFinite(Number(own.lon))){
+    olMap.getView().animate({center:ol.proj.fromLonLat([Number(own.lon),Number(own.lat)]),zoom:Math.max(12,olMap.getView().getZoom()||12),duration:450});
+    $('mapSelected').textContent=`OWN AIRCRAFT · ${Number(own.lat).toFixed(4)}, ${Number(own.lon).toFixed(4)}`;
+    return;
+  }
+  const geom=olOwnshipFeature?.getGeometry?.();
+  if(geom){const coord=geom.getCoordinates();olMap.getView().animate({center:coord,zoom:Math.max(12,olMap.getView().getZoom()||12),duration:450});$('mapSelected').textContent='OWN AIRCRAFT';return;}
+  $('mapSelected').textContent='NO AIRCRAFT POSITION AVAILABLE';
+}
 function setMapCheckbox(id,value){const el=$(id);if(el)el.checked=!!value}
 function applyMapPreset(preset){
   const mapPresets={
-    clean:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:false},
-    route:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:true,mapLayerWaypoints:false,mapLayerAirways:true,mapLayerBoundaries:false},
-    airport:{mapLayerTraffic:true,mapLayerControllers:false,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:false},
-    network:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:true,mapLayerAirports:false,mapLayerRunways:false,mapLayerSurface:false,mapLayerTaxiLabels:false,mapLayerStandLabels:false,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:true}
+    clean:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:false,mapLayerNotams:false},
+    route:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:true,mapLayerWaypoints:false,mapLayerAirways:true,mapLayerBoundaries:false,mapLayerNotams:false},
+    airport:{mapLayerTraffic:true,mapLayerControllers:false,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:false,mapLayerNotams:false},
+    network:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:true,mapLayerAirports:false,mapLayerRunways:false,mapLayerSurface:false,mapLayerTaxiLabels:false,mapLayerStandLabels:false,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:true,mapLayerNotams:false}
   };
   const cfg=mapPresets[preset]||mapPresets.clean;Object.entries(cfg).forEach(([id,value])=>setMapCheckbox(id,value));
-  document.querySelectorAll('[data-map-preset]').forEach(button=>button.classList.toggle('active',button.dataset.mapPreset===preset));
+  document.querySelectorAll('[data-map-preset]').forEach(button=>button.classList.toggle('active',button.dataset.mapPreset===preset));syncMapNotamToggle();
   if(!mapLayerChecked('mapLayerRunways',true)&&!mapLayerChecked('mapLayerSurface',true))clearAirportSurface('SURFACE LAYER OFF');
   if(mapData)renderMap(mapData);
   if(preset==='airport'){
@@ -5930,7 +6079,7 @@ function renderRaasUnitButtons(unit){
   });
 }
 
-// v0.25.59 — RAAS global toast. Poll interval is 5s; the freshness window must
+// v0.25.60 — RAAS global toast. Poll interval is 5s; the freshness window must
 // have comfortable headroom above it (3x), otherwise any poll/fetch delay or
 // backend processing time between the runway event and the created_epoch stamp
 // blows through the window and the toast is silently dropped as stale.
@@ -6323,8 +6472,12 @@ function setup(){
   });
   $('opsToastClose').addEventListener('click',()=>{notificationToastAction='';$('opsToast').hidden=true});['efbKeepAwake','efbModuleKeepAwake'].forEach(id=>$(id)?.addEventListener('click',toggleKeepAwake));updateKeepAwakeUi();['notificationButton','efbNotificationButton','efbModuleNotificationButton'].forEach(bindNotificationButton);$('notificationClose')?.addEventListener('click',closeNotifications);document.addEventListener('click',event=>{const drawer=$('notificationDrawer');if(!drawer||drawer.hidden)return;if(event.target.closest('#notificationDrawer,#notificationButton,#efbNotificationButton,#efbModuleNotificationButton'))return;drawer.hidden=true},{capture:true});$('notificationClear')?.addEventListener('click',markNotificationsRead);$('notificationHistory')?.addEventListener('click',event=>{const b=event.target.closest('[data-notification-page]');if(b){$('notificationDrawer').hidden=true;markNotificationsRead();showPage(b.dataset.notificationPage)}});
   document.querySelectorAll('[data-map-mode]').forEach(button=>button.addEventListener('click',()=>setMapMode(button.dataset.mapMode,true)));
-  $('mapResetView').addEventListener('click',resetMapView);$('mapNorthUp')?.addEventListener('click',resetMapNorthUp);
+  $('mapResetView').addEventListener('click',resetMapView);$('mapNorthUp')?.addEventListener('click',resetMapNorthUp);$('mapCenterAircraft')?.addEventListener('click',mapCenterOnAircraft);
   ['mapLayerTraffic','mapLayerControllers','mapLayerCoverage','mapLayerAirports','mapLayerRunways','mapLayerSurface','mapLayerTaxiLabels','mapLayerStandLabels','mapLayerNavaids','mapLayerWaypoints','mapLayerAirways','mapLayerBoundaries'].forEach(id=>$(id)?.addEventListener('change',()=>{document.querySelectorAll('[data-map-preset]').forEach(b=>b.classList.remove('active'));if(id==='mapLayerSurface'||id==='mapLayerRunways'||id==='mapLayerTaxiLabels'||id==='mapLayerStandLabels'){olRunwaySurfaceLayer?.changed();olTaxiSurfaceLayer?.changed();olSurfaceLabelLayer?.changed();if(!mapLayerChecked('mapLayerSurface',true)&&!mapLayerChecked('mapLayerRunways',true)){clearAirportSurface('SURFACE LAYER OFF');}}if(mapData)renderMap(mapData);scheduleAviationRefresh(80)}));
+  $('mapLayerNotams')?.addEventListener('change',()=>{document.querySelectorAll('[data-map-preset]').forEach(b=>b.classList.remove('active'));loadNotamLayer();if(mapData)renderMap(mapData);syncMapNotamToggle();});
+  $('mapNotamToggle')?.addEventListener('click',()=>{const box=$('mapLayerNotams');if(box){box.checked=!box.checked;box.dispatchEvent(new Event('change'));}syncMapNotamToggle();});
+  syncMapNotamToggle();
+  document.querySelectorAll('[data-notam-filter]').forEach(button=>button.addEventListener('click',()=>applyMapNotamFilter(button.dataset.notamFilter||'all')));
   document.querySelectorAll('[data-map-preset]').forEach(button=>button.addEventListener('click',()=>applyMapPreset(button.dataset.mapPreset||'clean')));
   $('mapControllerList').addEventListener('click',event=>{const button=event.target.closest('[data-map-controller]');if(!button||!mapData||!olMap)return;const item=(mapData.controllers||[]).find(x=>x.callsign===button.dataset.mapController);if(item?.mapped&&Number.isFinite(Number(item.lat))&&Number.isFinite(Number(item.lon))){olMap.getView().animate({center:ol.proj.fromLonLat([Number(item.lon),Number(item.lat)]),zoom:Math.max(6,olMap.getView().getZoom()||6),duration:250});$('mapSelected').textContent=`${item.callsign} ${item.frequency} · ${item.facility_label} · ${item.position_source||''}`}else if(item){$('mapSelected').textContent=`${item.callsign} IS ONLINE · POSITION COULD NOT YET BE RESOLVED`}});
   $('mapRefresh').addEventListener('click',()=>loadMap(true));
@@ -6420,7 +6573,7 @@ document.addEventListener('fullscreenchange',()=>{
 });
 
 function bg(fn){try{const p=fn();if(p&&p.catch)p.catch(()=>{})}catch(_){}}
-// v0.25.59: global runtime-error trap. Any synchronous throw anywhere in a
+// v0.25.60: global runtime-error trap. Any synchronous throw anywhere in a
 // render path is caught by _safeRender, logged with kind+stack to console,
 // shipped to /api/frontend/log via sendBeacon, and surfaces a clickable red
 // badge in the bottom-left of the page that copies the full trace. This is
@@ -6441,7 +6594,7 @@ function _captureError(kind, err){
     try{
       let badge = document.getElementById('__opsroomErrBadge');
       if(badge){ try{ badge.remove(); }catch(_){} }
-      // v0.25.59: bottom-left error badge rendering removed per user request.
+      // v0.25.60: bottom-left error badge rendering removed per user request.
       // Errors are still logged to console and stored in window.__opsroomErrors__
       // for developer diagnostics via the browser console.
     }catch(_){}
@@ -6466,7 +6619,7 @@ function _isOpsroomError(e){
     return true;
   }catch(_){ return true; }
 }
-// v0.25.59: unhandledrejection and window.error listeners disabled —
+// v0.25.60: unhandledrejection and window.error listeners disabled —
 // bottom-left error badge removed from user-facing production build.
 // Errors are still captured via _captureError for console logging.
 // if(typeof window !== 'undefined'){
@@ -6601,13 +6754,13 @@ document.addEventListener('click', function(e) {
 // -- PDF.js Canvas Chart Renderer (v0.25.16) ---------------------------------
 let cfPdfRenderer = null;
 async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUrl, _cfPdfRetries) {
-  // v0.25.59: retry guard for zero-width container (max 10 frames)
+  // v0.25.60: retry guard for zero-width container (max 10 frames)
   _cfPdfRetries = _cfPdfRetries || 0;
   if (!window.pdfjsLib) {
     container.innerHTML = `<div class="cf-empty">PDF RENDERER UNAVAILABLE<br><small>PDF.js library did not load</small></div>`;
     return;
   }
-  // v0.25.59: retry guard for zero-width container (max 30 frames, ~500ms).
+  // v0.25.60: retry guard for zero-width container (max 30 frames, ~500ms).
   // Also check parent preview — if the whole ChartFox panel is hidden,
   // don't waste frames retrying.
   var _pw = 0;
@@ -6629,7 +6782,7 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
     return;
   }
   try {
-    // v0.25.59: fetch the proxy URL, validate HTTP + content-type + PDF magic,
+    // v0.25.60: fetch the proxy URL, validate HTTP + content-type + PDF magic,
     // then pass ArrayBuffer to PDF.js -- prevents "Invalid PDF structure"
     // when the backend returns JSON errors instead of PDF bytes.
     const resp = await fetch(proxyUrl);
@@ -6642,7 +6795,7 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
     }
     var ct = String(resp.headers.get('content-type') || '');
     var buf = await resp.arrayBuffer();
-    // v0.25.59: detect JSON iframe redirect before rejecting as error
+    // v0.25.60: detect JSON iframe redirect before rejecting as error
     if (ct.includes('json')) {
       try {
         var decoder = new TextDecoder();
@@ -6696,7 +6849,7 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
     // Calculate scale to fit width
     const wrapRect = wrap.getBoundingClientRect();
     const vp = page.getViewport({scale: 1.0});
-    // v0.25.59: multiply by devicePixelRatio (minimum 2.0x) for crisp rendering on HiDPI/Retina displays.
+    // v0.25.60: multiply by devicePixelRatio (minimum 2.0x) for crisp rendering on HiDPI/Retina displays.
     // CSS sizes remain at logical pixels; canvas backing store scales to physical pixels.
     const dpr = Math.max(window.devicePixelRatio || 1, 3.0);
     const logicalScale = (wrapRect.width - 20) / vp.width;
@@ -6713,7 +6866,7 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
     let zoom = 1.0, panX = 0, panY = 0;
     let isDragging = false, dragStartX = 0, dragStartY = 0, dragPanX = 0, dragPanY = 0;
     let darkMode = true;
-    // v0.25.59: apply dark mode CSS class immediately to prevent white flash
+    // v0.25.60: apply dark mode CSS class immediately to prevent white flash
     wrap.classList.add('dark-mode');
 
     function applyTransform() {
@@ -6779,7 +6932,7 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
       const lbl = document.getElementById('cfPdfZoomLevel');
       if (lbl) lbl.textContent = Math.round(zoom * 100) + '%';
     }
-    // v0.25.59: wire annotation tools integrated into PDF toolbar
+    // v0.25.60: wire annotation tools integrated into PDF toolbar
     var annotPen = tb.querySelector('#cfAnnotPen');
     var annotHighlighter = tb.querySelector('#cfAnnotHighlighter');
     var annotEraser = tb.querySelector('#cfAnnotEraser');
@@ -6818,9 +6971,9 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
     }
 
     cfPdfRenderer = { pdf, page, canvas, wrap, zoom, panX, panY, darkMode, destroy: () => { container.innerHTML = ''; } };
-    // v0.25.59: init annotation overlay after successful render
+    // v0.25.60: init annotation overlay after successful render
     cfInitAnnotationOverlay(container, chartId);
-    // v0.25.59: auto-fit chart to fill expanded viewer
+    // v0.25.60: auto-fit chart to fill expanded viewer
     setTimeout(function(){ cfAutoFitToScreen(); }, 100);
   } catch (e) {
     const openLink = viewUrl ? '<a class="cf-pdf-link" href="' + escapeHtml(viewUrl) + '" target="_blank" rel="noopener noreferrer">OPEN CHART ON CHARTFOX</a>' : '';
@@ -6828,14 +6981,14 @@ async function cfRenderPdfCanvas(proxyUrl, container, chartId, chartName, viewUr
   }
 }
 
-// v0.25.59 — Annotation/Scratchpad Overlay (ported from Scratchpad module)
+// v0.25.60 — Annotation/Scratchpad Overlay (ported from Scratchpad module)
 // Transparent canvas overlay for pen/highlighter/eraser on top of chart viewer
 function cfInitAnnotationOverlay(previewContainer, chartId) {
   if (!previewContainer || !chartId) return;
   // Remove previous overlay if any
   var oldOverlay = document.getElementById('cfAnnotOverlay');
   if (oldOverlay) oldOverlay.remove();
-  // v0.25.59: toolbar is now integrated into PDF toolbar — only create canvas overlay here
+  // v0.25.60: toolbar is now integrated into PDF toolbar — only create canvas overlay here
   // Reset state for new chart
   cfAnnotation.lastChartId = chartId;
   cfAnnotation.strokes = cfLoadAnnotations(chartId);
@@ -6853,7 +7006,7 @@ function cfInitAnnotationOverlay(previewContainer, chartId) {
     pdfWrap.style.position = 'relative';
     pdfWrap.appendChild(canvas);
   } else {
-    // v0.25.59: create wrapper for pan sync if not present
+    // v0.25.60: create wrapper for pan sync if not present
     var autoWrap = document.createElement('div');
     autoWrap.id = 'cfPdfCanvasWrap';
     autoWrap.style.cssText = 'position:relative;overflow:hidden';
@@ -6874,7 +7027,7 @@ function cfInitAnnotationOverlay(previewContainer, chartId) {
   cfAnnotation.ctx = canvas.getContext('2d');
   cfAnnotation.active = false;
   cfRedrawAnnotations();
-  // v0.25.59: toolbar wiring is now in cfRenderPdfCanvas; only mouse drawing events here
+  // v0.25.60: toolbar wiring is now in cfRenderPdfCanvas; only mouse drawing events here
   // Mouse drawing events
   canvas.addEventListener('mousedown', cfAnnotStart);
   canvas.addEventListener('mousemove', cfAnnotMove);
@@ -6882,7 +7035,7 @@ function cfInitAnnotationOverlay(previewContainer, chartId) {
   canvas.addEventListener('mouseleave', cfAnnotEnd);
 }
 
-// v0.25.59: Convert pointer event to chart canvas internal-pixel and normalised coordinates.
+// v0.25.60: Convert pointer event to chart canvas internal-pixel and normalised coordinates.
 // Accounts for CSS display scale vs actual canvas pixel resolution.
 function getChartCanvasCoordinates(e, canvas) {
   var rect = canvas.getBoundingClientRect();
@@ -6893,7 +7046,7 @@ function getChartCanvasCoordinates(e, canvas) {
   var scaleY = canvas.height / rect.height;
   var canvasX = (clientX - rect.left) * scaleX;
   var canvasY = (clientY - rect.top) * scaleY;
-  // v0.25.59: Normalise against the overlay canvas dimensions so that
+  // v0.25.60: Normalise against the overlay canvas dimensions so that
   // normalisation and rendering use the same denominator, eliminating the
   // cursor-offset bug.  Stored strokes are canvas-relative; reloaded strokes
   // drawn before this fix (nativeWidth/nativeHeight basis) will be slightly
@@ -6963,7 +7116,7 @@ function cfAnnotUndo() {
 }
 
 function cfRedrawAnnotations() {
-  // v0.25.59: migrate any legacy (v1) saved strokes into the canvas-relative
+  // v0.25.60: migrate any legacy (v1) saved strokes into the canvas-relative
   // basis once, once the overlay canvas is sized to the rendered PDF canvas.
   if (cfAnnotation._legacyPending && cfAnnotation.lastChartId) {
     cfMigrateLegacyAnnotations(cfAnnotation.lastChartId);
@@ -6991,11 +7144,11 @@ function cfRedrawAnnotations() {
   });
 }
 
-// Annotation storage format (v0.25.59+):
+// Annotation storage format (v0.25.60+):
 //   { v: 2, strokes: [ { tool, color, width, points: [{x,y,rx,ry}] } ] }
 // Version 2 stores rx/ry normalized against the overlay canvas size
 // (canvas.width / canvas.height) -- the same denominator used at render
-// time. Pre-v0.25.59 saved strokes (bare array, v1) normalized rx/ry
+// time. Pre-v0.25.60 saved strokes (bare array, v1) normalized rx/ry
 // against the PDF *native* page size (cfPdfState.nativeWidth/Height). On
 // load we detect the bare-array (v1) format and transform each point once
 // into the v2 canvas-relative basis before rendering, so old annotations
@@ -7082,7 +7235,7 @@ function cfSaveAnnotations(chartId, strokes) {
   } catch (_) {}
 }
 
-// v0.25.59 — Auto-fit chart to screen on load and window resize
+// v0.25.60 — Auto-fit chart to screen on load and window resize
 function cfAutoFitToScreen() {
   var canvas = document.getElementById('cfPdfCanvas');
   if (!canvas || !cfPdfRenderer) return;
