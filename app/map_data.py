@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
+import time
 from typing import Any
 
 from .data_loader import haversine_nm, load_airports, match_airline, nearest_airports
@@ -13,6 +14,27 @@ from .vatsim_client import get_vatsim_data
 from .weather_client import fetch_metar
 from .charts import openaip_key
 
+
+_OPENAIP_RUNTIME_CACHE: dict[str, Any] = {}
+
+
+def _openaip_runtime() -> dict[str, Any]:
+    """Live OpenAIP enrichment runtime status; additive and never fatal.
+
+    Memoized for a short window so the 2.5s map stream does not re-read the
+    settings file on every tick.
+    """
+    now = time.monotonic()
+    if now - float(_OPENAIP_RUNTIME_CACHE.get("at") or 0) < 10.0:
+        return _OPENAIP_RUNTIME_CACHE.get("value") or {"healthy": None, "active": False, "counters": {}}
+    try:
+        from .openaip_client import status as openaip_status
+        value = openaip_status()
+    except Exception:
+        value = {"healthy": None, "active": False, "counters": {}}
+    _OPENAIP_RUNTIME_CACHE["value"] = value
+    _OPENAIP_RUNTIME_CACHE["at"] = now
+    return value
 
 
 FACILITY_NAMES = {
@@ -271,6 +293,11 @@ def build_live_map(force: bool = False, traffic_limit: int = 900) -> dict[str, A
         "weather": weather,
         "counts": {"traffic": len(pilots), "controllers": len(controllers), "route_points": len(_route_points(plan))},
         "vatsim_update": general.get("update_timestamp"),
-        "openaip": {"configured": bool(settings.get("integrations", {}).get("openaip_api_key")), "role": "metadata/vector overlay provider", "enabled": bool(settings.get("integrations", {}).get("openaip_map_enabled", True))},
+        "openaip": {
+            "configured": True,  # default VPS proxy endpoint is baked into the client
+            "role": "metadata/vector overlay provider",
+            "enabled": bool(settings.get("integrations", {}).get("openaip_map_enabled", True)),
+            "runtime": _openaip_runtime(),
+        },
         "updated_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }

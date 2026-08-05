@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 import sqlite3
@@ -10,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from .settings_store import load_settings, app_data_dir
+
+_LOGGER = logging.getLogger("opsroom.aviation_data")
 
 DB_PATH = Path(__file__).resolve().parent / "data" / "navigation" / "opsroom_aviation.sqlite"
 _SURFACE_PREFIX = "little_" + "navmap"
@@ -239,22 +242,64 @@ def airways_layer(bbox: str | None = None, limit: int = 2000) -> dict[str, Any]:
     return {"ok": True, "items": rows}
 
 
+def _local_boundary_rows(b: tuple[float, float, float, float], limit: int) -> list[dict[str, Any]]:
+    min_lon, min_lat, max_lon, max_lat = b
+    return _rows("""
+        select name,type,min_altitude,max_altitude,min_lat,min_lon,max_lat,max_lon
+        from nav_boundary
+        where not (max_lon < ? or min_lon > ? or max_lat < ? or min_lat > ?)
+        order by type,name limit ?
+    """, (min_lon, max_lon, min_lat, max_lat, limit))
+
+
 def airspaces_layer(bbox: str | None = None, limit: int = 1000) -> dict[str, Any]:
+    """Airspace layer for the live map.
+
+    When OpenAIP enrichment is enabled (map toggle on), the layer supplements
+    the built-in ``nav_boundary`` data with real OpenAIP airspace polygons
+    (source-labelled). Local rows are always kept so no previously-working
+    data disappears. Any OpenAIP failure degrades cleanly to the built-in
+    local data, keeping the layer's prior behaviour and payload shape exactly
+    intact when OpenAIP is unavailable or disabled.
+    """
     if not available():
         return status()
     b = _bbox_parts(bbox)
     limit = max(1, min(int(limit or 1000), 3000))
+    openaip_meta: dict[str, Any] | None = None
     if b:
-        min_lon, min_lat, max_lon, max_lat = b
-        rows = _rows("""
-            select name,type,min_altitude,max_altitude,min_lat,min_lon,max_lat,max_lon
-            from nav_boundary
-            where not (max_lon < ? or min_lon > ? or max_lat < ? or min_lat > ?)
-            order by type,name limit ?
-        """, (min_lon, max_lon, min_lat, max_lat, limit))
+        try:
+            from .openaip_client import airspaces as openaip_airspaces, openaip_enabled
+            if openaip_enabled():
+                oa = openaip_airspaces(bbox, limit=limit)
+                if oa.get("ok") and oa.get("items"):
+                    items = list(oa["items"])
+                    local_rows = _local_boundary_rows(b, limit)
+                    if local_rows:
+                        items.extend({**row, "source": "local", "source_label": "Local aviation DB"}
+                                     for row in local_rows)
+                        source = "mixed"
+                    else:
+                        source = "openaip"
+                    meta = dict(oa.get("meta") or {})
+                    meta.update({"source": source, "fetched_at": oa.get("fetched_at"),
+                                "count": len(oa["items"]), "local_count": len(local_rows)})
+                    return {"ok": True, "source": source, "items": items, "openaip": meta}
+                openaip_meta = {"attempted": True, "failed": True,
+                                "reason": oa.get("reason") or "request_failed",
+                                "error": oa.get("error")}
+        except Exception as exc:  # enrichment must never break the layer
+            _LOGGER.warning("OpenAIP airspace enrichment failed: %s", exc)
+            openaip_meta = {"attempted": True, "failed": True, "reason": "client_error"}
+    if b:
+        rows = _local_boundary_rows(b, limit)
     else:
         rows = []
-    return {"ok": True, "items": rows}
+    result: dict[str, Any] = {"ok": True, "items": rows}
+    if openaip_meta is not None:
+        result["source"] = "local"
+        result["openaip"] = openaip_meta
+    return result
 
 
 def _decode_points(blob: bytes | None) -> list[list[float]]:

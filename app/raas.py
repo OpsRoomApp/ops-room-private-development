@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -69,6 +71,10 @@ except Exception as _raas_audio_import_exc:
 
 from .navdata import available as navdata_available, project_local, runway_ends_near
 from .telemetry_provider import read_telemetry, telemetry_diagnostics
+from . import notam_client  # v0.25.63: NOTAM runway-closure cross-reference
+from . import notam_translate  # v0.25.63: closure keyword check
+
+_LOG = logging.getLogger("opsroom.raas")
 
 _LOCK = threading.RLock()
 _RUNNING = False
@@ -373,6 +379,11 @@ def _callout(text: str, event_type: str, *, runway: str = "", distance_ft: int |
     created_epoch = time.time()
     spoken_unit = "meters" if str(distance_unit).upper() == "M" else ("feet" if str(distance_unit).upper() == "FT" else _raas_spoken_unit())
     _raas_queue_callout(text, event_type=event_type, runway=runway, distance_ft=distance_ft, priority=priority, distance_value=distance_value, distance_unit=spoken_unit)
+    # v0.25.63: NOTAM cross-reference -- ADD-ONLY. When the aircraft is on or
+    # approaching a runway, check whether an active NOTAM closes it and fire
+    # an extra warning. Never suppresses or replaces an existing callout.
+    if event_type in ("on_runway", "approaching_runway") and runway:
+        _maybe_notam_closure_callout(str(runway))
     compact = _compact_callout_display(text, event_type, runway=runway, distance_ft=distance_ft, distance_value=distance_value, distance_unit=distance_unit)
     _set_status(last_callout=text, last_callout_type=event_type, last_callout_priority=priority, last_callout_runway=runway, last_callout_distance_ft=distance_ft, last_callout_distance_value=distance_value, last_callout_unit=(distance_unit or _raas_unit_code()).upper(), toast_id=_LAST_TOAST_ID, raas_event_id=event_id, raas_event_created_epoch=created_epoch, raas_event_active=True, raas_event_log=[f"RAAS_EVENT_CREATED id={event_id}", f"RAAS_AUDIO_QUEUED id={event_id}", f"RAAS_VISUAL_UPDATED id={event_id}"], display=compact, display_expires_at=now + (2.5 if suppress_center_toast else 5.5), suppress_center_toast=bool(suppress_center_toast), client_audio_required=False)
 
@@ -393,6 +404,82 @@ def _strip_key(rwy: dict[str, Any] | None) -> str:
     if names:
         return f"{airport}:{'/'.join(names)}"
     return f"{airport}:{_runway_name(item)}"
+
+
+# ── v0.25.63: NOTAM runway-closure cross-reference (ADD-ONLY) ──────────────
+# Determines whether an active NOTAM closes the runway the aircraft is on or
+# approaching, and fires an extra warning callout. This integration can only
+# ADD a warning -- a missed match must never change RAAS's existing logic.
+
+_NOTAM_CLOSURE_CACHE: dict[str, tuple[float, bool, str]] = {}
+_NOTAM_CLOSURE_LOCK = threading.Lock()
+_NOTAM_CLOSURE_TTL = 900.0  # 15 minutes -- plenty for a taxi/approach phase
+
+
+def _runway_tokens(text_upper: str) -> list[str]:
+    """Extract runway identifiers from raw NOTAM text (e.g. RWY 26L, 08L/26R)."""
+    return re.findall(r"\bRWY\s*([0-9]{1,2}[LRC]?(?:/[0-9]{1,2}[LRC]?)?)\b", text_upper)
+
+
+def _runway_matches(token: str, runway: str) -> bool:
+    """Does a NOTAM runway token refer to the same physical runway as ours?"""
+    token = token.upper()
+    runway = runway.upper()
+    parts = [part.strip() for part in token.split("/") if part.strip()]
+    base = runway.rstrip("LRC")
+    if runway in parts:
+        return True
+    return any(part.rstrip("LRC") == base for part in parts)
+
+
+def _notam_runway_closed(airport: str, runway: str) -> tuple[bool, str]:
+    """Best-effort: is there an active closure NOTAM for this runway?"""
+    airport = str(airport or "").upper().strip()
+    runway = str(runway or "").upper().strip()
+    if len(airport) != 4 or not runway:
+        return False, ""
+    key = f"{airport}:{runway}"
+    with _NOTAM_CLOSURE_LOCK:
+        hit = _NOTAM_CLOSURE_CACHE.get(key)
+        if hit and time.time() - hit[0] <= _NOTAM_CLOSURE_TTL:
+            return bool(hit[1]), hit[2]
+    matched = False
+    detail = ""
+    try:
+        package = notam_client.get_notams(airport)
+        for row in package.get("notams") or []:
+            text = str(row.get("text") or "").upper()
+            if not notam_translate.is_closure_notam(text):
+                continue
+            if any(_runway_matches(token, runway) for token in _runway_tokens(text)):
+                matched = True
+                detail = str(row.get("text") or "")
+                break
+    except Exception as exc:
+        _LOG.debug("RAAS NOTAM check failed for %s: %s", airport, exc)
+    with _NOTAM_CLOSURE_LOCK:
+        _NOTAM_CLOSURE_CACHE[key] = (time.time(), matched, detail)
+    if matched:
+        # Inspectable match log -- this is exactly the feature that needs
+        # real-world regex tuning after launch.
+        _LOG.info("RAAS NOTAM cross-ref: RWY %s at %s closed per NOTAM: %s", runway, airport, detail[:200])
+    return matched, detail
+
+
+def _maybe_notam_closure_callout(runway: str) -> None:
+    """Run the closure check off the RAAS loop so callouts never stall on
+    network I/O, then fire the add-on warning in a daemon thread."""
+    def _worker() -> None:
+        try:
+            strip = str(_RUNWAY_SESSION.get("strip") or "")
+            airport = strip.split(":", 1)[0] if ":" in strip else ""
+            closed, _detail = _notam_runway_closed(airport, runway)
+            if closed:
+                _callout("RUNWAY CLOSED PER NOTAM", "notam_runway_closed", runway=runway, priority="warning", cooldown=600.0)
+        except Exception:
+            pass
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _encounter_key(rwy: dict[str, Any] | None) -> str:

@@ -77,6 +77,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "aip_charts_enabled": True,
         "openaip_map_enabled": True,
         "openaip_api_key": "",
+        "openaip_proxy_url": "",
+        "openaip_proxy_token": "",
         "local_surface_db_auto_detect": True,
         "local_surface_db_path": "",
         "chartfox_enabled": True,
@@ -257,6 +259,8 @@ def save_settings(settings: dict[str, Any]) -> dict[str, Any]:
     normalized["integrations"]["aip_charts_enabled"] = bool(normalized["integrations"].get("aip_charts_enabled", True))
     normalized["integrations"]["openaip_map_enabled"] = bool(normalized["integrations"].get("openaip_map_enabled", True))
     normalized["integrations"]["openaip_api_key"] = str(normalized["integrations"].get("openaip_api_key", "") or "").strip()[:128]
+    normalized["integrations"]["openaip_proxy_url"] = str(normalized["integrations"].get("openaip_proxy_url", "") or "").strip()[:240]
+    normalized["integrations"]["openaip_proxy_token"] = str(normalized["integrations"].get("openaip_proxy_token", "") or "").strip()[:240]
     normalized["integrations"]["local_surface_db_auto_detect"] = bool(normalized["integrations"].get("local_surface_db_auto_detect", True))
     normalized["integrations"]["local_surface_db_path"] = str(normalized["integrations"].get("local_surface_db_path", "") or "").strip()[:520]
     normalized["integrations"]["chartfox_enabled"] = bool(normalized["integrations"].get("chartfox_enabled", True))

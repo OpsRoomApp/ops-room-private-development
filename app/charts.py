@@ -771,7 +771,7 @@ def chartfox_debug(chart_id: str = "", airport: str = "") -> dict:
             "Example: /api/charts/chartfox/debug?chart_id=6872384f-a9d3-4513-a1e5-d2e99e2b9dfb"
         ) if not api_inspection else None,
         "recent_errors": [c for c in runtime.get("recent_calls", []) if not c.get("ok")][-10:] if runtime.get("recent_calls") else [],
-        "version": "v0.25.61",
+        "version": "v0.25.63",
         "build": "public-release",
         "uptime_seconds": round(time.monotonic(), 1),
     }

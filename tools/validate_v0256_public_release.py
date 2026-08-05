@@ -1,9 +1,9 @@
-# Public-release validator for OPS ROOM 0.25.61.
+# Public-release validator for OPS ROOM 0.25.63.
 #
 # NOTE: the filename is historical (it started for the v0.25.6 release) and is referenced
 # by name in BUILD OPS ROOM COMPLETE.bat and BUILD WINDOWS APP ONLY.bat. The constants,
 # package-name, codename and assertions inside this file have been migrated to expect
-# 0.25.61. Do not rename the file without also updating the BAT callers.
+# 0.25.63. Do not rename the file without also updating the BAT callers.
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 CHECKS: list[tuple[str, bool, str]] = []
-PARSER = argparse.ArgumentParser(description="Validate the OPS ROOM 0.25.61 public release")
+PARSER = argparse.ArgumentParser(description="Validate the OPS ROOM 0.25.63 public release")
 PARSER.add_argument("--dist", help="Generated dist directory to validate after packaging")
 ARGS = PARSER.parse_args()
 
@@ -53,13 +53,13 @@ def file_sha256(path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Public 0.25.61 release identity and package contract
+# Public 0.25.63 release identity and package contract
 # ---------------------------------------------------------------------------
-RELEASE_VERSION = "0.25.61"
+RELEASE_VERSION = "0.25.63"
 RELEASE_BUILD = "public-release"
 RELEASE_CODENAME = "Release Migration"
 RELEASE_CHANNEL = "stable"
-PACKAGE_NAME = "OPS_ROOM_v0_25_61_Public_Windows_x64.zip"
+PACKAGE_NAME = "OPS_ROOM_v0_25_63_Public_Windows_x64.zip"
 RELEASE_REPO = "https://github.com/OpsRoomApp/ops-room-releases"
 DOWNLOAD_URL = f"{RELEASE_REPO}/releases/download/{RELEASE_VERSION}/{PACKAGE_NAME}"
 RELEASE_NOTES_URL = f"{RELEASE_REPO}/releases/tag/{RELEASE_VERSION}"
@@ -89,7 +89,7 @@ release_notes_txt = text("RELEASE_NOTES.txt")
 readme_md = text("README.md")
 readme_txt = text("README.txt")
 
-check("version metadata is the stable 0.25.61 public release", version == {
+check("version metadata is the stable 0.25.63 public release", version == {
     "version": RELEASE_VERSION,
     "codename": RELEASE_CODENAME,
     "channel": RELEASE_CHANNEL,
@@ -97,7 +97,7 @@ check("version metadata is the stable 0.25.61 public release", version == {
     "abi": version.get("abi", 1),
 })
 check(
-    "source manifest targets the exact 0.25.61 GitHub release and keeps the build placeholder",
+    "source manifest targets the exact 0.25.63 GitHub release and keeps the build placeholder",
     manifest.get("latest_version") == RELEASE_VERSION
     and manifest.get("version") == RELEASE_VERSION
     and manifest.get("codename") == RELEASE_CODENAME
@@ -114,24 +114,24 @@ check(
     and "def sha256" in text("tools/write_update_manifest.py"),
 )
 check(
-    "runtime, launcher, diagnostics and system status target 0.25.61",
-    'FastAPI(title="OPS ROOM", version="0.25.61")' in main_text
-    and '"version": "0.25.61"' in main_text
-    and '"0.25.61"' in system_status_text
-    and "Starting OPS ROOM 0.25.61" in launcher_text
-    and "version:'0.25.61'" in ui,
+    "runtime, launcher, diagnostics and system status target 0.25.63",
+    'FastAPI(title="OPS ROOM", version="0.25.63")' in main_text
+    and '"version": "0.25.63"' in main_text
+    and '"0.25.63"' in system_status_text
+    and "Starting OPS ROOM 0.25.63" in launcher_text
+    and "version:'0.25.63'" in ui,
 )
 check(
-    "updater default stays on the public raw main manifest and 0.25.61 fallback",
-    DEFAULT_MANIFEST_URL in updater_text and 'DEFAULT_VERSION = "0.25.61"' in updater_text,
+    "updater default stays on the public raw main manifest and 0.25.63 fallback",
+    DEFAULT_MANIFEST_URL in updater_text and 'DEFAULT_VERSION = "0.25.63"' in updater_text,
 )
 check("short temp roots are intermediates only (OR250)", "%TEMP%\\OR250" in complete and "%TEMP%\\OR250" in windows and "%TEMP%\\OR250" in camera)
 check(
     "build scripts agree on the public package and stable manifest channel",
     complete.count(PACKAGE_NAME) >= 3
     and windows.count(PACKAGE_NAME) >= 3
-    and "--version 0.25.61 --channel stable" in complete
-    and "--version 0.25.61 --channel stable" in windows,
+    and "--version 0.25.63 --channel stable" in complete
+    and "--version 0.25.63 --channel stable" in windows,
 )
 check("PMDG EULA is bundled by PyInstaller", "PMDG_777_SDK_EULA.txt" in spec_text and (ROOT / "PMDG_777_SDK_EULA.txt").stat().st_size > 10000)
 check("adapter schema version stays at 0.24.106 (catalogue schema BC-preserving)", text("app/aircraft_adapter_installer.py").count('ADAPTER_VERSION = "0.24.106"') >= 1)
@@ -169,17 +169,17 @@ check(
 # Public UI identity, cache invalidation and distributable documentation
 # ---------------------------------------------------------------------------
 check(
-    "all visible UI release labels and cache-busters use 0.25.61 public identity",
-    "OPS ROOM 0.25.61 PUBLIC RELEASE" in html
-    and html.count("v=0-25-61") == 4
-    and ("<strong>0.25.61</strong>" in host_html or '<strong class="build">0.25.61</strong>' in host_html)
-    and host_html.count("v=0-25-61") == 2
-    and "OPS ROOM 0.25.61" in pirep_html
-    and pirep_html.count("v=0-25-61") == 2
-    and "OPS ROOM 0.25.61" in pirep_print_css
-    and "OPS ROOM 0.25.61" in pirep_print_js
-    and "0.25.61" in scoring_rules_html
-    and service_worker.startswith("// OPS ROOM 0.25.61:"),
+    "all visible UI release labels and cache-busters use 0.25.63 public identity",
+    "OPS ROOM 0.25.63 PUBLIC RELEASE" in html
+    and html.count("v=0-25-63") == 4
+    and ("<strong>0.25.63</strong>" in host_html or '<strong class="build">0.25.63</strong>' in host_html)
+    and host_html.count("v=0-25-63") == 2
+    and "OPS ROOM 0.25.63" in pirep_html
+    and pirep_html.count("v=0-25-63") == 2
+    and "OPS ROOM 0.25.63" in pirep_print_css
+    and "OPS ROOM 0.25.63" in pirep_print_js
+    and "0.25.63" in scoring_rules_html
+    and service_worker.startswith("// OPS ROOM 0.25.63:"),
 )
 check(
     "public release-note inputs are concise, identical and free of historical version or development language",
@@ -189,8 +189,8 @@ check(
 )
 check(
     "distributed README inputs are public user guidance without stale release/developer handoff text",
-    "0.25.61" in readme_md
-    and "0.25.61" in readme_txt
+    "0.25.63" in readme_md
+    and "0.25.63" in readme_txt
     and all(token not in (readme_md + readme_txt).lower() for token in ("source-ready", "development handoff", "v0.24.")),
 )
 
@@ -542,10 +542,10 @@ if ARGS.dist:
             packaged_version = json.loads(archive.read("OPS ROOM/_internal/version.json").decode("utf-8"))
             packaged_index = archive.read("OPS ROOM/_internal/app/static/index.html").decode("utf-8")
             check(
-                "ZIP embeds the 0.25.61 public identity and cache-busted UI",
+                "ZIP embeds the 0.25.63 public identity and cache-busted UI",
                 packaged_version == version
-    and "OPS ROOM 0.25.61 PUBLIC RELEASE" in packaged_index
-    and packaged_index.count("v=0-25-61") == 4,
+    and "OPS ROOM 0.25.63 PUBLIC RELEASE" in packaged_index
+    and packaged_index.count("v=0-25-63") == 4,
             )
     except Exception as exc:
         check("generated ZIP integrity and required updater/runtime files", False, f"{type(exc).__name__}: {exc}")

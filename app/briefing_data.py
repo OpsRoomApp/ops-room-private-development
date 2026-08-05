@@ -15,6 +15,8 @@ import requests
 from .settings_store import load_settings
 from .simbrief_client import cached_ofp_file, cached_plan, ofp_cache_filename
 from . import nms_client
+from . import notam_client  # v0.25.63: server-side NOTAM store client (DB-first)
+from . import notam_translate  # v0.25.63: plain-English NOTAM expansion
 
 _LOCK = threading.RLock()
 _CACHE: dict[str, Any] | None = None
@@ -511,10 +513,22 @@ def _nms_live_briefing(plan: dict[str, Any]) -> dict[str, Any]:
         ]
         if not origin and not destination:
             return empty
-        package = nms_client.route_notams(origin, destination, alternates)
+        # v0.25.63: database first (server-side NOTAM store -- zero FAA
+        # quota), with the proxy client as the fallback while the store is
+        # still deploying.
+        package = notam_client.route_notams(origin, destination, alternates)
+        if not package.get("ok"):
+            package = nms_client.route_notams(origin, destination, alternates)
         if not package.get("ok"):
             return {"ok": False, "enabled": True, "notams": [], "groups": {}, "sources": [], "state": "unavailable", "error": package.get("error")}
         rows = package.get("notams") or []
+        # v0.25.63: plain-English expansion for display only; the raw ICAO text
+        # stays available on each row for anyone who wants the original.
+        for row in rows:
+            if isinstance(row, dict):
+                translated = notam_translate.expand(row.get("text"))
+                if translated.strip() != str(row.get("text") or "").strip():
+                    row["translated_text"] = translated
         return {
             "ok": True,
             "enabled": True,

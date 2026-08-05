@@ -11,6 +11,8 @@ from .simbrief_client import cached_plan
 from .simconnect_position import read_position
 from .vatsim_client import get_vatsim_data
 from .weather_client import fetch_metar
+from .notam_client import get_notams as _notam_get  # v0.25.63: closure badges
+from . import notam_translate  # v0.25.63: closure keyword check
 
 AIRCRAFT_PROFILES: dict[str, dict[str, Any]] = {
     "ga": {"label": "GENERAL AVIATION", "speed": 125, "overhead": 12, "types": {"small_airport", "medium_airport", "large_airport"}, "max_nm": 650, "simbrief_type": "C172", "flight_level": 100},
@@ -150,6 +152,35 @@ def _weather_score(weather: dict[str, Any], preference: str) -> tuple[float, boo
     return (8.0 if category == "VFR" else 7.0 if category == "MVFR" else 6.0 if category else 3.0), True, category or "UNKNOWN"
 
 
+def _notam_closure_map(icaos: list[str]) -> dict[str, bool]:
+    """Best-effort per-ICAO closure flag (RWY/TWY + CLSD/CLOSED keyword check).
+
+    Runs concurrently with a hard cap so the NMS proxy path is not hammered
+    before the server-side DB goes live (the DB path costs zero quota).
+    """
+    unique: list[str] = []
+    for code in icaos:
+        code = str(code or "").strip().upper()
+        if len(code) == 4 and code not in unique:
+            unique.append(code)
+    results: dict[str, bool] = {code: False for code in unique}
+    if not unique:
+        return results
+
+    def _check(code: str) -> None:
+        try:
+            package = _notam_get(code)
+            rows = package.get("notams") or []
+            results[code] = any(notam_translate.is_closure_notam(r.get("text") or "") for r in rows if isinstance(r, dict))
+        except Exception:
+            results[code] = False
+
+    with ThreadPoolExecutor(max_workers=min(6, max(1, len(unique)))) as pool:
+        for _ in pool.map(_check, unique):
+            pass
+    return results
+
+
 def discover_routes(
     *,
     origin: str = "",
@@ -249,6 +280,18 @@ def discover_routes(
         row["reasons"] = reasons[:4]
         final.append(row)
     final.sort(key=lambda row: (-row["score"], abs(row["duration_delta_minutes"]), row["destination"]))
+
+    # v0.25.63: badge route cards when origin/destination has closure-relevant
+    # NOTAMs. Additive signal only -- it never filters a route.
+    if final:
+        closure_map = _notam_closure_map([origin_airport.ident] + [row["destination"] for row in final[:6]])
+        for row in final:
+            flags: list[str] = []
+            if closure_map.get(str(row.get("origin") or "").upper()):
+                flags.append("DEPARTURE CLOSURE")
+            if closure_map.get(str(row.get("destination") or "").upper()):
+                flags.append("ARRIVAL CLOSURE")
+            row["notam_alert"] = flags
 
     timestamp = data.get("general", {}).get("update_timestamp") if isinstance(data.get("general"), dict) else None
     return {

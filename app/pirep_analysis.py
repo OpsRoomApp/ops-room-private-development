@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import logging
 import math
+from datetime import datetime
 from statistics import median
 from typing import Any
 
 from . import navdata
+from . import notam_client  # v0.25.63: PIREP NOTAM conditions footnote
+from . import notam_translate  # v0.25.63: plain-English expansion
 
 _LOG = logging.getLogger("opsroom.pirep")
 
@@ -240,6 +243,54 @@ def _sample_time(row: dict[str, Any]) -> float | None:
         if value is not None:
             return value
     return None
+
+
+def _pirep_notam_footnote(dep_airport: str, arr_airport: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Active-window NOTAMs for departure/arrival, persisted with the PIREP
+    record as a small 'conditions' section (v0.25.63).
+
+    Uses the flight's actual recorded time window so a NOTAM cancelled after
+    the flight is still included (history), and one that expired before the
+    flight is excluded. Best-effort -- never raises.
+    """
+    if not rows:
+        return []
+    start = _sample_time(rows[0]) or 0.0
+    end = _sample_time(rows[-1]) or start
+    items: list[dict[str, Any]] = []
+    for code in (str(dep_airport or "").upper(), str(arr_airport or "").upper()):
+        if len(code) != 4 or not code.isalpha():
+            continue
+        try:
+            package = notam_client.get_notams(code)
+        except Exception:
+            continue
+        for row in package.get("notams") or []:
+            effective = str(row.get("effective_utc") or "")
+            expires = str(row.get("expires_utc") or "")
+            try:
+                if effective and end:
+                    if datetime.fromisoformat(effective.replace("Z", "+00:00")).timestamp() > end:
+                        continue
+            except ValueError:
+                pass
+            try:
+                if expires and expires.upper() != "PERM" and start:
+                    if datetime.fromisoformat(expires.replace("Z", "+00:00")).timestamp() < start:
+                        continue
+            except ValueError:
+                pass
+            items.append(
+                {
+                    "icao": code,
+                    "id": row.get("id"),
+                    "classification": row.get("classification"),
+                    "text": notam_translate.expand(row.get("text") or ""),
+                    "effective_utc": effective or None,
+                    "expires_utc": None if expires.upper() == "PERM" else (expires or None),
+                }
+            )
+    return items[:24]
 
 
 def _sanitize_samples(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -612,6 +663,8 @@ def analyse_pirep(meta: dict[str, Any], samples: list[dict[str, Any]]) -> dict[s
     arr_airport = str(flight_meta.get("destination") or ((meta.get("airports") or {}).get("landing") or {}).get("icao") or "").upper()
     dep_rwy_name = str(flight_meta.get("departure_runway") or "").upper()
     arr_rwy_name = str(flight_meta.get("arrival_runway") or "").upper()
+    # v0.25.63: NOTAM conditions footnote for the PIREP record (dep/arr only).
+    notam_footnote = _pirep_notam_footnote(dep_airport, arr_airport, rows)
     liftoff = rows[takeoff_idx]
     dep_nav, dep_geometry_source = _select_runway_end(dep_airport, dep_rwy_name, liftoff, departure_heading, max_nm=8.0)
     if dep_nav:
@@ -850,6 +903,7 @@ def analyse_pirep(meta: dict[str, Any], samples: list[dict[str, Any]]) -> dict[s
         "ok": True,
         "version": ANALYSIS_VERSION,
         "geometry_source": geometry_source,
+        "notams": notam_footnote,
         "departure": {
             "runway": dep_rwy_label,
             "opposite_runway": _opposite_runway(dep_nav),

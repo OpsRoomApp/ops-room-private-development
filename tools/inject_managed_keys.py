@@ -8,6 +8,8 @@ from pathlib import Path
 DEFAULT_PRIVATE_KEY_PATH = r"E:\Ops Room Project\private_keys\opsroom_api_keys.local.json"
 ALLOWED_KEYS = {
     "openaip_key",
+    "openaip_proxy_url",
+    "openaip_proxy_token",
     "lido_subscription_key",
     "lido_charts_subscription_key",
     "lido_library_code",

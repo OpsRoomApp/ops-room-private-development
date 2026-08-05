@@ -21,6 +21,7 @@ from .simconnect_position import read_position, simconnect_diagnostics, radio_st
 from .vatsim_client import get_vatsim_data, CACHE_SECONDS
 from .weather_client import fetch_metar, fetch_realworld_atis
 from . import nms_client
+from . import notam_client  # v0.25.63: server-side NOTAM store client (DB-first)
 from .realworld import router as realworld_router, _DEBUG_ROUTER as realworld_debug_router, start_background_refresh
 from .camera_state import get_target, set_target, set_view as set_camera_view_state, reset_view as reset_camera_view_state, release_camera as release_camera_state
 from .scratchpad import scratchpad_status, scratchpad_get_page, scratchpad_save_page, scratchpad_clear_page
@@ -102,7 +103,7 @@ from .logbook import (
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="OPS ROOM", version="0.25.61")
+app = FastAPI(title="OPS ROOM", version="0.25.63")
 app.include_router(realworld_router)
 app.include_router(realworld_debug_router)
 app.add_middleware(GZipMiddleware, minimum_size=512)
@@ -943,10 +944,14 @@ def nms_notams_get(
     classification: str = "",
     feature: str = "",
 ) -> dict:
+    # v0.25.63: database first (server-side NOTAM store, zero FAA quota),
+    # proxy fallback inside notam_client. The geo branch returns GeoJSON
+    # features shaped for the Live Map layer; the location branch returns
+    # briefing rows shaped for the NOTAM cards.
     if location:
-        return nms_client.fetch_notams_by_location(location, classification=classification, feature=feature)
+        return notam_client.get_notams(location, classification=classification, feature=feature)
     if latitude is not None and longitude is not None and radius is not None:
-        return nms_client.fetch_notams_by_geo(latitude, longitude, radius)
+        return notam_client.get_notams_map(float(latitude), float(longitude), float(radius))
     return {"ok": False, "error": "Provide a location, or latitude+longitude+radius."}
 
 
@@ -985,16 +990,23 @@ _NMS_TFR_POLL_SECONDS = 60.0
 
 
 def _nms_tfr_candidate(feature: dict) -> bool:
-    """True when a GeoJSON feature is a real TFR / restricted / prohibited /
-    danger area -- NOT every FDC NOTAM (routine procedure changes are common
-    and must never trigger a critical alert)."""
+    """True when a NOTAM is a real TFR / restricted / prohibited / danger
+    area -- NOT every FDC NOTAM (routine procedure changes are common and
+    must never trigger a critical alert). Accepts either a raw GeoJSON
+    feature or a normalized DB/briefing row (flat dict)."""
     try:
-        props = feature.get("properties") or {}
-        core = props.get("coreNOTAMData") or {}
-        notam = core.get("notam") or {}
-        classification = str(notam.get("classification") or "").upper()
-        selection = str(notam.get("selectionCode") or "").upper()
-        text = str(notam.get("text") or "").upper()
+        if "properties" in feature or "geometry" in feature:
+            props = feature.get("properties") or {}
+            core = props.get("coreNOTAMData") or {}
+            notam = core.get("notam") or {}
+            classification = str(notam.get("classification") or props.get("classification") or "").upper()
+            selection = str(notam.get("selectionCode") or props.get("selectionCode") or "").upper()
+            text = str(notam.get("text") or props.get("text") or "").upper()
+        else:
+            # Flat normalized row (DB or proxy-normalized briefing shape).
+            classification = str(feature.get("classification") or "").upper()
+            selection = str(feature.get("qcode") or feature.get("qcode_subject") or "").upper()
+            text = str(feature.get("text") or "").upper()
         airspace_signal = selection.startswith("QRT") or any(
             token in text for token in ("TFR", "RESTRICTED AREA", "PROHIBITED AREA", "DANGER AREA", "TEMPORARY FLIGHT RESTRICTION")
         )
@@ -1017,19 +1029,16 @@ def _nms_tfr_alert_loop() -> None:
                 lat = pos.get("lat")
                 lon = pos.get("lon")
                 if pos.get("ok") and lat is not None and lon is not None:
-                    result = nms_client.fetch_notams_by_geo(float(lat), float(lon), float(cfg.get("radius_nm") or 25))
+                    result = notam_client.get_notams_near(float(lat), float(lon), float(cfg.get("radius_nm") or 25))
                     if result.get("ok"):
-                        for feature in result.get("features") or []:
-                            if not _nms_tfr_candidate(feature):
+                        for row in result.get("notams") or []:
+                            if not _nms_tfr_candidate(row):
                                 continue
                             try:
-                                props = feature.get("properties") or {}
-                                core = props.get("coreNOTAMData") or {}
-                                notam = core.get("notam") or {}
-                                nms_id = str(notam.get("id") or "").strip()
-                                ident = str(notam.get("number") or notam.get("id") or "TFR").strip()
-                                text = str(notam.get("text") or "").strip()
-                                location = str(notam.get("icaoLocation") or notam.get("location") or "").strip()
+                                nms_id = str(row.get("nms_id") or "").strip()
+                                ident = str(row.get("id") or row.get("identifier") or "TFR").strip()
+                                text = str(row.get("text") or "").strip()
+                                location = str(row.get("location") or "").strip()
                                 if not nms_id:
                                     continue
                                 with _NMS_TFR_SEEN_LOCK:
@@ -2404,7 +2413,7 @@ def server_qr(request: Request) -> Response:
 def health() -> dict:
     return {
         "ok": True,
-        "version": "0.25.61",
+        "version": "0.25.63",
         "product": "OPS ROOM",
         "refresh_seconds": CACHE_SECONDS,
         "simconnect": simconnect_diagnostics(),
@@ -2429,7 +2438,7 @@ async def frontend_log(request: Request) -> dict:
             "page": str(payload.get("page") or "")[:80],
             "detail": str(payload.get("detail") or "")[:1200],
             "href": str(payload.get("href") or "")[:500],
-            "version": str(payload.get("version") or "0.25.61")[:40],
+            "version": str(payload.get("version") or "0.25.63")[:40],
         }
         with (log_dir / "frontend_errors.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")

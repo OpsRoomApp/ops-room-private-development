@@ -1,9 +1,9 @@
-# OPS ROOM 0.25.61
+# OPS ROOM 0.25.63
 
-OPS ROOM 0.25.61 brings live, real-world NOTAMs into the briefing, on top of
+OPS ROOM 0.25.63 brings live, real-world NOTAMs into the briefing, on top of
 the reliability hardening from the 0.25.60 pass.
 
-## 0.25.61: Live NOTAMs
+## 0.25.63: Live NOTAMs
 
 - The Briefing → NOTAMs tab now prefers **live FAA NMS NOTAMs** whenever the
   live service is reachable, with a source selector: **Live / Flight plan /
@@ -34,7 +34,7 @@ the reliability hardening from the 0.25.60 pass.
 - Status Board advisories are crash-proofed and show up to three departure and
   three arrival route NOTAMs from the loaded flight plan.
 
-## 0.25.61 verified scope
+## 0.25.63 verified scope
 
 - Live NOTAM source selector, briefing enrichment and Status Board live rows.
 - TFR/FDC proximity alerting (opt-in).

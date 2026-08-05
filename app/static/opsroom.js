@@ -421,7 +421,7 @@ async function safeJsonResponse(response){
 
 function reportFrontendError(source, detail){
   try{
-    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.61', ts:new Date().toISOString()};
+    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.63', ts:new Date().toISOString()};
     lastFrontendError = payload.detail;
     navigator.sendBeacon?.('/api/frontend/log', new Blob([JSON.stringify(payload)], {type:'application/json'})) || fetch('/api/frontend/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true}).catch(()=>{});
   }catch(_){ }
@@ -1095,7 +1095,10 @@ function briefingNoticeCard(item){
   // v0.25.60: source chip distinguishes live FAA NMS rows from flight-plan rows.
   const src=String(item.source||'').toUpperCase();
   const sourceChip=src==='FAA NMS'?`<i class="briefing-source-chip live">LIVE</i>`:(src?`<i class="briefing-source-chip">${escapeHtml(src)}</i>`:'');
-  return `<article class="briefing-notice" data-notam-scope="${escapeHtml(item.scope_key||'enroute')}"><header><div><strong>${escapeHtml(item.id||'NOTICE')}</strong><small>${escapeHtml(item.scope||item.location||'Flight briefing')}</small></div><span>${escapeHtml(item.location_name||item.location||item.source||'SIMBRIEF')}</span></header>${(badges.length||sourceChip)?`<div class="briefing-notice-badges">${sourceChip}${badges.map(x=>`<i>${escapeHtml(x)}</i>`).join('')}</div>`:''}<pre>${escapeHtml(item.text||'')}</pre>${validity.length||item.schedule?`<footer><span>${escapeHtml(validity.join(' · '))}</span>${item.schedule?`<span>${escapeHtml(item.schedule)}</span>`:''}</footer>`:''}${item.raw&&item.raw.trim()!==String(item.text||'').trim()?`<details><summary>RAW ICAO NOTAM</summary><pre>${escapeHtml(item.raw)}</pre></details>`:''}</article>`;
+  // v0.25.63: plain-English expansion when available; raw ICAO always kept.
+  const body = item.translated_text || item.text || '';
+  const showRaw = item.raw && (item.translated_text || item.raw.trim() !== String(item.text||'').trim());
+  return `<article class="briefing-notice" data-notam-scope="${escapeHtml(item.scope_key||'enroute')}"><header><div><strong>${escapeHtml(item.id||'NOTICE')}</strong><small>${escapeHtml(item.scope||item.location||'Flight briefing')}</small></div><span>${escapeHtml(item.location_name||item.location||item.source||'SIMBRIEF')}</span></header>${(badges.length||sourceChip)?`<div class="briefing-notice-badges">${sourceChip}${item.translated_text?`<i class="briefing-source-chip plain">PLAIN ENGLISH</i>`:''}${badges.map(x=>`<i>${escapeHtml(x)}</i>`).join('')}</div>`:''}<pre>${escapeHtml(body)}</pre>${validity.length||item.schedule?`<footer><span>${escapeHtml(validity.join(' · '))}</span>${item.schedule?`<span>${escapeHtml(item.schedule)}</span>`:''}</footer>`:''}${showRaw?`<details><summary>RAW ICAO NOTAM</summary><pre>${escapeHtml(item.raw)}</pre></details>`:''}</article>`;
 }
 function briefingNotices(rows,emptyText){
   const items=Array.isArray(rows)?rows:[];
@@ -3010,6 +3013,7 @@ function renderDispatch(data){
       </div>
       <div class="dispatch-weather"><span>METAR</span><b>${escapeHtml(wx)}</b></div>
       <div class="dispatch-reasons">${reasons || '<span>TIME MATCH</span>'}</div>
+      ${(row.notam_alert&&row.notam_alert.length)?`<div class="dispatch-notam-alert"><span>NOTAM</span><b>${escapeHtml(row.notam_alert.join(' · '))}</b></div>`:''}
       <div class="dispatch-actions"><button type="button" data-select-route="${index}">SELECT ROUTE</button><a href="/vatsim-fids?airport=${encodeURIComponent(row.destination)}" target="_blank" rel="noreferrer">VIEW FIDS</a><a href="${escapeHtml(simbriefDispatchUrl(row))}" target="_blank" rel="noreferrer">OPEN SIMBRIEF</a></div>
     </article>`;
   }).join('');
@@ -4185,7 +4189,7 @@ function boundaryFeature(item){
   const minLon=Number(item.min_lon),minLat=Number(item.min_lat),maxLon=Number(item.max_lon),maxLat=Number(item.max_lat);
   if(![minLon,minLat,maxLon,maxLat].every(Number.isFinite)||minLon===maxLon||minLat===maxLat)return null;
   const pts=[[minLon,minLat],[maxLon,minLat],[maxLon,maxLat],[minLon,maxLat],[minLon,minLat]].map(p=>ol.proj.fromLonLat(p));
-  return new ol.Feature({geometry:new ol.geom.Polygon([pts]),label:item.name||item.type||'BOUNDARY',title:`BOUNDARY ${item.name||item.type||''}`});
+  return new ol.Feature({geometry:new ol.geom.Polygon([pts]),label:item.name||item.type||'BOUNDARY',title:`BOUNDARY ${item.name||item.type||''}${item.source==='openaip'?' · SOURCE: OpenAIP':''}`});
 }
 async function maybeAutoLoadAirportSurface(items,zoom){
   const surfaceEnabled=mapLayerChecked('mapLayerSurface',true)||mapLayerChecked('mapLayerRunways',true);
@@ -4235,10 +4239,12 @@ async function refreshAviationLayers(){
     if(boundaryOn&&zoom>=5){
       const r=await fetch(`/api/livemap/layers/airspaces?bbox=${encodeURIComponent(bbox)}&limit=900`,{cache:'no-store'});const d=await r.json();const boundarySrc=olBoundaryLayer.getSource();boundarySrc.clear();
       (d.items||[]).forEach(item=>{const f=boundaryFeature(item);if(f)boundarySrc.addFeature(f)});
-    } else olBoundaryLayer?.getSource()?.clear();
+      if(d.source==='openaip'||d.source==='mixed'){olBoundaryLayer.getSource().setAttributions('Airspace © OpenAIP (CC BY-NC)');updateMapAviationStatus(`OPENAIP BOUNDARIES: ${Number(d.openaip?.count||0)} AIRSPACES${d.openaip?.local_count?` + LOCAL ${Number(d.openaip.local_count)}`:''}`)}
+      else olBoundaryLayer.getSource().setAttributions([]);
+    } else {olBoundaryLayer?.getSource()?.clear();olBoundaryLayer?.getSource()?.setAttributions([])}
     // v0.25.60: keep the live NOTAM layer in sync with the viewport (only
     // fires when the NOTAMS layer toggle is on).
-    if(mapLayerChecked('mapLayerNotams',false))await loadNotamLayer();
+    if(mapLayerChecked('mapLayerNotams',false)){try{await loadNotamLayer()}catch(e){console.warn('NOTAM layer:',e)}}
     await maybeAutoLoadAirportSurface(airportItems,zoom);
     if(!mapSurfaceLoadingIcao&&$('mapAviationStatus')?.textContent?.startsWith('LOADING'))updateMapAviationStatus(mapSurfaceStatusText());
   }catch(e){updateMapAviationStatus(`AVIATION LAYERS LIMITED: ${friendlyError(e.message)}`)}
@@ -4389,8 +4395,8 @@ function saveMapView(){
 function initOnlineMap(){
   if(olMap||!window.ol)return;
   const initial=restoreMapView();
-  olRasterFallbackLayer=new ol.layer.Tile({source:new ol.source.OSM({crossOrigin:'anonymous'}),opacity:.48,zIndex:-1,visible:true});
-  olBaseLayer=new ol.layer.VectorTile({source:new ol.source.VectorTile({format:new ol.format.MVT(),url:'/api/map/tile/{z}/{x}/{y}.mvt',maxZoom:15}),style:baseMapStyle,zIndex:0,visible:true});
+  olRasterFallbackLayer=new ol.layer.Tile({source:new ol.source.OSM({crossOrigin:'anonymous',attributions:[]}),opacity:.48,zIndex:-1,visible:true});
+  olBaseLayer=new ol.layer.VectorTile({source:new ol.source.VectorTile({format:new ol.format.MVT(),url:'/api/map/tile/{z}/{x}/{y}.mvt',maxZoom:15,attributions:'© Protomaps · © OpenStreetMap contributors'}),style:baseMapStyle,zIndex:0,visible:true});
   olCoverageLayer=makeVectorLayer(coverageStyle,8);
   olRouteLayer=makeVectorLayer(new ol.style.Style({stroke:new ol.style.Stroke({color:'#70d4e5',width:2.7,lineDash:[10,6]})}),10);
   olRouteAirportLayer=makeVectorLayer(airportStyle,20,{declutter:true});
@@ -4408,7 +4414,7 @@ function initOnlineMap(){
   olTaxiSurfaceLayer=new ol.layer.Vector({source:new ol.source.Vector({wrapX:false}),style:taxiSurfaceStyle,zIndex:33,renderMode:'vector',renderBuffer:1200,updateWhileAnimating:true,updateWhileInteracting:true});
   olSurfaceLayer=olTaxiSurfaceLayer;
   olSurfaceLabelLayer=makeVectorLayer(surfaceLabelStyle,35,{declutter:true,updateWhileAnimating:true,updateWhileInteracting:true});
-  olMap=new ol.Map({target:'liveMap',layers:[olRasterFallbackLayer,olBaseLayer,olBoundaryLayer,olNotamLayer,olAirwayLayer,olCoverageLayer,olRouteLayer,olTaxiSurfaceLayer,olRunwaySurfaceLayer,olSurfaceLabelLayer,olAirportLayer,olRouteAirportLayer,olWaypointLayer,olNavaidLayer,olControllerLayer,olTrafficLayer,olOwnshipLayer],view:new ol.View({center:initial.center,zoom:initial.zoom,minZoom:2,maxZoom:19,enableRotation:true,rotation:initial.rotation||0}),controls:ol.control.defaults.defaults({attribution:false,zoom:true,rotate:true})});
+  olMap=new ol.Map({target:'liveMap',layers:[olRasterFallbackLayer,olBaseLayer,olBoundaryLayer,olNotamLayer,olAirwayLayer,olCoverageLayer,olRouteLayer,olTaxiSurfaceLayer,olRunwaySurfaceLayer,olSurfaceLabelLayer,olAirportLayer,olRouteAirportLayer,olWaypointLayer,olNavaidLayer,olControllerLayer,olTrafficLayer,olOwnshipLayer],view:new ol.View({center:initial.center,zoom:initial.zoom,minZoom:2,maxZoom:19,enableRotation:true,rotation:initial.rotation||0}),controls:ol.control.defaults.defaults({attribution:false,zoom:true,rotate:true}).extend([new ol.control.Attribution({collapsible:false})])});
   mapAutoFramePending=!mapHasStoredView;
   olMap.on('moveend',()=>{saveMapView();});
   olMap.on('singleclick',event=>{
