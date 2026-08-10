@@ -15,8 +15,8 @@ import requests
 from .settings_store import load_settings
 from .simbrief_client import cached_ofp_file, cached_plan, ofp_cache_filename
 from . import nms_client
-from . import notam_client  # v0.25.63: server-side NOTAM store client (DB-first)
-from . import notam_translate  # v0.25.63: plain-English NOTAM expansion
+from . import notam_client  # v0.25.65: server-side NOTAM store client (DB-first)
+from . import notam_translate  # v0.25.65: plain-English NOTAM expansion
 
 _LOCK = threading.RLock()
 _CACHE: dict[str, Any] | None = None
@@ -24,7 +24,18 @@ _CACHE_MONO = 0.0
 _CACHE_KEY = ""
 _CACHE_TTL = 300.0
 _PAGE_CACHE: dict[tuple[str, int, int], bytes] = {}
-_USER_AGENT = "OPS ROOM/0.24.107 flight briefing"
+
+
+def _app_version() -> str:
+    """v0.25.67: user-agent version comes from version.json, never a stale literal."""
+    try:
+        raw = (Path(__file__).resolve().parent.parent / "version.json").read_text(encoding="utf-8")
+        return str(json.loads(raw).get("version") or "0.25.73")
+    except Exception:  # pragma: no cover - defensive version read
+        return "0.25.73"
+
+
+_USER_AGENT = f"OPS ROOM/{_app_version()} flight briefing"
 
 _NOTAM_ID = re.compile(r"^(?P<id>[A-Z]{1,2}\d{3,4}/\d{2})\b", re.I)
 
@@ -499,12 +510,12 @@ def _nms_live_briefing(plan: dict[str, Any]) -> dict[str, Any]:
     ``{"ok": False}`` -- the frontend keeps the flight-plan NOTAMs.
     """
     empty = {"ok": False, "enabled": False, "notams": [], "groups": {}, "sources": [], "state": "disabled"}
-    # v0.25.60: NMS config is env-driven (OPSROOM_NMS_*); there is no
-    # settings-store block so briefing_data.py stays release-baseline-safe.
-    if not nms_client.nms_enabled():
-        return empty
-    if not nms_client.nms_configured():
-        return empty
+    # v0.25.68: the server-side NOTAM store (opsroom.live) is PUBLIC -- it
+    # needs no OPSROOM_NMS_TOKEN, so the DB-first live enrichment runs even
+    # when the NMS proxy integration is unconfigured. Only the NMS *proxy*
+    # fallback (when the store is unreachable) still requires the token;
+    # without one it degrades to the unavailable state instead of silently
+    # showing 0 live NOTAMs (the v0.25.68 regression the user hit).
     try:
         origin = (plan.get("origin") or {}).get("icao") or ""
         destination = (plan.get("destination") or {}).get("icao") or ""
@@ -513,16 +524,26 @@ def _nms_live_briefing(plan: dict[str, Any]) -> dict[str, Any]:
         ]
         if not origin and not destination:
             return empty
-        # v0.25.63: database first (server-side NOTAM store -- zero FAA
+        # v0.25.65: database first (server-side NOTAM store -- zero FAA
         # quota), with the proxy client as the fallback while the store is
-        # still deploying.
+        # still deploying. v0.25.68: the proxy fallback is gated on the NMS
+        # token being configured -- calling it without one just wastes a
+        # request and returns the same unavailable state.
         package = notam_client.route_notams(origin, destination, alternates)
-        if not package.get("ok"):
+        # v0.25.68: route_notams reports total failure as ok=True with
+        # state="unavailable" (never ok=False once codes exist), so gate the
+        # NMS proxy fallback on state too -- otherwise it is unreachable and
+        # a store outage would silently show 0 live NOTAMs on release day.
+        if (
+            (not package.get("ok") or package.get("state") == "unavailable" or not package.get("notams"))
+            and nms_client.nms_enabled()
+            and nms_client.nms_configured()
+        ):
             package = nms_client.route_notams(origin, destination, alternates)
-        if not package.get("ok"):
+        if not package.get("ok") or (package.get("state") == "unavailable" and not package.get("notams")):
             return {"ok": False, "enabled": True, "notams": [], "groups": {}, "sources": [], "state": "unavailable", "error": package.get("error")}
         rows = package.get("notams") or []
-        # v0.25.63: plain-English expansion for display only; the raw ICAO text
+        # v0.25.65: plain-English expansion for display only; the raw ICAO text
         # stays available on each row for anyone who wants the original.
         for row in rows:
             if isinstance(row, dict):
@@ -542,11 +563,66 @@ def _nms_live_briefing(plan: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "enabled": True, "notams": [], "groups": {}, "sources": [], "state": "unavailable", "error": type(exc).__name__}
 
 
+def _geo_only_briefing() -> dict[str, Any]:
+    """Position-based NOTAM briefing for when no SimBrief OFP is loaded.
+
+    v0.25.67: reads the user aircraft position and returns NOTAMs within the
+    closure-marker radius (same geo pipeline the deploy control uses), so the
+    Briefing -> NOTAMS tab is never silently empty without an OFP. Returns
+    the exact ``operational_briefing`` shape; the OFP-less fallback keeps the
+    original reason when the simulator has no position.
+    """
+    empty = {"ok": False, "reason": "No SimBrief OFP is loaded", "notams": [], "notam_groups": {},
+             "notams_live": [], "notam_groups_live": {}, "notams_live_state": {"enabled": False, "state": "disabled", "count": 0},
+             "hazards": {"sections": []}, "sigmets": [], "sigwx": {"charts": []}, "charts": [], "sources": []}
+    try:
+        from . import notam_client, simconnect_position
+
+        pos = simconnect_position.read_position(force=False)
+        if not isinstance(pos, dict) or not pos.get("ok"):
+            return empty
+        radius = 50.0
+        try:
+            from . import closure_markers
+
+            radius = closure_markers.marker_radius_nm()
+        except Exception:  # pragma: no cover - defensive
+            pass
+        result = notam_client.get_notams_near(float(pos.get("lat") or 0.0), float(pos.get("lon") or 0.0), radius)
+        rows = result.get("notams") if isinstance(result, dict) else None
+        if not rows:
+            return empty
+        source = {"name": "aircraft-position geo NOTAMs", "state": "ok", "notams": len(rows),
+                  "sigmets": 0, "sigwx": 0, "charts": 0, "updates": {}, "generated_utc": None}
+        return {
+            "ok": True,
+            "reason": "No SimBrief OFP loaded - showing NOTAMs near the aircraft position",
+            "flight": None,
+            "notams": rows,
+            "notam_groups": _notam_group_counts(rows),
+            "notams_live": rows,
+            "notam_groups_live": _notam_group_counts(rows),
+            "notams_live_state": {"enabled": False, "state": "ok", "count": len(rows)},
+            "hazards": {"sections": []},
+            "sigmets": [],
+            "sigwx": {"charts": []},
+            "charts": [],
+            "sources": [source],
+        }
+    except Exception as exc:  # pragma: no cover - defensive status path
+        empty["reason"] = f"No SimBrief OFP is loaded ({type(exc).__name__})"
+        return empty
+
+
 def operational_briefing(force: bool = False) -> dict[str, Any]:
     global _CACHE, _CACHE_MONO, _CACHE_KEY
     plan = _current_plan()
     if not plan:
-        return {"ok": False, "reason": "No SimBrief OFP is loaded", "notams": [], "hazards": {"sections": []}, "sigmets": [], "sigwx": {"charts": []}, "charts": [], "sources": []}
+        # v0.25.67: without a loaded SimBrief OFP the Briefing -> NOTAMS tab
+        # used to show 0 NOTAMs even while the aircraft sat at an airport
+        # with active closures (and the closure-marker deploy was empty with
+        # it). Fall back to position-based NOTAMs so both stay useful.
+        return _geo_only_briefing()
 
     cache_key = _plan_fingerprint(plan)
     now = time.monotonic()

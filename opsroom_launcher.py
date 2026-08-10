@@ -173,10 +173,21 @@ class ServerThread(threading.Thread):
                 port=self.port,
                 log_level=self._log_level,
                 use_colors=False,
-                access_log=False,
+                # v0.25.71: request-level logging ON so the host page's calls
+                # are visible in opsroom.log -- with access_log=False the
+                # "host settings page hangs" reports had zero request
+                # evidence to diagnose from.
+                access_log=True,
                 ws="websockets",
                 ws_ping_interval=20.0,
                 ws_ping_timeout=20.0,
+                # v0.25.68: without this, uvicorn's graceful shutdown waits
+                # FOREVER for open connections/websockets to close
+                # (timeout_graceful_shutdown defaults to None), the launcher
+                # force-kills after 5 s, and the whole app dies mid-session
+                # ("did not exit cleanly" + stale browser tabs stuck on
+                # SYN_SENT). 3 s is safely under the 5 s launcher ceiling.
+                timeout_graceful_shutdown=3.0,
             )
             self.server = uvicorn.Server(config)
             self.server.run()
@@ -254,7 +265,20 @@ def run_tray(url: str, server: ServerThread) -> None:
     def open_fids(icon, item=None):
         webbrowser.open(f"{url}/vatsim-fids")
 
+    #: v0.25.71: why the launcher is stopping the server. The 16:04/16:06
+    #: sessions shut down gracefully with the user reporting they never
+    #: clicked Exit, and there is no web endpoint that can stop the server --
+    #: so the only remaining triggers are the tray Exit menu, the tray icon
+    #: loop ending by itself, or a console close / interrupt signal. Log the
+    #: reason so the next occurrence is diagnosable from opsroom.log alone.
+    _exit_reason = {"why": "unknown"}
+
+    def _mark_exit(reason: str) -> None:
+        _exit_reason["why"] = reason
+
     def quit_ops(icon, item=None):
+        _mark_exit("tray menu: Exit OPS ROOM")
+        print(f"Tray exit requested: {_exit_reason['why']}")
         try:
             shutdown_announcement_engine()
         except Exception:
@@ -284,6 +308,12 @@ def run_tray(url: str, server: ServerThread) -> None:
     )
     print("OPS ROOM is running in the Windows notification area.")
     icon.run()
+    # icon.run() returns only when icon.stop() was called. quit_ops marks the
+    # reason first; if we get here without that mark, the tray loop ended by
+    # itself (e.g. pystray lost the icon / Explorer notification-area reset),
+    # which silently tears the whole app down via the launcher finally block.
+    print(f"Tray icon loop ended: {_exit_reason['why']}")
+    return _exit_reason["why"]
 
 def run_self_test() -> int:
     result: dict[str, Any] = {"ok": True, "checks": []}
@@ -331,7 +361,7 @@ def main() -> int:
     url = f"http://{LOCAL_HOST}:{port}"
 
     print("\n" + "=" * 72)
-    print(f"Starting OPS ROOM 0.25.63 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Starting OPS ROOM 0.25.73 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Log file: {log_path}")
     print(f"Server bind: {'0.0.0.0' if lan_access else 'localhost'}:{port}")
 
@@ -392,6 +422,17 @@ def main() -> int:
                 print(f"Automatic vPilot bridge installation skipped: {result.get('reason') or 'unknown error'}")
     except Exception as exc:
         print(f"Automatic vPilot bridge installation failed safely: {type(exc).__name__}: {exc}")
+
+    # First-run convenience: copy the NOTAM closure-marker package into every
+    # detected MSFS Community folder (MSFS 2020 Store/Steam + MSFS 2024) so
+    # NOTAM -> SimObject deployments work without manual setup. Best-effort.
+    try:
+        from app.simobjects_installer import install_package as install_simobjects_package
+
+        result = install_simobjects_package()
+        print(f"Closure-marker Community package: {result.get('reason') or 'no-op'}")
+    except Exception as exc:
+        print(f"Closure-marker Community package install failed safely: {type(exc).__name__}: {exc}")
     if lan_access:
         # Do not write the user's private LAN IP into logs. The UI can reveal addresses only on explicit request.
         print(f"LAN interface: http://*:{port} (private address hidden)")
@@ -430,8 +471,9 @@ def main() -> int:
                 while server.is_alive():
                     time.sleep(0.5)
     except KeyboardInterrupt:
-        pass
+        print("Interrupt or console-close signal received; shutting down")
     finally:
+        print("Launcher finalizing; stopping the web server")
         try:
             shutdown_announcement_engine()
         except Exception:

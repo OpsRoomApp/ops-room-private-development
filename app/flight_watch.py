@@ -37,6 +37,23 @@ def _altitude_reliable(telemetry: dict[str, Any]) -> bool:
 
 
 def _gsx_pushback_active() -> bool:
+    """Dedicated GSX pushback evidence (v0.25.72, #12).
+
+    Mirrors the logbook detector: only the dedicated ``pushback`` service row
+    counts as physical pushback evidence (the broad ``departure`` workflow is
+    deliberately never consulted), and completed/disconnected tug states are
+    explicit clears. Memoized for 1 s so the per-poll phase evaluation does not
+    hammer the GSX status IPC.
+    """
+    _md = getattr(_gsx_pushback_active, "_memo", None)
+    if _md is not None and (time.monotonic() - _md[0]) < 1.0:
+        return _md[1]
+    value = _gsx_pushback_active_inner()
+    setattr(_gsx_pushback_active, "_memo", (time.monotonic(), value))
+    return value
+
+
+def _gsx_pushback_active_inner() -> bool:
     try:
         from .gsx_remote import status as gsx_status
         gsx = gsx_status(force=False)
@@ -44,17 +61,23 @@ def _gsx_pushback_active() -> bool:
         return False
     if not gsx.get("ok") or not gsx.get("connected"):
         return False
-    services = gsx.get("services") or {}
-    for key in ("pushback", "departure"):
-        row = services.get(key) or {}
-        try:
-            raw = int(row.get("raw") or 0)
-        except Exception:
-            raw = 0
-        state = str(row.get("state") or row.get("label") or "").upper()
-        if raw not in {0, 1, 6} or any(word in state for word in ("ACTIVE", "REQUEST", "PROGRESS", "PUSH")):
-            return True
-    return False
+    row = (gsx.get("services") or {}).get("pushback")
+    if not isinstance(row, dict):
+        return False
+    try:
+        raw = int(row.get("raw") or 0)
+    except Exception:
+        raw = 0
+
+    def token(value: Any) -> str:
+        return str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
+
+    states = {token(row.get("state")), token(row.get("remote_state"))}
+    if states & {"COMPLETE", "COMPLETED", "FINISHED", "DISCONNECTED", "TUG_DISCONNECTED", "CLEAR", "CLEARED"}:
+        return False
+    if states & {"ACTIVE", "PERFORMING", "IN_PROGRESS"}:
+        return True
+    return bool(raw == 5 and str(row.get("source") or "").lower() == "official-remote-api-v2")
 
 
 def _phase(telemetry: dict[str, Any], plan: dict[str, Any] | None) -> str:
@@ -66,10 +89,14 @@ def _phase(telemetry: dict[str, Any], plan: dict[str, Any] | None) -> str:
     cruise = _number((plan or {}).get("cruise_altitude_ft")) or 0.0
 
     if on_ground:
+        # v0.25.72 (#12): consult GSX pushback evidence BEFORE the speed branch.
+        # MSFS ground speed routinely reads 6-10 kt while a tug is pushing, so a
+        # latched pushback is only demoted by genuine taxi (>10 kt) — never by a
+        # transient pushback sample above the old 5 kt gate.
+        if _gsx_pushback_active() and gs <= 10.0:
+            return "PUSHBACK"
         if gs > 5.0:
             return "TAXI" if gs < 35 else "TAKEOFF ROLL"
-        if _gsx_pushback_active():
-            return "PUSHBACK"
         if gs < 2:
             return "PARKED"
         if gs < 35:

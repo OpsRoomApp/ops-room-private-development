@@ -91,6 +91,21 @@ def _normalise_registration(value: Any) -> str:
     return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
 
 
+def _registration_suffix(value: str) -> str:
+    """Registration without a leading country-code letter (v0.25.72, #22).
+
+    MSFS add-on aircraft and SimBrief registrations routinely differ only by
+    the country prefix (G-AEWK vs D-AEWK for the same aircraft), which made
+    the receipt matcher drop every receipt. Strip the first letter when the
+    tail looks like ``<letter><suffix>`` with at least 3 trailing chars; the
+    caller keeps the hard exclusion when the core suffix differs.
+    """
+    text = _normalise_registration(value)
+    if len(text) >= 4 and text[0].isalpha():
+        return text[1:]
+    return text
+
+
 def _money_number(raw: Any) -> float | None:
     value = str(raw or "").strip().replace(" ", "")
     if not value:
@@ -320,8 +335,16 @@ def recent_invoice_items(start_utc: str | None, end_utc: str | None, limit: int 
             continue
         receipt_airport = str(raw_item.get("airport") or "").upper()
         receipt_tail = _normalise_registration(raw_item.get("tail"))
-        if tail and receipt_tail and tail != receipt_tail:
-            continue
+        match_basis = "registration + airport + operational time window"
+        if tail and receipt_tail:
+            if tail == receipt_tail:
+                pass
+            elif _registration_suffix(tail) == _registration_suffix(receipt_tail) and len(_registration_suffix(receipt_tail)) >= 3:
+                # v0.25.72 (#22): G-AEWK vs D-AEWK — same aircraft, country
+                # prefix differs. Match on the core suffix.
+                match_basis = "registration suffix (country prefix ignored) + airport + operational time window"
+            else:
+                continue
         if (origin or destination) and receipt_airport and receipt_airport not in {origin, destination}:
             continue
 
@@ -338,7 +361,7 @@ def recent_invoice_items(start_utc: str | None, end_utc: str | None, limit: int 
         if phase == "unknown" and receipt_airport:
             phase = "arrival" if destination and receipt_airport == destination and destination != origin else "departure"
         item["phase"] = phase
-        item["match_basis"] = "registration + airport + operational time window"
+        item["match_basis"] = match_basis
         items.append(item)
     items.sort(key=lambda x: x.get("issued_utc") or x.get("modified_utc") or "")
     return items[-max(1, min(int(limit), 100)):]

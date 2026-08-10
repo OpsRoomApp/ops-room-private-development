@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 import time
+import types
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,45 @@ _REPLAY_OPTIONAL_LAST: dict[str, float | int] = {}
 # instead of serving a dead one forever.
 _SESSION_CONSECUTIVE_FAILURES = 0
 _SESSION_MAX_CONSECUTIVE_FAILURES = 25
+
+# v0.25.72 (#9): the upstream wrapper's dispatch loop prints ``OS error: ...``
+# on every failed CallDispatch (its loop sleeps 2 ms, so a dying dispatch
+# thread floods the log at ~500 lines/sec). We replace the loop with a guarded
+# version that prints once, then tears the session down after a short run of
+# consecutive errors so reads fail fast and the next ``_ensure_session``
+# rebuilds. A rebuild backoff prevents thrashing when the wrapper keeps dying.
+_SESSION_DISPATCH_DEAD = False
+_LAST_REBUILD_AT = 0.0
+_REBUILD_BACKOFF_SECONDS = 30.0
+_DISPATCH_ERROR_LIMIT = 10
+
+
+def _guarded_dispatch_run(sm: Any) -> None:
+    """Replacement for the upstream SimConnect wrapper's ``_run`` loop.
+
+    Keeps the identical CallDispatch cadence while healthy, but suppresses the
+    per-error print flood and marks the session dead after a short run of
+    consecutive OSErrors so the health counters can rebuild it quickly.
+    """
+    global _SESSION_DISPATCH_DEAD
+    errors = 0
+    while getattr(sm, "quit", 0) == 0:
+        try:
+            sm.dll.CallDispatch(sm.hSimConnect, sm.my_dispatch_proc_rd, None)
+            time.sleep(0.002)
+            errors = 0
+        except OSError as err:
+            errors += 1
+            if errors == 1:
+                print(f"SimConnect dispatch failure (rebuilding session): {err}")
+            if errors >= _DISPATCH_ERROR_LIMIT:
+                _SESSION_DISPATCH_DEAD = True
+                sm.quit = 1
+                try:
+                    sm.dll.Close(sm.hSimConnect)
+                except Exception:
+                    pass
+                return
 
 # Single-session Frame event subscription (SkyDolly approach — one SimConnect session)
 _REPLAY_FRAME_COND = threading.Condition()
@@ -265,7 +305,7 @@ def _connect_with_timeout(sm: Any, timeout_seconds: float = 8.0) -> None:
         raise TimeoutError("Timed out waiting for the SimConnect OPEN event")
 
 def _close_session() -> None:
-    global _SESSION_SM, _SESSION_AQ, _SESSION_STARTED, _SESSION_CONSECUTIVE_FAILURES
+    global _SESSION_SM, _SESSION_AQ, _SESSION_STARTED, _SESSION_CONSECUTIVE_FAILURES, _SESSION_DISPATCH_DEAD
     if _SESSION_SM is not None:
         try:
             _SESSION_SM.exit()
@@ -275,31 +315,62 @@ def _close_session() -> None:
     _SESSION_AQ = None
     _SESSION_STARTED = 0.0
     _SESSION_CONSECUTIVE_FAILURES = 0
+    _SESSION_DISPATCH_DEAD = False
+
+
+def close_session() -> None:
+    """Tear down the shared SimConnect session cleanly (v0.25.68).
+
+    Public wrapper for app shutdown: without it the SimConnect wrapper's
+    dispatch thread keeps polling a dead connection during teardown, flooding
+    the log with ``OS error: WinError 0xc00000b0`` and blocking a clean exit
+    (the launcher then force-kills after 5 s -- the "reload takes forever"
+    symptom). Calling this stops the timer thread so uvicorn can exit fast.
+    """
+    _close_session()
 
 
 def _note_session_read_result(ok: bool) -> None:
     """Track read health so a broken SimConnect session is rebuilt (v0.25.60)."""
-    global _SESSION_CONSECUTIVE_FAILURES
+    global _SESSION_CONSECUTIVE_FAILURES, _LAST_REBUILD_AT
     if _SESSION_SM is None:
+        return
+    if _SESSION_DISPATCH_DEAD:
+        # The dispatch loop itself detected death — fail fast instead of
+        # burning read attempts against a dead connection (v0.25.72, #9).
+        _LAST_REBUILD_AT = time.monotonic()
+        _close_session()
         return
     if ok:
         _SESSION_CONSECUTIVE_FAILURES = 0
         return
     _SESSION_CONSECUTIVE_FAILURES += 1
     if _SESSION_CONSECUTIVE_FAILURES >= _SESSION_MAX_CONSECUTIVE_FAILURES:
+        _LAST_REBUILD_AT = time.monotonic()
         _close_session()
 
 
 def _ensure_session(diagnostics: dict[str, Any]) -> tuple[Any, Any]:
     global _SESSION_SM, _SESSION_AQ, _SESSION_STARTED
-    if _SESSION_SM is not None and _SESSION_AQ is not None and getattr(_SESSION_SM, "ok", False):
+    if _SESSION_SM is not None and _SESSION_AQ is not None and getattr(_SESSION_SM, "ok", False) and not _SESSION_DISPATCH_DEAD:
         return _SESSION_SM, _SESSION_AQ
     _close_session()
+    now = time.monotonic()
+    if now - _LAST_REBUILD_AT < _REBUILD_BACKOFF_SECONDS:
+        # v0.25.72 (#9): a session that died is not retried immediately — the
+        # wrapper keeps dying, so a 30 s backoff avoids a connect/rebuild thrash
+        # loop. Reads return not-ok during this window (FSUIPC failover handles
+        # it) instead of blocking on dead SimConnect.
+        remaining = max(0.0, _REBUILD_BACKOFF_SECONDS - (now - _LAST_REBUILD_AT))
+        raise ConnectionError(f"SimConnect session unhealthy; rebuild deferred {remaining:.0f}s")
     from SimConnect import AircraftRequests, SimConnect  # type: ignore
     library_path = diagnostics.get("dll_path")
     if not library_path:
         raise FileNotFoundError("SimConnect.dll was not found in the packaged runtime.")
     sm = SimConnect(auto_connect=False, library_path=str(library_path))
+    # v0.25.72 (#9): install the guarded dispatch loop before the thread starts
+    # so a dying dispatch thread can never flood the log again.
+    sm._run = types.MethodType(_guarded_dispatch_run, sm)
     _connect_with_timeout(sm)
     aq = AircraftRequests(sm, _time=125)
     _SESSION_SM = sm
@@ -372,6 +443,11 @@ def _sanitize_telemetry(result: dict[str, Any]) -> dict[str, Any]:
     set_bounded("fuel_flow_pph", 0.0, 250000.0)
     set_bounded("fuel_total_gal", 0.0, 250000.0)
     set_bounded("fuel_total_lb", 0.0, 2000000.0)
+    set_bounded("fuel_weight_lb", 0.0, 2000000.0)
+    set_bounded("gross_weight_lb", 0.0, 2000000.0)
+    set_bounded("empty_weight_lb", 0.0, 2000000.0)
+    set_bounded("payload_weight_lb", 0.0, 2000000.0)
+    set_bounded("max_gross_weight_lb", 0.0, 2000000.0)
     set_bounded("engine_n1_percent", 0.0, 130.0)
     set_bounded("reverser_percent", 0.0, 120.0)
     set_bounded("brake_percent", 0.0, 120.0)
@@ -443,7 +519,14 @@ def _sanitize_telemetry(result: dict[str, Any]) -> dict[str, Any]:
             clean = _bounded_number(value, low, high, wrap=360.0 if key == "selected_heading_deg" else None)
             if value is not None and clean is None:
                 rejected.append(f"autopilot.{key}")
-            if key in {"selected_altitude_ft", "selected_speed_kts"} and clean == 0 and (data.get("altitude_ft") or 0) > 1000:
+            # v0.25.72 (#15): a raw 0 on an unset FCU field is not a real target
+            # — treat it as unset at any altitude so the readout renders "---"
+            # instead of 0 (and stops flapping when sources alternate). A locked
+            # heading of exactly 0 (north) is a genuine selection and is kept.
+            modes = autopilot.get("modes") if isinstance(autopilot.get("modes"), list) else []
+            if key in {"selected_altitude_ft", "selected_speed_kts", "selected_vertical_speed_fpm"} and clean is not None and abs(clean) < 0.5:
+                clean = None
+            elif key == "selected_heading_deg" and clean is not None and abs(clean) < 0.01 and "HDG" not in modes:
                 clean = None
             autopilot[key] = clean
 
@@ -520,6 +603,11 @@ def _read_position_uncached() -> dict[str, Any]:
 
     if not diagnostics.get("dll_path"):
         return {"ok": False, "reason": "SimConnect.dll was not found in the packaged runtime.", "diagnostics": diagnostics}
+    if _SESSION_DISPATCH_DEAD:
+        # v0.25.72 (#9): fail fast instead of polling a dead connection — the
+        # guarded dispatch loop already flagged the session for rebuild.
+        _close_session()
+        return {"ok": False, "reason": "SimConnect dispatch thread failed; session closed for rebuild", "diagnostics": simconnect_diagnostics()}
 
     try:
         _sm, aq = _ensure_session(diagnostics)
@@ -678,6 +766,33 @@ def _read_position_uncached() -> dict[str, Any]:
                 fuel_total_lb = float(fuel_quantity) * float(fuel_weight)
         except (TypeError, ValueError):
             fuel_total_lb = None
+
+        # v0.25.65 supplemental weight telemetry (optional; never fabricated).
+        # Standard SDK flight-model weights are in slugs (1 slug = 32.17405 lb);
+        # the direct fuel weight SimVar is in pounds. All fields stay None when
+        # the aircraft does not expose them, and a failed payload-station read
+        # never rejects the whole telemetry sample.
+        _SLUG_TO_LB = 32.17405
+        total_weight_slugs = _finite_number(read_value("TOTAL_WEIGHT"))
+        empty_weight_slugs = _finite_number(read_value("EMPTY_WEIGHT"))
+        max_gross_weight_slugs = _finite_number(read_value("MAX_GROSS_WEIGHT"))
+        fuel_weight_lb = _finite_number(read_value("FUEL_TOTAL_QUANTITY_WEIGHT"))
+        station_count = _finite_number(read_value("PAYLOAD_STATION_COUNT"))
+        payload_station_lb = None
+        if station_count is not None and 0 < station_count <= 64:
+            payload_station_total = 0.0
+            payload_station_ok = True
+            for station_index in range(1, int(station_count) + 1):
+                station_weight = _finite_number(read_value(f"PAYLOAD_STATION_WEIGHT:{station_index}"))
+                if station_weight is None or station_weight < 0.0:
+                    payload_station_ok = False
+                    break
+                payload_station_total += float(station_weight)
+            if payload_station_ok and payload_station_total > 0.0:
+                payload_station_lb = round(payload_station_total * _SLUG_TO_LB, 1)
+        gross_weight_lb = round(total_weight_slugs * _SLUG_TO_LB, 1) if total_weight_slugs is not None else None
+        empty_weight_lb = round(empty_weight_slugs * _SLUG_TO_LB, 1) if empty_weight_slugs is not None else None
+        max_gross_weight_lb = round(max_gross_weight_slugs * _SLUG_TO_LB, 1) if max_gross_weight_slugs is not None else None
 
         def bool_value(value: Any) -> bool | None:
             try:
@@ -865,6 +980,11 @@ def _read_position_uncached() -> dict[str, Any]:
             "fuel_flow_pph": sum(float(v) for v in (fuel_flow1, fuel_flow2, fuel_flow3, fuel_flow4) if v is not None) if any(v is not None for v in (fuel_flow1, fuel_flow2, fuel_flow3, fuel_flow4)) else None,
             "fuel_total_gal": float(fuel_quantity) if fuel_quantity is not None else None,
             "fuel_total_lb": fuel_total_lb,
+            "fuel_weight_lb": fuel_weight_lb,
+            "gross_weight_lb": gross_weight_lb,
+            "empty_weight_lb": empty_weight_lb,
+            "payload_weight_lb": payload_station_lb,
+            "max_gross_weight_lb": max_gross_weight_lb,
             "engine_n1_percent": max([float(v) for v in (engine_n1_1, engine_n1_2, engine_n1_3, engine_n1_4) if v is not None], default=None),
             "engine_n2_percent": max([float(v) for v in (engine_n2_1, engine_n2_2, engine_n2_3, engine_n2_4) if v is not None], default=None),
             "engine_egt_c": max([float(v) for v in (engine_egt_1, engine_egt_2, engine_egt_3, engine_egt_4) if v is not None], default=None),
@@ -1090,6 +1210,11 @@ def _read_position_minimal_uncached() -> dict[str, Any]:
 
     if not diagnostics.get("dll_path"):
         return {"ok": False, "reason": "SimConnect.dll was not found in the packaged runtime.", "diagnostics": diagnostics}
+    if _SESSION_DISPATCH_DEAD:
+        # v0.25.72 (#9): fail fast instead of polling a dead connection — the
+        # guarded dispatch loop already flagged the session for rebuild.
+        _close_session()
+        return {"ok": False, "reason": "SimConnect dispatch thread failed; session closed for rebuild", "diagnostics": simconnect_diagnostics()}
 
     try:
         _sm, aq = _ensure_session(diagnostics)

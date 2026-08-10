@@ -1,0 +1,325 @@
+{
+  "asset": {
+    "copyright": "OPS ROOM",
+    "extensions": {
+      "ASOBO_normal_map_convention": {
+        "tangent_space_convention": "DirectX"
+      }
+    },
+    "generator": "Khronos glTF Blender I/O v5.2.39 and Asobo Studio MSFS2024 Blender I/O v6.4.9 with Blender v5.2.0",
+    "version": "2.0"
+  },
+  "extensionsUsed": [
+    "ASOBO_normal_map_convention",
+    "ASOBO_unique_id",
+    "KHR_materials_emissive_strength",
+    "ASOBO_street_light"
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Scene",
+      "nodes": [
+        0,
+        1,
+        2
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "extensions": {
+        "ASOBO_unique_id": {
+          "id": "BARRICADE_BODY"
+        }
+      },
+      "mesh": 0,
+      "name": "BARRICADE_BODY"
+    },
+    {
+      "extensions": {
+        "ASOBO_unique_id": {
+          "id": "BEACON"
+        }
+      },
+      "mesh": 1,
+      "name": "BEACON"
+    },
+    {
+      "extensions": {
+        "ASOBO_unique_id": {
+          "id": "LIGHT_BEACON"
+        },
+        "ASOBO_street_light": {
+          "color": [
+            1,
+            0.07999999821186066,
+            0.03999999910593033
+          ],
+          "intensity": 12000,
+          "day_night_cycle": false,
+          "cone_angle": 360,
+          "has_symmetry": false,
+          "flash_frequency": 120,
+          "flash_duration": 0.11999999731779099,
+          "flash_phase": 0,
+          "rotation_phase": 0,
+          "rotation_speed": 0,
+          "random_phase": false,
+          "flare_enabled": true,
+          "flare_only": false
+        }
+      },
+      "name": "LIGHT_BEACON",
+      "rotation": [
+        -0.7071067690849304,
+        0,
+        0,
+        -0.70710688829422
+      ],
+      "translation": [
+        0,
+        0.5529999732971191,
+        0
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "Barrier_Reflective_Stripe",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicFactor": 0,
+        "roughnessFactor": 0.5
+      }
+    },
+    {
+      "doubleSided": true,
+      "emissiveFactor": [
+        1,
+        0.15000000596046448,
+        0.07999999821186066
+      ],
+      "extensions": {
+        "KHR_materials_emissive_strength": {
+          "emissiveStrength": 80
+        }
+      },
+      "name": "Beacon_Red_Lens",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          0.11999999731779099,
+          0.05999999865889549,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.15000000596046448
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Cube.005",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4,
+          "material": 0
+        }
+      ]
+    },
+    {
+      "name": "Cylinder.003",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 5,
+            "NORMAL": 6,
+            "TEXCOORD_0": 7,
+            "TANGENT": 8
+          },
+          "indices": 9,
+          "material": 1
+        }
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    }
+  ],
+  "images": [
+    {
+      "mimeType": "image/png",
+      "name": "barricade_stripes_white.png",
+      "uri": "BARRICADE_STRIPES_WHITE.PNG.KTX2"
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 1886,
+      "max": [
+        1.7990673780441284,
+        0.4000000059604645,
+        0.10807487368583679
+      ],
+      "min": [
+        -1.799067497253418,
+        0.0010515163885429502,
+        -0.1080770194530487
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 1886,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 1886,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 1886,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5123,
+      "count": 1908,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5126,
+      "count": 113,
+      "max": [
+        0.07000252604484558,
+        0.5580000281333923,
+        0.07000251859426498
+      ],
+      "min": [
+        -0.06983951479196548,
+        0.40000003576278687,
+        -0.06970586627721786
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 113,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5126,
+      "count": 113,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5126,
+      "count": 113,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5123,
+      "count": 408,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 22632,
+      "byteOffset": 0,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 22632,
+      "byteOffset": 22632,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 15088,
+      "byteOffset": 45264,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 30176,
+      "byteOffset": 60352,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 3816,
+      "byteOffset": 90528,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 1356,
+      "byteOffset": 94344,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 1356,
+      "byteOffset": 95700,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 904,
+      "byteOffset": 97056,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 1808,
+      "byteOffset": 97960,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 816,
+      "byteOffset": 99768,
+      "target": 34963
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 100584,
+      "uri": "BARRICADE_T3_WHITE_LOD1.bin"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ import os
 import sqlite3
 import struct
 import time
+import zlib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -302,6 +303,103 @@ def airspaces_layer(bbox: str | None = None, limit: int = 1000) -> dict[str, Any
     return result
 
 
+def decode_taxi_bundle(payload: bytes | None) -> list[dict[str, Any]]:
+    """Decode a ``surface_taxi_bundle`` payload into raw taxi-segment rows.
+
+    Layout (little-endian, produced by ``tools/build_taxi_bundle.py``):
+    ``<I count>`` then per segment ``<I name_len> name <B type_len> type
+    <B surf_len> surface <f width_ft> <f start_lon> <f start_lat> <f end_lon>
+    <f end_lat>``. Returns rows shaped exactly like the LNM ``taxi_path``
+    rows consumed by ``_merge_taxi_segments`` (``name``, ``type``, ``surface``,
+    ``width_ft``, ``start_lon``, ``start_lat``, ``end_lon``, ``end_lat``).
+    """
+    if not payload:
+        return []
+    try:
+        raw = zlib.decompress(payload)
+    except Exception:
+        return []
+    rows: list[dict[str, Any]] = []
+    off = 0
+    try:
+        (count,) = struct.unpack_from("<I", raw, off)
+        off += 4
+        if count <= 0 or count > 200000:
+            return []
+        for _ in range(count):
+            (nlen,) = struct.unpack_from("<I", raw, off)
+            off += 4
+            name = raw[off:off + nlen].decode("utf-8", errors="replace")
+            off += nlen
+            (tlen,) = struct.unpack_from("<B", raw, off)
+            off += 1
+            seg_type = raw[off:off + tlen].decode("utf-8", errors="replace")
+            off += tlen
+            (slen,) = struct.unpack_from("<B", raw, off)
+            off += 1
+            surface = raw[off:off + slen].decode("utf-8", errors="replace")
+            off += slen
+            width_ft, slon, slat, elon, elat = struct.unpack_from("<5f", raw, off)
+            off += 20
+            rows.append({
+                "name": name, "type": seg_type, "surface": surface,
+                "width_ft": width_ft,
+                "start_lon": slon, "start_lat": slat,
+                "end_lon": elon, "end_lat": elat,
+            })
+    except (struct.error, IndexError):
+        return []
+    return rows
+
+
+def taxiway_segments(icao: str) -> list[dict[str, Any]]:
+    """Raw taxi-path segments (name/type/width/endpoints) for an airport.
+
+    Source order: local Little Navmap DB first (fresh, includes addon
+    airports), then the built-in ``surface_taxi_bundle`` fallback so users
+    without LNM still get real taxiway geometry. Returns [] when neither
+    source has data for the airport -- never raises.
+    """
+    ident = str(icao or "").upper().strip()[:4]
+    if not ident:
+        return []
+    surf = local_surface_source()
+    if surf.get("available") and surf.get("path"):
+        try:
+            con = _local_con(str(surf["path"]))
+            try:
+                ap = con.execute("select airport_id from airport where upper(ident)=?", (ident,)).fetchone()
+                if ap:
+                    rows = [dict(r) for r in con.execute("""
+                        select type, surface, width as width_ft, name,
+                               start_lonx as start_lon, start_laty as start_lat,
+                               end_lonx as end_lon, end_laty as end_lat
+                        from taxi_path
+                        where airport_id=? and start_lonx is not null and start_laty is not null
+                          and end_lonx is not null and end_laty is not null
+                        order by taxi_path_id
+                    """, (ap["airport_id"],))]
+                    return rows
+            finally:
+                con.close()
+        except Exception:
+            pass
+    if available():
+        try:
+            con = _connect()
+            try:
+                row = con.execute(
+                    "select payload from surface_taxi_bundle where upper(airport_ident)=?", (ident,)
+                ).fetchone()
+                if row and row[0]:
+                    return decode_taxi_bundle(row[0])
+            finally:
+                con.close()
+        except Exception:
+            pass
+    return []
+
+
 def _decode_points(blob: bytes | None) -> list[list[float]]:
     if not blob or len(blob) < 12:
         return []
@@ -487,7 +585,13 @@ def _airport_surface_from_builtin(ident: str) -> dict[str, Any]:
             fallback = [part.strip() for part in str(runway.get("name") or "").split("/") if part.strip()]
             runway["primary_name"] = names[0] if names else (fallback[0] if fallback else "")
             runway["secondary_name"] = names[1] if len(names) > 1 else (fallback[1] if len(fallback) > 1 else "")
-        return {"ok": True, "source": "built-in", "airport": dict(ap), "runways": runways, "runway_ends": ends, "taxiways": [], "aprons": [], "parking": [], "starts": [], "message": "Runway surface only. Configure local surface data for taxiways, aprons and stands."}
+        # v0.25.65: serve merged taxiways from the built-in taxi bundle so
+        # users without Little Navmap still get real taxiway geometry.
+        bundle_row = con.execute(
+            "select payload from surface_taxi_bundle where upper(airport_ident)=?", (ident,)
+        ).fetchone()
+        taxi = _merge_taxi_segments(decode_taxi_bundle(bundle_row[0] if bundle_row else None)) if bundle_row and bundle_row[0] else []
+        return {"ok": True, "source": "built-in", "airport": dict(ap), "runways": runways, "runway_ends": ends, "taxiways": taxi, "aprons": [], "parking": [], "starts": [], "feature_counts": {"runways": len(runways), "taxiways": len(taxi)}, "message": "Runway and bundled taxiway surface from built-in aviation database."}
     finally:
         con.close()
 

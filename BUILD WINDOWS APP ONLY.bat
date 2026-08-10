@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
-title Build OPS ROOM 0.25.63 Public Release Windows App Only
+title Build OPS ROOM 0.25.73 Public Release Windows App Only
 
  echo ================================================================
- echo OPS ROOM 0.25.63 Public Release - Windows app only build
+ echo OPS ROOM 0.25.73 Public Release - Windows app only build
  echo ================================================================
  echo.
 
@@ -172,6 +172,21 @@ if not exist "%DIST_DIR%\OPS ROOM\Announcements\Default\BoardingMusic.ogg" (
   goto :fail
 )
 
+rem Ship the built NOTAM closure-marker MSFS Community package next to the app
+rem so the first-run installer (app/simobjects_installer.py) can copy it into
+rem the MSFS 2020/2024 Community folders automatically.
+"%VENV_DIR%\Scripts\python.exe" tools\simobjects\package\build_package.py || goto :fail
+if exist "%DIST_DIR%\OPS ROOM\closure-markers" rmdir /s /q "%DIST_DIR%\OPS ROOM\closure-markers"
+xcopy /E /I /Y "tools\simobjects\package\closure-markers\SimObjects" "%DIST_DIR%\OPS ROOM\closure-markers\SimObjects" >nul
+if errorlevel 1 (
+  echo ERROR: Could not copy closure-marker SimObjects into the release package.
+  goto :fail
+)
+copy /y "tools\simobjects\package\closure-markers\manifest.json" "%DIST_DIR%\OPS ROOM\closure-markers\manifest.json" >nul
+if errorlevel 1 goto :fail
+copy /y "tools\simobjects\package\closure-markers\layout.json" "%DIST_DIR%\OPS ROOM\closure-markers\layout.json" >nul
+if errorlevel 1 goto :fail
+
 for %%F in (
   "README.txt"
   "RELEASE_NOTES.txt"
@@ -186,15 +201,15 @@ echo Verifying public package contents...
 rem Public release folder cleanup: keep user-facing dist clean.
 rem Developer/admin files such as build validation notes, Google Apps Script setup,
 rem old release notes and helper batch files are intentionally not copied.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -LiteralPath '%DIST_DIR%\OPS ROOM' -DestinationPath '%DIST_DIR%\OPS_ROOM_v0_25_63_Public_Windows_x64.zip' -Force -ErrorAction Stop" || goto :fail
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -LiteralPath '%DIST_DIR%\OPS ROOM' -DestinationPath '%DIST_DIR%\OPS_ROOM_v0_25_73_Public_Windows_x64.zip' -Force -ErrorAction Stop" || goto :fail
 
-"%VENV_DIR%\Scripts\python.exe" tools\write_update_manifest.py --version 0.25.63 --channel stable --zip "%DIST_DIR%\OPS_ROOM_v0_25_63_Public_Windows_x64.zip" --out "%DIST_DIR%\update.json" || goto :fail
+"%VENV_DIR%\Scripts\python.exe" tools\write_update_manifest.py --version 0.25.73 --channel stable --zip "%DIST_DIR%\OPS_ROOM_v0_25_73_Public_Windows_x64.zip" --out "%DIST_DIR%\update.json" || goto :fail
 
 echo.
 echo Build complete:
 echo   %DIST_DIR%\OPS ROOM\OPS ROOM.exe
-echo   %DIST_DIR%\OPS_ROOM_v0_25_63_Public_Windows_x64.zip
-echo   %DIST_DIR%\OPS_ROOM_v0_25_63_Public_Windows_x64.zip.sha256
+echo   %DIST_DIR%\OPS_ROOM_v0_25_73_Public_Windows_x64.zip
+echo   %DIST_DIR%\OPS_ROOM_v0_25_73_Public_Windows_x64.zip.sha256
 echo   %DIST_DIR%\update.json
 echo.
 pause

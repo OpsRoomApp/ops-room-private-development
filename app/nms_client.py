@@ -26,16 +26,29 @@ the FAA NMS-API itself live on the opsroom.live VPS proxy only.
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import requests
 
 _NMS_CACHE_TTL = 120.0
 _NMS_TIMEOUT = (4.0, 8.0)
-_USER_AGENT = "OPS ROOM/0.24.107 flight briefing (nms proxy client)"
+
+
+def _app_version() -> str:
+    """v0.25.67: user-agent version comes from version.json, never a stale literal."""
+    try:
+        raw = (Path(__file__).resolve().parent.parent / "version.json").read_text(encoding="utf-8")
+        return str(json.loads(raw).get("version") or "0.25.73")
+    except Exception:  # pragma: no cover - defensive version read
+        return "0.25.73"
+
+
+_USER_AGENT = f"OPS ROOM/{_app_version()} flight briefing (nms proxy client)"
 
 _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _lock = threading.Lock()

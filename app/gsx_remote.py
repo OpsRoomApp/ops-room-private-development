@@ -172,6 +172,7 @@ _FENIX_LOADING_STATE: dict[str, Any] = {
     "boarding_action_sent": False,
     "menu_open_requested_mono": 0.0,
 }
+_FENIX_SNAPSHOT_REFRESH_AT = 0.0  # monotonic TTL for the Live OFP loadsheet snapshot
 _MOCK_STATE: dict[str, Any] = {
     "boarding": 5,
     "deboarding": 1,
@@ -2619,7 +2620,50 @@ def _stop_pushback_direction_keepalive() -> None:
     _PUSHBACK_KEEPALIVE_STOP.set()
 
 
+def _refresh_fenix_loading_snapshot() -> None:
+    """Best-effort live loadsheet snapshot for the Live OFP panel.
+
+    ``last_progress`` is normally written only by the Fenix GSX decision loop
+    (``_sync_fenix_loading_state``) once the Fenix loading task has started.
+    Before that the Live OFP saw an empty map and showed blank PAX/BAG-CARGO
+    actuals even though the Fenix EFB loadsheet already reports boarded pax,
+    loaded cargo and fuel. This fills ``last_progress`` directly from the
+    loadsheet, TTL-guarded so the (up to 2 s) loadsheet read happens at most
+    once every few seconds and never blocks or crashes the status call.
+    """
+    global _FENIX_SNAPSHOT_REFRESH_AT
+    now = time.monotonic()
+    if now - _FENIX_SNAPSHOT_REFRESH_AT < 5.0:
+        return
+    _FENIX_SNAPSHOT_REFRESH_AT = now
+    try:
+        if not _fenix_loading_available():
+            return
+        fenix_progress = _fenix_progress_safe()
+        if not isinstance(fenix_progress, dict) or not fenix_progress.get("ok"):
+            return
+        if not any(fenix_progress.get(k) is not None for k in ("pax_loaded", "cargo_loaded_kg", "fuel_loaded_kg")):
+            return
+        with _AUTOMATION_LOCK:
+            last = _FENIX_LOADING_STATE.get("last_progress")
+            if not isinstance(last, dict):
+                last = {}
+            keep = {k: last.get(k) for k in ("passengers", "target", "boarding_raw", "boarding_cargo_percent") if k in last}
+            _FENIX_LOADING_STATE["last_progress"] = {
+                **keep,
+                "passengers": keep.get("passengers", fenix_progress.get("pax_loaded")),
+                "target": keep.get("target", fenix_progress.get("pax_target")),
+                "boarding_cargo_percent": keep.get("boarding_cargo_percent", 0),
+                "fenix": fenix_progress,
+                "updated_at": _utc(),
+            }
+    except Exception:
+        # The Live OFP must never be blocked or broken by a loadsheet refresh.
+        pass
+
+
 def automation_status() -> dict[str, Any]:
+    _refresh_fenix_loading_snapshot()
     with _AUTOMATION_LOCK:
         payload = {"ok": True, **{key: (list(value) if isinstance(value, list) else value) for key, value in _AUTOMATION.items()}}
         payload["fenix_loading"] = dict(_FENIX_LOADING_STATE)

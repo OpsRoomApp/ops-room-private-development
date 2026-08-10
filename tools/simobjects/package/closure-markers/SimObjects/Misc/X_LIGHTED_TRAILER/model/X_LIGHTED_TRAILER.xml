@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModelInfo version="1.1" guid="{3356921F-55F5-5E22-959E-7C7E501ADCC0}">
+	<LODS>
+		<LOD MinSize="30" ModelFile="X_LIGHTED_TRAILER_LOD00.gltf"/>
+		<LOD MinSize="0" ModelFile="X_LIGHTED_TRAILER_LOD01.gltf"/>
+	</LODS>
+</ModelInfo>
+

@@ -33,6 +33,10 @@ _LOCK = threading.RLock()
 _STOP = threading.Event()
 _THREAD: threading.Thread | None = None
 _DB_NAME = "logbook.sqlite3"
+
+# v0.25.72 (#21): short-TTL in-memory PIREP analysis cache (see telemetry()).
+_ANALYSIS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_ANALYSIS_CACHE_TTL = 30.0
 _SCHEMA = 5
 _STANDBY_SAMPLES: list[dict[str, Any]] = []
 
@@ -206,6 +210,94 @@ def _airport_at(t: dict[str, Any]) -> dict[str, Any] | None:
     return {"icao": airport.ident, "name": airport.name, "distance_nm": round(distance, 1)}
 
 
+def _first_text(*values: Any) -> str | None:
+    """Return the first non-empty string among values (backward-compatible key fallback)."""
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _resolve_plan_operation(weights: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from .load_model import resolve_operation_type
+        flight = {
+            "passengers": weights.get("passengers"),
+            "cargo": weights.get("cargo"),
+            "cargo_hold_total": weights.get("cargo"),
+            "commercial_freight_weight": weights.get("freight_added"),
+            "weight_units": weights.get("units"),
+        }
+        return resolve_operation_type(flight, "auto")
+    except Exception:
+        return {"resolved": "auto", "reason": "operation resolution unavailable", "confidence": "unavailable"}
+
+
+def _plan_load(weights: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from .load_model import load_composition
+        return load_composition({"weights": weights})
+    except Exception:
+        return {"load_breakdown_source": "combined-simbrief-cargo"}
+
+
+def _ofp_plan_nested(p: dict[str, Any]) -> dict[str, Any]:
+    """Immutable nested OFP plan reference stored with the recorder."""
+    aircraft = p.get("aircraft") if isinstance(p.get("aircraft"), dict) else {}
+    times = p.get("times") if isinstance(p.get("times"), dict) else {}
+    fuel = p.get("fuel") if isinstance(p.get("fuel"), dict) else {}
+    weights = p.get("weights") if isinstance(p.get("weights"), dict) else {}
+    origin = p.get("origin") if isinstance(p.get("origin"), dict) else {}
+    destination = p.get("destination") if isinstance(p.get("destination"), dict) else {}
+    fuel_keys = ("ramp", "takeoff", "trip", "landing", "reserve", "alternate", "extra")
+    weight_keys = ("passengers", "cargo", "payload", "zfw", "tow", "ldw", "freight_added", "max_zfw", "max_tow", "max_ldw", "oew")
+    return {
+        "identity": {
+            "request_id": _text(p.get("request_id"), 40),
+            "sequence_id": _text(p.get("sequence_id"), 40),
+            "plan_id": _text(p.get("plan_id"), 40),
+            "generated_utc": _text(p.get("generated_utc"), 40),
+            "fetched_utc": _text(p.get("fetched_utc"), 40),
+            "callsign": _text(p.get("callsign"), 20),
+            "origin": _text(origin.get("icao"), 4).upper(),
+            "destination": _text(destination.get("icao"), 4).upper(),
+            "scheduled_out": _first_text(times.get("scheduled_out"), times.get("scheduled_out_utc")),
+            "registration": _text(aircraft.get("registration"), 20).upper(),
+        },
+        "times": {key: times.get(key) for key in ("scheduled_out", "scheduled_off", "scheduled_on", "scheduled_in")},
+        "fuel": {key: _number(fuel.get(key)) for key in fuel_keys} | {"units": _text(fuel.get("units"), 8).upper()},
+        "weights": {key: _number(weights.get(key)) for key in weight_keys} | {"units": _text(weights.get("units"), 8).upper()},
+        "load": _plan_load(weights),
+        "units": {"fuel": _text(fuel.get("units"), 8).upper(), "weight": _text(weights.get("units"), 8).upper()},
+    }
+
+
+def _op_snapshot(sample: dict[str, Any], at: str, estimated: bool = False) -> dict[str, Any]:
+    """Immutable operational snapshot captured at an event moment.
+
+    Reads only what the sample carries at that instant; missing optional
+    weights stay None (never fabricated).  Once stored, a snapshot is never
+    overwritten by later samples.
+    """
+    fuel_lb = _number(sample.get("fuel_total_lb"))
+    gross = _number(sample.get("gross_weight_lb"))
+    return {
+        "time_utc": at,
+        "telemetry_source": _text(sample.get("source")),
+        "fuel_lb": fuel_lb,
+        "gross_weight_lb": gross,
+        "empty_weight_lb": _number(sample.get("empty_weight_lb")),
+        "payload_weight_lb": _number(sample.get("payload_weight_lb")),
+        "calculated_zfw_lb": round(gross - fuel_lb, 1) if gross is not None and fuel_lb is not None and gross >= fuel_lb else None,
+        "max_zero_fuel_weight_lb": _number(sample.get("max_zero_fuel_weight_lb")),
+        "max_takeoff_weight_lb": _number(sample.get("max_takeoff_weight_lb")),
+        "max_landing_weight_lb": _number(sample.get("max_landing_weight_lb")),
+        "estimated": bool(estimated),
+        "confidence": "estimated" if estimated else "verified",
+    }
+
+
 def _plan_snapshot(plan: dict[str, Any] | None) -> dict[str, Any]:
     p = plan or {}
     aircraft = p.get("aircraft") if isinstance(p.get("aircraft"), dict) else {}
@@ -219,6 +311,9 @@ def _plan_snapshot(plan: dict[str, Any] | None) -> dict[str, Any]:
         lat, lon = _number(item.get("latitude")), _number(item.get("longitude"))
         if lat is not None and lon is not None:
             navlog.append({"ident": _text(item.get("ident"), 12).upper(), "lat": lat, "lon": lon, "altitude_ft": _number(item.get("altitude_ft"))})
+    bag_count = _number(weights.get("bag_count"))
+    bag_weight = _number(weights.get("bag_weight"))
+    baggage_total = round(bag_count * bag_weight, 1) if bag_count is not None and bag_weight is not None else None
     return {
         "callsign": _text(p.get("callsign"), 20),
         "airline": _text(p.get("airline"), 4).upper(),
@@ -236,19 +331,34 @@ def _plan_snapshot(plan: dict[str, Any] | None) -> dict[str, Any]:
         "distance_nm": _number(p.get("distance_nm")),
         "ete_seconds": _number(p.get("ete_seconds")),
         "block_time_seconds": _number(p.get("block_time_seconds")),
-        "scheduled_out_utc": times.get("scheduled_out_utc"),
-        "scheduled_off_utc": times.get("scheduled_off_utc"),
-        "scheduled_on_utc": times.get("scheduled_on_utc"),
-        "scheduled_in_utc": times.get("scheduled_in_utc"),
+        "scheduled_out_utc": _first_text(times.get("scheduled_out"), times.get("scheduled_out_utc")),
+        "scheduled_off_utc": _first_text(times.get("scheduled_off"), times.get("scheduled_off_utc")),
+        "scheduled_on_utc": _first_text(times.get("scheduled_on"), times.get("scheduled_on_utc")),
+        "scheduled_in_utc": _first_text(times.get("scheduled_in"), times.get("scheduled_in_utc")),
         "fuel_units": _text(fuel.get("units"), 8).upper(),
+        "planned_ramp_fuel": _number(fuel.get("ramp")),
+        "planned_takeoff_fuel": _number(fuel.get("takeoff")),
         "planned_trip_fuel": _number(fuel.get("trip")),
         "planned_landing_fuel": _number(fuel.get("landing")),
+        "planned_reserve_fuel": _number(fuel.get("reserve")),
+        "planned_alternate_fuel": _number(fuel.get("alternate")),
+        "planned_extra_fuel": _number(fuel.get("extra")),
         "weight_units": _text(weights.get("units"), 8).upper(),
         "passengers": _number(weights.get("passengers")),
         "cargo": _number(weights.get("cargo")),
+        "cargo_hold_total": _number(weights.get("cargo")),
+        "baggage_weight": baggage_total,
+        "commercial_freight_weight": _number(weights.get("freight_added")),
         "payload": _number(weights.get("payload")),
+        "planned_zfw": _number(weights.get("zfw")),
         "planned_tow": _number(weights.get("tow")),
         "planned_ldw": _number(weights.get("ldw")),
+        "planned_max_zfw": _number(weights.get("max_zfw")),
+        "planned_max_tow": _number(weights.get("max_tow")),
+        "planned_max_ldw": _number(weights.get("max_ldw")),
+        "operation_type_requested": _text(p.get("operation_type_requested")) or "auto",
+        "operation_type_resolved": _resolve_plan_operation(weights).get("resolved", "auto"),
+        "ofp_plan": _ofp_plan_nested(p),
     }
 
 
@@ -483,7 +593,9 @@ def _backward_motion_active(sample: dict[str, Any]) -> bool:
     if sample.get("on_ground") is not True and sample.get("ground_safe") is not True:
         return False
     gs = _number(sample.get("ground_speed_kts")) or 0.0
-    if gs < 0.5 or gs > 5.0:
+    # v0.25.72 (#12): MSFS ground speed routinely reads 6-10 kt while a tug is
+    # pushing, so the tug envelope is raised from 5 kt to 10 kt.
+    if gs < 0.5 or gs > 10.0:
         return False
     body_vx = _number(sample.get("body_velocity_x_fps"))
     if body_vx is not None and body_vx <= -1.5:
@@ -494,6 +606,25 @@ def _backward_motion_active(sample: dict[str, Any]) -> bool:
         return False
     delta = abs(((track - heading) + 180.0) % 360.0 - 180.0)
     return delta >= 150.0
+
+
+def _forward_motion_evidence(sample: dict[str, Any]) -> bool | None:
+    """True when the aircraft is moving forward (not being pushed tail-first).
+
+    Returns None when the direction data is unavailable — callers treat None
+    as "do not block" so missing body-velocity/track data never freezes the
+    phase, while explicit backward motion (body X strongly negative or track
+    ~180° opposite the nose) always blocks a fast-taxi override.
+    """
+    body_vx = _number(sample.get("body_velocity_x_fps"))
+    if body_vx is not None and abs(body_vx) > 2.0:
+        return body_vx > 0.0
+    heading = _number(sample.get("heading_deg"))
+    track = _number(sample.get("track_deg"))
+    if heading is None or track is None:
+        return None
+    delta = abs(((track - heading) + 180.0) % 360.0 - 180.0)
+    return delta < 90.0
 
 
 def _altitude_reliable(sample: dict[str, Any]) -> bool:
@@ -564,14 +695,20 @@ def _new_meta(t: dict[str, Any], plan: dict[str, Any] | None, manual: bool) -> d
         "airports": {"start": airport, "takeoff": None, "landing": None, "end": None},
         "positions": {"start": _position(t), "takeoff": None, "landing": None, "end": None},
         "fuel": {"start_lb": fuel, "departure_baseline_lb": fuel, "takeoff_lb": None, "landing_lb": None, "end_lb": None, "current_lb": fuel, "used_lb": 0.0},
+        "operational_snapshots": {"start": {}, "out": {}, "off": {}, "on": {}, "in": {}},
         "metrics": {"distance_nm": 0.0, "max_altitude_ft": None if t.get("altitude_unreliable") else _first_number(t.get("indicated_altitude_ft"), t.get("altitude_ft")), "max_ias_kts": _number(t.get("indicated_speed_kts")), "max_ground_speed_kts": _number(t.get("ground_speed_kts")), "max_climb_fpm": max(0.0, _number(t.get("vertical_speed_fpm")) or 0.0), "max_descent_fpm": min(0.0, _number(t.get("vertical_speed_fpm")) or 0.0), "max_bank_deg": abs(_number(t.get("bank_deg")) or 0.0), "max_g": _number(t.get("g_force")), "min_g": _number(t.get("g_force")), "landing_rate_fpm": None, "touchdown_speed_kts": None, "touchdown_g": None, "touchdowns": 0, "bounce_count": 0, "bounce_penalty": 0, "bounce_severity": None, "max_cross_track_nm": None, "average_cross_track_nm": None},
         "events": [], "violations": [], "notes": "", "rating": 0,
         "_state": {"last_sample": None, "airborne_seen": False, "approach_seen": False, "cross_track_sum": 0.0, "cross_track_count": 0, "connection_lost_at": None, "violations_seen": {}, "fuel_used_accum_lb": 0.0, "fuel_last_lb": fuel, "fuel_last_source": str(t.get("source") or "")},
     }
     _event(meta, "RECORDING", "Manual flight recording started" if manual else "Automatic flight recording started", now)
+    snapshots = meta["operational_snapshots"]
+    snapshots["start"] = _op_snapshot(t, now)
     if manual and _telemetry_confirms_airborne(t):
         meta["times"]["block_out"] = now; meta["times"]["takeoff"] = now
         meta["positions"]["takeoff"] = _position(t); meta["airports"]["takeoff"] = airport; meta["fuel"]["takeoff_lb"] = fuel
+        # Manual mid-air starts: departure values are estimated, never exact.
+        snapshots["out"] = _op_snapshot(t, now, estimated=True)
+        snapshots["off"] = _op_snapshot(t, now, estimated=True)
         meta["_state"]["airborne_seen"] = True
         meta["_state"]["confirmed_airborne_seen"] = True
         _event(meta, "AIRBORNE", "Manual recording began after confirmed airborne telemetry; departure times are estimated", now, "warning")
@@ -616,7 +753,7 @@ def _phase(sample: dict[str, Any], meta: dict[str, Any]) -> str:
     if not pushback_active and not state.get("pushback_forward_taxi_proven"):
         pushback_active = _gsx_pushback_active() or _backward_motion_active(sample)
     if sample.get("on_ground") is True or sample.get("ground_safe") is True:
-        if pushback_active and gs <= 5.0:
+        if pushback_active and gs <= 10.0:
             return "PUSHBACK"
         if gs < 1:
             return "PARKED"
@@ -801,19 +938,23 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
     now_epoch = _epoch(now) or time.time()
     taxi_speed = float(gs or 0.0)
 
-    # Fast taxi-out override: ground speed >5kts is real taxi movement and
-    # immediately overrides any stale GSX pushback state.  A tug pushing an
-    # aircraft never exceeds 5 kt, so any single sample above that threshold
-    # proves the aircraft is taxiing under its own power.
+    # Fast taxi-out override: ground speed above the tug envelope with forward
+    # motion evidence is real taxi movement and overrides any stale GSX
+    # pushback state.  A tug pushing an aircraft stays below ~10 kt and pushes
+    # it backward — so a forward-moving sample above the envelope proves the
+    # aircraft is taxiing under its own power (v0.25.72, #12: gate raised from
+    # 5 kt and now direction-gated so a 6-7 kt pushback sample can never
+    # demote a latched pushback).
+    forward_motion = _forward_motion_evidence(current)
     gs_counter = int(state.get("taxi_out_gs_counter") or 0)
-    if grounded and brake_released and taxi_speed > 5.0:
+    if grounded and brake_released and taxi_speed > 10.0 and forward_motion is not False:
         gs_counter += 1
         state["taxi_out_gs_counter"] = gs_counter
         if gs_counter >= 1 and pushback_latched:
             state["pushback_completed"] = True
             state["pushback_completed_at"] = now
             if not state.get("taxi_out_gs_logged"):
-                _event(meta, "TAXI OUT", f"Taxi-out confirmed (GS >5kt); overriding stale pushback", now)
+                _event(meta, "TAXI OUT", f"Taxi-out confirmed (GS >10kt, forward motion); overriding stale pushback", now)
                 state["taxi_out_gs_logged"] = True
             state["pushback_forward_taxi_proven"] = True
             pushback_latched = False
@@ -937,11 +1078,11 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
     # is clear. The confirmed_airborne branch is intentionally never gated here.
     tug_pushback_active = bool(current.get("pushback_active"))
     if not times.get("block_out") and ((current.get("confirmed_airborne") and not _gsx_predeparture_active()) or (current.get("on_ground") is True and gs >= 1.5 and systems_moving and not tug_pushback_active)):
-        times["block_out"] = now; _event(meta, "BLOCK OUT", f"Movement began near {(airport or {}).get('icao','unknown station')}", now)
+        times["block_out"] = now; _out_snapshots = meta.setdefault("operational_snapshots", {}); _out_snapshots.setdefault("out", _op_snapshot(current, now)); _event(meta, "BLOCK OUT", f"Movement began near {(airport or {}).get('icao','unknown station')}", now)
     previous_ground = previous.get("on_ground") if previous else None
     previous_airborne = bool(previous and previous.get("confirmed_airborne"))
     if not times.get("takeoff") and current.get("confirmed_airborne"):
-        times["takeoff"] = now; meta["positions"]["takeoff"] = {"lat": current.get("lat"), "lon": current.get("lon"), "altitude_ft": current.get("altitude_ft")}; meta["airports"]["takeoff"] = airport; fuel["takeoff_lb"] = current.get("fuel_total_lb"); state["airborne_seen"] = True; state["confirmed_airborne_seen"] = True
+        times["takeoff"] = now; meta["positions"]["takeoff"] = {"lat": current.get("lat"), "lon": current.get("lon"), "altitude_ft": current.get("altitude_ft")}; meta["airports"]["takeoff"] = airport; fuel["takeoff_lb"] = current.get("fuel_total_lb"); meta["operational_snapshots"]["off"] = _op_snapshot(current, now); state["airborne_seen"] = True; state["confirmed_airborne_seen"] = True
         _event(meta, "TAKEOFF", f"Airborne near {(airport or {}).get('icao','departure')}", now)
     if current.get("confirmed_airborne"):
         state["airborne_seen"] = True; state["confirmed_airborne_seen"] = True
@@ -981,6 +1122,7 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
             }
             meta["airports"]["landing"] = airport
             fuel["landing_lb"] = current.get("fuel_total_lb")
+            meta["operational_snapshots"]["on"] = _op_snapshot(current, now)
             touchdown_speed = (_number(previous.get("raw_ground_speed_kts")) or previous.get("ground_speed_kts")) if previous else (_number(current.get("raw_ground_speed_kts")) or gs)
             metrics["landing_rate_fpm"] = rate
             metrics["touchdown_speed_kts"] = touchdown_speed
@@ -1057,7 +1199,7 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
     state["last_sample"] = current
     if times.get("landing") and current.get("on_ground") and gs < 1 and current.get("parking_brake") is True and current.get("engines_running") is False:
         if not times.get("block_in"):
-            times["block_in"] = now; meta["airports"]["end"] = airport; meta["positions"]["end"] = {"lat": current.get("lat"), "lon": current.get("lon"), "altitude_ft": current.get("altitude_ft")}; fuel["end_lb"] = current.get("fuel_total_lb")
+            times["block_in"] = now; meta["airports"]["end"] = airport; meta["positions"]["end"] = {"lat": current.get("lat"), "lon": current.get("lon"), "altitude_ft": current.get("altitude_ft")}; fuel["end_lb"] = current.get("fuel_total_lb"); meta["operational_snapshots"]["in"] = _op_snapshot(current, now)
             _event(meta, "BLOCK IN", f"Aircraft parked at {(airport or {}).get('icao','destination')}", now)
         return True
     return False
@@ -1113,6 +1255,19 @@ def _active_row() -> tuple[sqlite3.Row, dict[str, Any]] | None:
         row = conn.execute("SELECT * FROM flights WHERE status='RECORDING' ORDER BY started_utc DESC LIMIT 1").fetchone()
     if not row: return None
     return row, json.loads(row["metadata_json"])
+
+
+def get_active_recorder() -> dict[str, Any] | None:
+    """Return the active recorder's metadata dict (or None).
+
+    Public read-only accessor used by the live OFP endpoint; never mutates
+    recorder state.
+    """
+    row = _active_row()
+    if not row:
+        return None
+    _db_row, meta = row
+    return meta
 
 
 def _boarding_started() -> bool:
@@ -1842,6 +1997,25 @@ def latest_landing() -> dict[str, Any]:
             return payload
     return {"ok": True, "id": None}
 
+def latest_completed() -> dict[str, Any] | None:
+    """Return the full metadata of the most recent completed flight, or None.
+
+    Used by the live OFP endpoint after block-in so the completion panel keeps
+    showing final values once the active recorder has been finalized.
+    """
+    _init_db_safe()
+    with _connect() as conn:
+        rows = conn.execute("SELECT id, metadata_json, updated_utc FROM flights WHERE status!='RECORDING' ORDER BY completed_utc DESC, started_utc DESC LIMIT 1").fetchall()
+    if not rows:
+        return None
+    row = rows[0]
+    try:
+        meta = json.loads(row["metadata_json"])
+    except (TypeError, ValueError):
+        return None
+    meta["updated_utc"] = str(row["updated_utc"] or "")
+    return _attach_airline_branding(meta)
+
 def start_departure_services(reason: str = "Begin Departure Services") -> dict[str, Any]:
     """Start/arm one recorder session from the GSX departure workflow."""
     if _replay_guarded():
@@ -1966,10 +2140,29 @@ def telemetry(entry_id: str, max_points: int = 1800) -> dict[str, Any]:
             raw_samples.append({"elapsed_seconds": row["elapsed_seconds"], **json.loads(row["data_json"])})
         except Exception:
             continue
-    try:
-        analysis = analyse_pirep(meta, raw_samples)
-    except Exception as exc:
-        analysis = {"ok": False, "reason": f"PIREP analysis failed: {type(exc).__name__}: {exc}"}
+    # v0.25.72 (#21): short-TTL analysis cache. analyse_pirep re-runs the full
+    # sanitizer and NOTAM footnotes on every request, and for a still-RECORDING
+    # flight nothing was cached — each chart/PIREP load repeated it. 30 s keeps
+    # repeated loads cheap while staying fresh for an active flight.
+    analysis_cache_key = f"analysis:{entry_id}"
+    cached_analysis = _ANALYSIS_CACHE.get(analysis_cache_key)
+    if cached_analysis and time.time() - cached_analysis[0] <= _ANALYSIS_CACHE_TTL:
+        analysis = cached_analysis[1]
+    else:
+        try:
+            analysis = analyse_pirep(meta, raw_samples)
+        except Exception as exc:
+            analysis = {"ok": False, "reason": f"PIREP analysis failed: {type(exc).__name__}: {exc}"}
+        _ANALYSIS_CACHE[analysis_cache_key] = (time.time(), analysis)
+        if len(_ANALYSIS_CACHE) > 200:
+            # Prune in place — a bare-name rebind would make _ANALYSIS_CACHE a
+            # local and break the read at the top of this function (#23).
+            # Build the kept items first: clearing before reading would drop
+            # every recent entry.
+            cutoff = time.time() - _ANALYSIS_CACHE_TTL
+            kept = {key: value for key, value in _ANALYSIS_CACHE.items() if value[0] >= cutoff}
+            _ANALYSIS_CACHE.clear()
+            _ANALYSIS_CACHE.update(kept)
     total = len(rows); stride = max(1, math.ceil(total / max(50, min(max_points, 5000))))
     selected = [raw_samples[i] for i in range(0, total, stride)]
     if raw_samples and (not selected or selected[-1]["elapsed_seconds"] != raw_samples[-1]["elapsed_seconds"]):
@@ -1992,9 +2185,18 @@ def telemetry(entry_id: str, max_points: int = 1800) -> dict[str, Any]:
             expected_agl = distance * 6076.12 * math.tan(math.radians(3.0))
             item["ideal_3deg_agl_ft"] = round(expected_agl, 1)
             if actual_agl is not None:
-                item["approach_agl_ft"] = round(actual_agl, 1)
-                if distance <= 25:
-                    item["glidepath_deviation_ft"] = round(actual_agl - expected_agl, 1)
+                # v0.25.72 (#21): MSFS RADIO_HEIGHT is not clamped like a real
+                # radio altimeter (it reads 20-30k ft at altitude), so samples
+                # above 5,000 ft AGL are never approach data — null them so the
+                # approach charts can't draw absurd peaks from the en-route
+                # descent that happens to pass within 20 NM of the runway.
+                if actual_agl > 5000.0:
+                    item["approach_agl_ft"] = None
+                    item["glidepath_deviation_ft"] = None
+                else:
+                    item["approach_agl_ft"] = round(actual_agl, 1)
+                    if distance <= 25:
+                        item["glidepath_deviation_ft"] = round(actual_agl - expected_agl, 1)
         item["ground_contact_plot"] = 25.0 if item.get("on_ground") else 0.0
         samples.append(item)
     return {
@@ -2010,18 +2212,75 @@ def telemetry(entry_id: str, max_points: int = 1800) -> dict[str, Any]:
     }
 
 
+def entry_ids() -> list[str]:
+    """Every stored flight id, oldest first (lightweight single-column read).
+
+    Used to prune derived stores (e.g. manual OFP overrides) whose keys are
+    Logbook entry ids, so data for deleted flights does not accumulate.
+    Returns [] on any failure -- pruning callers treat that as "keep
+    everything" via their own guards.
+    """
+    try:
+        with _connect() as conn:
+            return [str(row[0]) for row in conn.execute("SELECT id FROM flights ORDER BY started_utc ASC")]
+    except Exception:
+        return []
+
+
+def _manual_overrides(entry_id: str | None) -> dict[str, Any]:
+    """Stored manual OFP overrides for an entry; empty when there are none.
+
+    Read-only peek at the live OFP override store (the live panel is the only
+    writer).  Exports attach the result as an extra key or trailing column and
+    never overwrite existing values, so pilot corrections survive into the
+    permanent record without altering any legacy field.
+    """
+    try:
+        from .ofp_overrides import get_overrides
+
+        return dict(get_overrides(str(entry_id or "")))
+    except Exception:
+        return {}
+
+
+_EXPORT_VERSION: str | None = None
+
+
+def _export_version() -> str:
+    """Current app version for export stamps, read from ``version.json``.
+
+    Exports carry the real build label instead of a hardcoded release string
+    that would go stale.  Falls back to the previous label only when the
+    version file is missing (dev checkouts) so exports stay truthful.
+    """
+    global _EXPORT_VERSION
+    if _EXPORT_VERSION is None:
+        try:
+            raw = (Path(__file__).resolve().parent.parent / "version.json").read_text(encoding="utf-8")
+            _EXPORT_VERSION = str(json.loads(raw).get("version") or "0.25.9")
+        except Exception:
+            _EXPORT_VERSION = "0.25.9"
+    return _EXPORT_VERSION
+
+
 def export_json(query: str = "") -> bytes:
-    payload = {"product": "OPS ROOM", "version": "0.25.9", "schema": _SCHEMA, "exported_utc": _utc_now(), "query": query, "entries": _rows(query, 5000)}
+    entries = _rows(query, 5000)
+    for entry in entries:
+        overrides = _manual_overrides(entry.get("id"))
+        if overrides:
+            entry["manual_overrides"] = overrides
+    payload = {"product": "OPS ROOM", "version": _export_version(), "schema": _SCHEMA, "exported_utc": _utc_now(), "query": query, "entries": entries}
     return (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
 def export_csv(query: str = "") -> bytes:
     entries = _rows(query, 5000); output = io.StringIO(newline="")
-    fields = ["date_utc","callsign","origin","destination","aircraft","registration","status","telemetry_source","block_out_utc","takeoff_utc","landing_utc","block_in_utc","block_seconds","airborne_seconds","distance_nm","fuel_used_lb","landing_rate_fpm","touchdown_speed_kts","touchdowns","score","landing_grade","violations","rating","notes"]
+    fields = ["date_utc","callsign","origin","destination","aircraft","registration","status","telemetry_source","block_out_utc","takeoff_utc","landing_utc","block_in_utc","block_seconds","airborne_seconds","distance_nm","fuel_used_lb","landing_rate_fpm","touchdown_speed_kts","touchdowns","score","landing_grade","violations","rating","notes","manual_overrides"]
     writer = csv.DictWriter(output, fieldnames=fields); writer.writeheader()
     for e in entries:
         f=e.get("flight") or {}; a=e.get("aircraft") or {}; t=e.get("times") or {}; d=e.get("durations") or {}; m=e.get("metrics") or {}; fuel=e.get("fuel") or {}; de=e.get("debrief") or {}
-        writer.writerow({"date_utc":(e.get("started_utc") or "")[:10],"callsign":f.get("callsign"),"origin":f.get("origin"),"destination":f.get("destination"),"aircraft":f.get("aircraft_icao") or a.get("model") or a.get("title"),"registration":f.get("registration"),"status":e.get("state") or e.get("status"),"telemetry_source":e.get("telemetry_source"),"block_out_utc":t.get("block_out"),"takeoff_utc":t.get("takeoff"),"landing_utc":t.get("landing"),"block_in_utc":t.get("block_in"),"block_seconds":d.get("block_seconds"),"airborne_seconds":d.get("airborne_seconds"),"distance_nm":m.get("distance_nm"),"fuel_used_lb":fuel.get("used_lb"),"landing_rate_fpm":m.get("landing_rate_fpm"),"touchdown_speed_kts":m.get("touchdown_speed_kts"),"touchdowns":m.get("touchdowns"),"score":de.get("score"),"landing_grade":de.get("landing_grade"),"violations":len(e.get("violations") or []),"rating":e.get("rating",0),"notes":e.get("notes","")})
+        overrides = _manual_overrides(e.get("id"))
+        writer.writerow({"date_utc":(e.get("started_utc") or "")[:10],"callsign":f.get("callsign"),"origin":f.get("origin"),"destination":f.get("destination"),"aircraft":f.get("aircraft_icao") or a.get("model") or a.get("title"),"registration":f.get("registration"),"status":e.get("state") or e.get("status"),"telemetry_source":e.get("telemetry_source"),"block_out_utc":t.get("block_out"),"takeoff_utc":t.get("takeoff"),"landing_utc":t.get("landing"),"block_in_utc":t.get("block_in"),"block_seconds":d.get("block_seconds"),"airborne_seconds":d.get("airborne_seconds"),"distance_nm":m.get("distance_nm"),"fuel_used_lb":fuel.get("used_lb"),"landing_rate_fpm":m.get("landing_rate_fpm"),"touchdown_speed_kts":m.get("touchdown_speed_kts"),"touchdowns":m.get("touchdowns"),"score":de.get("score"),"landing_grade":de.get("landing_grade"),"violations":len(e.get("violations") or []),"rating":e.get("rating",0),"notes":e.get("notes",""),"manual_overrides":json.dumps(overrides, separators=(",", ":")) if overrides else ""})
     return output.getvalue().encode("utf-8-sig")
 
 
@@ -2365,7 +2624,7 @@ def _pdf_base_page(c, title: str, route: str, page_no: int, page_total: int, sco
     c.setFillColor(_pdf_color('#68c8d9')); c.setFont('Helvetica-Bold', 7.5); c.drawString(96, height - 28, 'FLIGHT ANALYSIS')
     c.setFillColor(_pdf_color('#f4f1e9')); c.setFont('Helvetica-Bold', 15); c.drawCentredString(width / 2, height - 28, title)
     c.setFillColor(_pdf_color('#9ba4aa')); c.setFont('Helvetica', 8); c.drawRightString(width - 24, height - 28, route)
-    c.setFillColor(_pdf_color('#778188')); c.setFont('Helvetica', 6.5); c.drawString(24, 13, 'OPS ROOM v0.25.9')
+    c.setFillColor(_pdf_color('#778188')); c.setFont('Helvetica', 6.5); c.drawString(24, 13, f'OPS ROOM v{_export_version()}')
     c.drawRightString(width - 24, 13, f'PAGE {page_no} / {page_total}')
     if score is not None:
         c.setFillColor(_pdf_color('#68c8d9')); c.setFont('Helvetica-Bold', 10); c.drawRightString(width - 24, height - 53, f'SCORE {score} / 100')
@@ -2795,8 +3054,13 @@ def _pirep_snapshot_html(entry_id: str, settings_payload: dict[str, Any] | None 
     js_text = (static_dir / "pirep.js").read_text(encoding="utf-8")
     print_css = (static_dir / "pirep_print.css").read_text(encoding="utf-8")
     print_js = (static_dir / "pirep_print.js").read_text(encoding="utf-8")
+    try:
+        from .ofp_actuals import build_live_ofp_actuals, plan_from_entry
+        ofp_completion = build_live_ofp_actuals(plan_from_entry(entry), None, completed_entry=entry, overrides=_manual_overrides(entry_id))
+    except Exception:
+        ofp_completion = {"ok": False, "state": "unavailable", "reason": "OFP completion build failed"}
     payload = json.dumps(
-        {"entry": entry, "telemetry": telemetry_payload, "settings": public_settings},
+        {"entry": entry, "telemetry": telemetry_payload, "settings": public_settings, "ofp_completion": ofp_completion},
         ensure_ascii=False,
         separators=(",", ":"),
     ).replace("</", "<\\/")
@@ -3032,7 +3296,7 @@ def _build_pdf(entries: list[dict[str, Any]], detailed: bool, telemetry_map: dic
     from reportlab.lib.units import mm
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether, CondPageBreak
     buffer=io.BytesIO(); pagesize=A4 if detailed else landscape(A4); doc=SimpleDocTemplate(buffer,pagesize=pagesize,rightMargin=12*mm,leftMargin=12*mm,topMargin=12*mm,bottomMargin=12*mm,title="OPS ROOM PIREP")
-    styles=getSampleStyleSheet(); styles.add(ParagraphStyle(name='OpsSmall',parent=styles['BodyText'],fontSize=7.5,leading=9)); story=[Paragraph("OPS ROOM - FLIGHT DEBRIEF / PIREP" if detailed else "OPS ROOM - LOGBOOK EXPORT", styles['Title']),Paragraph(f"Generated {_utc_now()} - OPS ROOM v0.25.9",styles['OpsSmall']),Spacer(1,6)]
+    styles=getSampleStyleSheet(); styles.add(ParagraphStyle(name='OpsSmall',parent=styles['BodyText'],fontSize=7.5,leading=9));    story=[Paragraph("OPS ROOM - FLIGHT DEBRIEF / PIREP" if detailed else "OPS ROOM - LOGBOOK EXPORT", styles['Title']),Paragraph(f"Generated {_utc_now()} - OPS ROOM v{_export_version()}",styles['OpsSmall']),Spacer(1,6)]
     if not entries: story.append(Paragraph("No completed flights are available.",styles['BodyText']))
     for index,e in enumerate(entries):
         f=e.get('flight') or {}; a=e.get('aircraft') or {}; t=e.get('times') or {}; d=e.get('durations') or {}; m=e.get('metrics') or {}; fuel=e.get('fuel') or {}; de=e.get('debrief') or {}

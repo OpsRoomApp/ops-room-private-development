@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, Response, RedirectResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import MutableHeaders
 
 from .board_logic import build_board, busiest_airports, airport_traffic_counts
 from .data_loader import airport_option, airport_to_dict, load_airports, logo_status, nearest_airport, nearest_airports, search_airports, stand_sources_status
@@ -21,7 +22,7 @@ from .simconnect_position import read_position, simconnect_diagnostics, radio_st
 from .vatsim_client import get_vatsim_data, CACHE_SECONDS
 from .weather_client import fetch_metar, fetch_realworld_atis
 from . import nms_client
-from . import notam_client  # v0.25.63: server-side NOTAM store client (DB-first)
+from . import notam_client  # v0.25.65: server-side NOTAM store client (DB-first)
 from .realworld import router as realworld_router, _DEBUG_ROUTER as realworld_debug_router, start_background_refresh
 from .camera_state import get_target, set_target, set_view as set_camera_view_state, reset_view as reset_camera_view_state, release_camera as release_camera_state
 from .scratchpad import scratchpad_status, scratchpad_get_page, scratchpad_save_page, scratchpad_clear_page
@@ -51,7 +52,7 @@ from .hoppie_client import status as hoppie_status, ping as hoppie_ping, poll_on
 from .procedures import build_procedures
 from .economy import public_status as economy_status, configure as economy_configure, estimate_statement as economy_estimate_statement
 from .non_normal_profiles import build_non_normal
-from .telemetry_provider import telemetry_diagnostics, reselect_telemetry, start_telemetry_engine, shutdown_telemetry_engine
+from .telemetry_provider import read_telemetry, telemetry_diagnostics, reselect_telemetry, start_telemetry_engine, shutdown_telemetry_engine
 from .black_box import status as black_box_status, stop_recording as black_box_stop_recording, list_recordings as black_box_list, recording as black_box_recording, samples as black_box_samples, live_snapshot as black_box_live, file_path as black_box_file, export_csv as black_box_export_csv, export_gpx as black_box_export_gpx, export_kml as black_box_export_kml, recover_interrupted as black_box_recover, shutdown as black_box_shutdown, diagnose as black_box_diagnose, start_watchdog as black_box_start_watchdog
 from .black_box_replay import status as black_box_replay_status, start as black_box_replay_start, control as black_box_replay_control, stop as black_box_replay_stop, shutdown as black_box_replay_shutdown
 from .module_preloader import register as _preloader_register, prewarm_all as _preloader_prewarm_all, status as _preloader_status, diagnostics as _preloader_diagnostics
@@ -93,17 +94,20 @@ from .device_security import enabled as device_security_enabled, pairing_code as
 from .bug_report import public_status as bug_report_status, report_summary as bug_report_summary, create_diagnostics_zip as bug_report_create_zip, send_report as bug_report_send_report
 from .storage_maintenance import storage_status, clear_local_logs_cache
 from .updater import check_for_update, prepare_update, launch_prepared_update
-from .printer_client import list_printers as printer_list, print_receipt as printer_receipt, test_print as printer_test, status as printer_status, format_cpdlc_receipt as printer_format_cpdlc, generate_receipt_preview as printer_generate_preview
+from .printer_client import list_printers as printer_list, print_receipt as printer_receipt, test_print as printer_test, status as printer_status, format_cpdlc_receipt as printer_format_cpdlc, generate_receipt_preview as printer_generate_preview, format_ofp_receipt as printer_format_ofp, format_gsx_receipt as printer_format_gsx
 from .logbook import (
     status as logbook_status, start_manual as logbook_start, finalize_active as logbook_finalize,
     discard_active as logbook_discard, force_discard_active as logbook_force_discard, update_entry as logbook_update, delete_entry as logbook_delete,
     latest_landing as logbook_latest_landing,
+    get_active_recorder as logbook_active_recorder, latest_completed as logbook_latest_completed,
     export_csv as logbook_export_csv, export_json as logbook_export_json, export_pdf as logbook_export_pdf, export_entry_pdf as logbook_export_entry_pdf, telemetry as logbook_telemetry, get_entry as logbook_get_entry, start_engine as start_logbook_engine,
 )
+from .ofp_actuals import build_live_ofp_actuals, plan_from_entry
+from .ofp_overrides import get_overrides, set_overrides, remove_override, clear_overrides
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="OPS ROOM", version="0.25.63")
+app = FastAPI(title="OPS ROOM", version="0.25.73")
 app.include_router(realworld_router)
 app.include_router(realworld_debug_router)
 app.add_middleware(GZipMiddleware, minimum_size=512)
@@ -123,6 +127,25 @@ def _opsroom_startup_autofetch_ofp() -> None:
         start_nms_tfr_alerting()
     except Exception as exc:
         _LOGGER.debug("NMS TFR alerting start skipped: %s", exc)
+    # v0.25.71: NOTAM closure-marker in-sim INJECTION / DEPLOYMENT is SHELVED.
+    # The backend below is kept in the codebase but commented out (we will
+    # re-enable it later): the auto-deploy loop, its start hook and the
+    # deploy endpoints are disabled, and the Briefing -> NOTAMS deploy panel
+    # is hidden. The closure PARSING + proximity-alert layers stay active.
+    # try:
+    #     start_marker_auto_deploy()
+    # except Exception as exc:
+    #     _LOGGER.debug("closure marker auto-deploy start skipped: %s", exc)
+    # v0.25.65: prune manual OFP overrides for flights no longer in the Logbook.
+    try:
+        from .logbook import entry_ids as logbook_entry_ids
+        from .ofp_overrides import prune_orphaned
+
+        removed = prune_orphaned(logbook_entry_ids())
+        if removed:
+            _LOGGER.info("OFP override pruning: removed %d orphaned override set(s)", removed)
+    except Exception as exc:
+        _LOGGER.debug("OFP override pruning skipped: %s", exc)
     # v0.25.60: purge stale ChartFox cache files from previous builds on every cold start.
     def _chartfox_cleanup() -> None:
         try:
@@ -208,6 +231,24 @@ def _opsroom_shutdown() -> None:
         shutdown_telemetry_engine()
     except Exception:
         pass
+    # v0.25.68: close the SimConnect sessions (telemetry + closure markers)
+    # so their dispatch threads stop polling during teardown -- otherwise the
+    # wrapper floods ``OS error: WinError 0xc00000b0`` and uvicorn hangs until
+    # the launcher force-kills after 5 s (the slow-reload symptom).
+    try:
+        from .simconnect_position import close_session as _close_sc_session
+
+        _close_sc_session()
+    except Exception:
+        pass
+    # v0.25.71: closure-marker SimConnect teardown is shelved with the rest
+    # of the in-sim injection backend (no session is ever opened now).
+    # try:
+    #     from .closure_markers import shutdown_markers as _shutdown_markers
+    #
+    #     _shutdown_markers()
+    # except Exception:
+    #     pass
     try:
         black_box_replay_shutdown()
     except Exception:
@@ -322,28 +363,66 @@ async def opsroom_unhandled_exception_handler(request: Request, exc: Exception):
 _DEVICE_PUBLIC_PATHS = ("/pair", "/static/", "/assets/")
 _STATIC_CACHE_PATHS = ("/static/", "/assets/")
 
-@app.middleware("http")
-async def static_cache_headers(request: Request, call_next):
-    response = await call_next(request)
-    if any(request.url.path.startswith(p) for p in _STATIC_CACHE_PATHS):
-        response.headers["Cache-Control"] = "public, max-age=86400, immutable"
-    return response
+
+class _PureASGIStaticCacheHeaders:
+    """Pure-ASGI static-cache header middleware (v0.25.69).
+
+    Starlette's ``@app.middleware("http")`` is BaseHTTPMiddleware, which runs
+    every request in its own task group; when uvicorn's graceful-shutdown
+    timeout cancels in-flight requests, that task group raises CancelledError
+    and every request logged an "Exception in ASGI application" traceback
+    storm on exit. A plain ASGI middleware awaits the downstream app directly
+    so cancellation propagates silently and shutdown stays clean.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "")
+        if not any(path.startswith(p) for p in _STATIC_CACHE_PATHS):
+            return await self.app(scope, receive, send)
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)["Cache-Control"] = "public, max-age=86400, immutable"
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
 
 
-@app.middleware("http")
-async def trusted_device_gate(request: Request, call_next):
-    host = request.client.host if request.client else ""
-    if is_local_address(host) or not device_security_enabled():
-        return await call_next(request)
-    path = request.url.path
-    if path == "/pair" or any(path.startswith(prefix) for prefix in _DEVICE_PUBLIC_PATHS[1:]):
-        return await call_next(request)
-    token = request.cookies.get(device_cookie_name())
-    if validate_device(token, address=host):
-        return await call_next(request)
-    if request.method == "GET" and not path.startswith("/api/"):
-        return RedirectResponse(url="/pair", status_code=307)
-    return JSONResponse({"detail": "This device has not been paired with the OPS ROOM host."}, status_code=401)
+class _PureASGITrustedDeviceGate:
+    """Pure-ASGI device-pairing gate (same behaviour as the old middleware,
+    without the BaseHTTPMiddleware shutdown-cancellation noise).
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+        request = Request(scope, receive)
+        host = request.client.host if request.client else ""
+        if is_local_address(host) or not device_security_enabled():
+            return await self.app(scope, receive, send)
+        path = request.url.path
+        if path == "/pair" or any(path.startswith(prefix) for prefix in _DEVICE_PUBLIC_PATHS[1:]):
+            return await self.app(scope, receive, send)
+        token = request.cookies.get(device_cookie_name())
+        if validate_device(token, address=host):
+            return await self.app(scope, receive, send)
+        if request.method == "GET" and not path.startswith("/api/"):
+            response = RedirectResponse(url="/pair", status_code=307)
+        else:
+            response = JSONResponse({"detail": "This device has not been paired with the OPS ROOM host."}, status_code=401)
+        return await response(scope, receive, send)
+
+
+app.add_middleware(_PureASGIStaticCacheHeaders)
+app.add_middleware(_PureASGITrustedDeviceGate)
 
 
 async def _authorize_websocket(websocket: WebSocket) -> bool:
@@ -625,13 +704,64 @@ def printer_test_endpoint(payload: dict | None, request: Request) -> dict:
 
 @app.post("/api/printer/preview")
 def printer_preview_endpoint(payload: dict | None, request: Request) -> dict:
+    """Render a thermal receipt preview for the selected receipt kind.
+
+    ``type`` selects the real formatter so the preview is byte-identical to
+    what actually prints: cpdlc, ofp, test, gsx, or custom (raw text).
+    """
     _require_local_host(request)
     data = payload or {}
     content = str(data.get("content") or "").strip()
-    receipt_type = str(data.get("type") or "cpdlc").strip()
-    if not content:
-        raise HTTPException(status_code=400, detail="Receipt content is required")
-    return printer_generate_preview(content, receipt_type, app_version=app.version)
+    receipt_type = str(data.get("type") or "cpdlc").strip().lower()
+    width = 42
+    try:
+        if receipt_type == "cpdlc":
+            sample: dict[str, Any] = {
+                "direction": "IN",
+                "from": "EDDF",
+                "to": "EWG6107",
+                "type": "CLR",
+                "message": "EWG6107 CLEARED TO LKPR VIA TABET T180 ERZ VEMUT, CLIMB TO FL370, EXPECT RWY 25L. CONTACT 118.725 AFTER 5000FT.",
+                "time": _utc(),
+            }
+            lines = printer_format_cpdlc(sample, width=width)
+            content = "\n".join(lines)
+        elif receipt_type == "ofp":
+            ofp_payload = _live_ofp_payload()
+            lines = printer_format_ofp(ofp_payload, width=width)
+            content = "\n".join(lines)
+        elif receipt_type == "test":
+            lines = [
+                "OPS ROOM PRINTER TEST",
+                "",
+                "If you can read this,",
+                "your thermal/POS printer",
+                "is configured correctly!",
+                "",
+                "CPDLC messages will auto-print",
+                "when the feature is enabled.",
+                "",
+                f"Tested at: {_utc()}",
+            ]
+            content = "\n".join(lines)
+        elif receipt_type == "gsx":
+            receipts = list_receipts(limit=1)
+            items = receipts.get("items") if isinstance(receipts, dict) else receipts
+            item = items[0] if isinstance(items, list) and items else {}
+            if item:
+                lines = printer_format_gsx(item, width=width)
+                content = "\n".join(lines)
+            else:
+                content = "No GSX receipts on file yet — fly a GSX-serviced flight to generate one."
+        else:
+            receipt_type = "custom"
+            if not content:
+                raise HTTPException(status_code=400, detail="Receipt content is required")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Preview generation failed for type '{receipt_type}': {type(exc).__name__}: {exc}") from exc
+    return printer_generate_preview(content, receipt_type, width=width, app_version=app.version)
 
 
 @app.get("/api/blackbox/diagnose")
@@ -921,6 +1051,137 @@ def briefing_operational(force_refresh: bool = False) -> dict:
     return operational_briefing(force=force_refresh)
 
 
+def _live_ofp_payload() -> dict:
+    """Build the live OFP completion payload (shared by GET and PRINT)."""
+    settings = load_settings()
+    user = str(settings.get("identity", {}).get("simbrief_user_id") or "").strip()
+    plan = cached_plan(user) if user else None
+    active = logbook_active_recorder()
+    completed = None
+    if active is None:
+        completed = logbook_latest_completed()
+    source = completed if completed is not None else active
+    recorder_id = str(source.get("id") or "") if source else ""
+    overrides = get_overrides(recorder_id) if recorder_id else {}
+    sample = read_telemetry(force=False)
+    fresh = bool(sample.get("ok")) and not bool(sample.get("telemetry_hold")) and not bool(sample.get("telemetry_gap"))
+    display_unit = ((settings.get("interface") or {}).get("units") or {}).get("weight")
+    # v0.25.71: live PAX/BAG-CARGO actuals from GSX/Fenix boarding progress.
+    # Never fatal — if GSX is unavailable the builder keeps the honest
+    # "no trusted measured source" cells.
+    loading_progress = None
+    try:
+        gsx_state = gsx_automation_status()
+        fenix_loading = gsx_state.get("fenix_loading") if isinstance(gsx_state, dict) else {}
+        last_progress = fenix_loading.get("last_progress") if isinstance(fenix_loading, dict) else {}
+        if isinstance(last_progress, dict) and last_progress:
+            loading_progress = last_progress
+    except Exception:
+        loading_progress = None
+    payload = build_live_ofp_actuals(
+        plan,
+        active,
+        completed_entry=completed,
+        settings_override_unit=display_unit,
+        telemetry_fresh=fresh,
+        overrides=overrides,
+        loading_progress=loading_progress,
+    )
+    if payload.get("state") == "mismatch" and active is None:
+        # A fresh plan with only an unrelated completed flight on file means
+        # "waiting for the next flight", not a data-merge hazard.
+        payload["state"] = "waiting"
+        payload["reason"] = "No active recording; previous completed flight does not match the loaded plan"
+    if active is None and payload.get("state") in ("waiting", "mismatch"):
+        # Never leak the previous flight's manual overrides into a fresh plan
+        # that is only waiting for its own recording to begin.
+        payload["manual_overrides"] = {}
+    return payload
+
+
+@app.get("/api/briefing/ofp-live")
+def briefing_ofp_live() -> Response:
+    """Live OFP completion payload for the BRIEFING -> OFP live panel.
+
+    Pure aggregation of the cached SimBrief plan plus the active recorder (or,
+    after block-in, the most recent completed entry). Never merges mismatched
+    plan/recorder state, never probes telemetry, never fabricates values.
+    Manual overrides (``ofp_overrides``) for the current recorder are merged
+    in and outrank phase detection / telemetry for the affected cells.
+    """
+    payload = _live_ofp_payload()
+    return Response(
+        content=json.dumps(payload),
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/briefing/ofp-live/print")
+def briefing_ofp_live_print(payload: dict | None = None) -> dict:
+    """Print the current live OFP comparison to the configured printer.
+
+    Uses the printer selected in Settings -> System -> Thermal/POS printer.
+    Returns a clear error when printing is disabled or no printer is selected,
+    so the frontend can surface the exact configuration step.
+    """
+    data = payload if isinstance(payload, dict) else {}
+    settings = load_settings()
+    printing = settings.get("printing") if isinstance(settings.get("printing"), dict) else {}
+    enabled = bool(printing.get("enabled", False))
+    printer_name = str(printing.get("printer_name") or "").strip()
+    if not enabled:
+        return {"ok": False, "error": "Printer is disabled in Settings -> System -> Thermal/POS printer"}
+    if not printer_name:
+        return {"ok": False, "error": "No printer selected in Settings -> System -> Thermal/POS printer"}
+    ofp_payload = _live_ofp_payload()
+    lines = printer_format_ofp(ofp_payload)
+    if not lines:
+        return {"ok": False, "error": "Live OFP has no printable data yet"}
+    result = printer_receipt(printer_name, lines, title="LIVE OFP")
+    if not result.get("ok"):
+        return {"ok": False, "error": str(result.get("error") or "Print failed")}
+    return {"ok": True, "printer": printer_name, "lines": len(lines)}
+
+
+@app.post("/api/briefing/ofp-live/overrides")
+def briefing_ofp_live_overrides(payload: dict | None = None) -> dict:
+    """Write or clear manual overrides for the current recorder.
+
+    Body:
+      ``{"overrides": {"times:out": "1617", "weights:zfw": 108.7}}``  -- merge
+      ``{"clear_key": "times:out"}``                                    -- drop one
+      ``{"clear_all": true}``                                           -- drop all
+
+    Overrides are validated against a strict whitelist (``ofp_overrides``) and
+    persisted per recorder id.  Phase detection and the recorder are never
+    touched.
+    """
+    data = payload if isinstance(payload, dict) else {}
+    active = logbook_active_recorder()
+    completed = None
+    if active is None:
+        completed = logbook_latest_completed()
+    source = completed if completed is not None else active
+    recorder_id = str(source.get("id") or "") if source else ""
+    if data.get("clear_all"):
+        if recorder_id:
+            clear_overrides(recorder_id)
+        return {"ok": True, "manual_overrides": {}}
+    if data.get("clear_key"):
+        key = str(data.get("clear_key") or "").strip()
+        if recorder_id and key:
+            remove_override(recorder_id, key)
+        remaining = get_overrides(recorder_id) if recorder_id else {}
+        return {"ok": True, "manual_overrides": remaining}
+    if not recorder_id:
+        return {"ok": False, "reason": "No active or completed recorder is available to override."}
+    valid, errors = set_overrides(recorder_id, data.get("overrides") or {})
+    if errors:
+        return {"ok": False, "reason": "Some overrides were rejected", "errors": errors, "manual_overrides": valid}
+    return {"ok": True, "manual_overrides": valid}
+
+
 # ── FAA NMS-API NOTAM proxy client (v0.25.60) ────────────────────────────
 # The desktop app talks only to the opsroom.live proxy, which holds the NMS
 # KEY/SECRET. Credentials never exist on this machine.
@@ -944,7 +1205,7 @@ def nms_notams_get(
     classification: str = "",
     feature: str = "",
 ) -> dict:
-    # v0.25.63: database first (server-side NOTAM store, zero FAA quota),
+    # v0.25.65: database first (server-side NOTAM store, zero FAA quota),
     # proxy fallback inside notam_client. The geo branch returns GeoJSON
     # features shaped for the Live Map layer; the location branch returns
     # briefing rows shaped for the NOTAM cards.
@@ -1854,6 +2115,199 @@ def logbook_entry_pdf(entry_id: str, request: Request) -> Response:
     return Response(content=content, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename=OPS_ROOM_PIREP_{entry_id[:8]}.pdf", "Cache-Control": "no-store"})
 
 
+@app.get("/api/logbook/{entry_id}/ofp-completion")
+def logbook_entry_ofp_completion(entry_id: str) -> Response:
+    """OFP completion payload for the Full PIREP OFP COMPLETION section.
+
+    Reuses the exact live builder: the stored plan snapshot is rebuilt from the
+    entry and compared against the entry's immutable event snapshots, so the
+    PIREP, the PIREP PDF and the live Briefing panel always agree.
+    """
+    try:
+        entry = logbook_get_entry(entry_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc).strip("'")) from exc
+    plan = plan_from_entry(entry)
+    payload = build_live_ofp_actuals(plan, None, completed_entry=entry, overrides=get_overrides(entry_id))
+    return Response(
+        content=json.dumps(payload),
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _simobjects_markers_enabled() -> bool:
+    from .settings_store import load_settings
+
+    settings = load_settings()
+    integrations = settings.get("integrations") if isinstance(settings.get("integrations"), dict) else {}
+    return bool(integrations.get("simobjects_notam_markers", False))
+
+
+# v0.25.71: NOTAM closure-marker in-sim injection/deployment backend is
+# SHELVED (kept but commented out - re-enable later). The auto-deploy loop,
+# its start hook and the deploy endpoints below are disabled.
+#
+# #: v0.25.65: auto-deploy cadence for NOTAM closure markers (seconds).
+# _MARKER_AUTO_DEPLOY_SECONDS = 30
+# _MARKER_AUTO_DEPLOY_STARTED = False
+#
+#
+# def _marker_auto_deploy_loop() -> None:
+#     """Background NOTAM closure-marker auto-deploy while MSFS is running.
+#
+#     Each pass reads the user aircraft position, fetches active NOTAMs within
+#     the configured radius, plans closures and spawns anything new (deduped).
+#     Skips when the marker setting is off, the simulator has no position, or
+#     the aircraft is above the altitude gate; despawns markers whose airport
+#     has left the radius. Never raises.
+#     """
+#     import time as _time
+#
+#     while True:
+#         try:
+#             if _simobjects_markers_enabled():
+#                 from . import closure_markers
+#
+#                 closure_markers.auto_deploy_cycle()
+#         except Exception as exc:  # pragma: no cover - defensive
+#             _LOGGER.debug("marker auto-deploy pass skipped: %s", exc)
+#         _time.sleep(_MARKER_AUTO_DEPLOY_SECONDS)
+#
+#
+# def start_marker_auto_deploy() -> None:
+#     """Start the closure-marker auto-deploy loop as a daemon thread (idempotent)."""
+#     global _MARKER_AUTO_DEPLOY_STARTED
+#     if _MARKER_AUTO_DEPLOY_STARTED:
+#         return
+#     _MARKER_AUTO_DEPLOY_STARTED = True
+#     threading.Thread(target=_marker_auto_deploy_loop, name="OpsRoom-Marker-AutoDeploy", daemon=True).start()
+#     _LOGGER.info("NOTAM closure marker auto-deploy loop started")
+#
+#
+# def _simobjects_markers_plan() -> dict:
+#     from . import closure_markers
+#
+#     # v0.25.66: the DEPLOY IN SIM plan is anchored to the user aircraft
+#     # (position-based NOTAMs + radius filter) instead of the flight-route
+#     # briefing, which used to spawn closures at the route's origin/destination
+#     # airports hundreds of NM away from where the pilot actually is.
+#     return closure_markers.deploy_plan()
+
+
+@app.get("/api/notams/closure-proximity")
+def notams_closure_proximity() -> Response:
+    """Nearest active NOTAM closure (runway/taxiway/barrier) to the user
+    aircraft, for the amber/red proximity pop-up (v0.25.65). Lightweight:
+    cached briefing NOTAMs + distance math only, never spawns."""
+    from . import closure_markers
+
+    return Response(
+        content=json.dumps(closure_markers.proximity_alert()),
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# v0.25.71: SHELVED - closure-marker deployment endpoints (see shelf note
+# above the auto-deploy machinery). Kept as commented-out code for later.
+#
+# @app.get("/api/simobjects/install-status")
+# def simobjects_install_status() -> dict:
+#     """Closure-marker Community package install status for the UI (v0.25.65)."""
+#     from . import closure_markers
+#     from .simobjects_installer import install_status
+#
+#     status = install_status()
+#     status["auto_deploy_radius_nm"] = closure_markers.marker_radius_nm()
+#     status["auto_deploy_altitude_gate_ft"] = closure_markers.marker_altitude_gate_ft()
+#     status["auto_deploy_enabled"] = _simobjects_markers_enabled()
+#     return status
+
+
+# @app.post("/api/simobjects/install")
+# def simobjects_install(request: Request) -> Response:
+#     """Manually re-run the Community folder installer (v0.25.65)."""
+#     _require_local_host(request)
+#     from .simobjects_installer import install_package
+#
+#     result = install_package()
+#     return Response(
+#         content=json.dumps(result),
+#         media_type="application/json",
+#         headers={"Cache-Control": "no-store"},
+#     )
+
+
+# @app.get("/api/simobjects/notam-closures")
+# def simobjects_notam_closures() -> Response:
+#     """NOTAM closure marker status for the Briefing -> NOTAMS deploy control (v0.25.65).
+#
+#     Parses the cached operational briefing NOTAMs, builds the SimObject
+#     placement plan from navdata + taxiway geometry (hold-short barrier
+#     lines), and -- only when the setting is enabled -- attempts the
+#     in-simulator spawn. Spawn failures surface as reasons, never as crashes.
+#     """
+#     plan = _simobjects_markers_plan()
+#     enabled = _simobjects_markers_enabled()
+#     from . import closure_markers
+#
+#     # v0.25.66: manual DEPLOY IN SIM placements are tagged ``manual`` so the
+#     # auto-deploy radius sweep never despawns them behind the user's back;
+#     # only the explicit REMOVE / CLEAR ALL actions clean them up.
+#     spawn = closure_markers.spawn_markers(plan.get("placed"), enabled=enabled, source="manual")
+#     proximity = closure_markers.marker_proximity_status()
+#     payload = {
+#         "ok": True,
+#         "enabled": enabled,
+#         "plan": {key: plan.get(key) for key in ("markers", "placed", "unplaced", "count", "_source", "_anchor_lat", "_anchor_lon", "_reason")},
+#         "spawn": spawn,
+#         "proximity": proximity,
+#     }
+#     return Response(
+#         content=json.dumps(payload),
+#         media_type="application/json",
+#         headers={"Cache-Control": "no-store"},
+#     )
+
+
+# @app.put("/api/simobjects/notam-closures")
+# def simobjects_notam_closures_put(payload: dict | None, request: Request) -> Response:
+#     """Set the NOTAM closure marker deployment toggle (persisted)."""
+#     _require_local_host(request)
+#     data = payload or {}
+#     enabled = bool(data.get("enabled", False))
+#     clear = bool(data.get("clear", False))
+#     current = load_settings()
+#     current.setdefault("integrations", {})["simobjects_notam_markers"] = enabled
+#     save_settings(current)
+#     from . import closure_markers
+#
+#     if not enabled and not clear:
+#         # Turning the toggle off also cleans up anything spawned earlier.
+#         clear = True
+#     removed = closure_markers.remove_markers() if clear else {"ok": True, "removed": 0, "reason": "not requested"}
+#     return Response(
+#         content=json.dumps({"ok": True, "enabled": enabled, "clear": removed}),
+#         media_type="application/json",
+#         headers={"Cache-Control": "no-store"},
+#     )
+
+
+# @app.post("/api/simobjects/notam-closures/clear")
+# def simobjects_notam_closures_clear(request: Request) -> Response:
+#     """Remove every closure-marker SimObject spawned this session."""
+#     _require_local_host(request)
+#     from . import closure_markers
+#
+#     removed = closure_markers.remove_markers()
+#     return Response(
+#         content=json.dumps({"ok": True, "clear": removed}),
+#         media_type="application/json",
+#         headers={"Cache-Control": "no-store"},
+#     )
+
+
 
 
 @app.get("/api/diagnostics/bug-report/status")
@@ -2413,7 +2867,7 @@ def server_qr(request: Request) -> Response:
 def health() -> dict:
     return {
         "ok": True,
-        "version": "0.25.63",
+        "version": "0.25.73",
         "product": "OPS ROOM",
         "refresh_seconds": CACHE_SECONDS,
         "simconnect": simconnect_diagnostics(),
@@ -2438,7 +2892,7 @@ async def frontend_log(request: Request) -> dict:
             "page": str(payload.get("page") or "")[:80],
             "detail": str(payload.get("detail") or "")[:1200],
             "href": str(payload.get("href") or "")[:500],
-            "version": str(payload.get("version") or "0.25.63")[:40],
+            "version": str(payload.get("version") or "0.25.65")[:40],
         }
         with (log_dir / "frontend_errors.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")

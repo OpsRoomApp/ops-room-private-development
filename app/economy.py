@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .settings_store import app_data_dir, load_settings
+from .load_model import resolve_operation_type, load_composition, finish_load_for_operation, weight_to_kg, weight_unit_key
 
 CAREER_FILE = "economy_career.json"
 # v0.25.9: passenger-satisfaction weights resolution. Source precedence is:
@@ -289,14 +290,41 @@ def _passenger_count(meta: dict[str, Any]) -> int:
     flight = meta.get("flight") if isinstance(meta.get("flight"), dict) else {}
     for key in ("passengers", "pax", "pax_count"):
         n = _num(flight.get(key))
-        if n is not None and n > 0:
-            return int(round(n))
+        if n is not None:
+            return int(round(max(0.0, n)))
+    # Passenger data is genuinely absent.  An explicit freighter/ferry never
+    # receives a capacity estimate (a 777F must never become 280 passengers).
+    resolution = resolve_operation_type(flight, flight.get("operation_type_requested") or "auto")
+    if resolution["resolved"] in ("freighter", "ferry"):
+        return 0
     aircraft = " ".join(str(x or "") for x in (flight.get("aircraft_icao"), (meta.get("aircraft") or {}).get("title"))).upper()
     if any(code in aircraft for code in ("A388", "A380", "B77", "777", "B78", "787", "A35", "A350", "A33", "A340")):
         return 280
     if any(code in aircraft for code in ("A32", "A320", "A321", "B73", "737")):
         return 150
     return 90
+
+
+def _operation_resolution(meta: dict[str, Any]) -> dict[str, Any]:
+    flight = meta.get("flight") if isinstance(meta.get("flight"), dict) else {}
+    return resolve_operation_type(flight, flight.get("operation_type_requested") or "auto")
+
+
+def _commercial_freight_kg(meta: dict[str, Any]) -> tuple[float, dict[str, Any]]:
+    """Return (commercial freight kg, resolved load composition).
+
+    Only revenue-generating freight counts.  Checked passenger baggage and the
+    combined BAGS/CARGO hold are never charged as freight on passenger ops.
+    """
+    flight = meta.get("flight") if isinstance(meta.get("flight"), dict) else {}
+    resolution = _operation_resolution(meta)
+    load = finish_load_for_operation(load_composition(flight), resolution)
+    value = load.get("commercial_freight_weight")
+    if value is None:
+        return 0.0, load
+    units = load.get("weight_units") or weight_unit_key(flight.get("weight_units"))
+    kg = weight_to_kg(value, units).get("normalized_kg")
+    return (max(0.0, kg) if kg is not None else 0.0), load
 
 
 def _cargo_kg(meta: dict[str, Any]) -> float:
@@ -481,7 +509,18 @@ def estimate_statement(meta: dict[str, Any], career: dict[str, Any] | None = Non
     distance = max(1.0, _route_distance_nm(meta))
     block = max(0.25, _block_hours(meta))
     fare_settings = _clean_fare_settings((meta.get("finance_options") or {}).get("fare_settings") if isinstance(meta.get("finance_options"), dict) else None, career.get("fare_settings"))
-    pax_split = _cabin_split(meta, fare_settings)
+    resolution = _operation_resolution(meta)
+    operation = {
+        "requested": resolution["requested"],
+        "resolved": resolution["resolved"],
+        "reason": resolution["reason"],
+        "confidence": resolution["confidence"],
+    }
+    freight_kg, load = _commercial_freight_kg(meta)
+    cargo_hold_total = load.get("cargo_hold_total")
+    commercial_freight = load.get("commercial_freight_weight")
+    is_passenger_operation = operation["resolved"] in ("passenger", "combi")
+    pax_split = _cabin_split(meta, fare_settings) if is_passenger_operation else {"economy": 0, "business": 0, "first": 0, "total": 0}
     pax = pax_split["total"]
     cargo = max(0.0, _cargo_kg(meta))
     tier = _airport_tier(origin, destination)
@@ -494,9 +533,10 @@ def estimate_statement(meta: dict[str, Any], career: dict[str, Any] | None = Non
             custom = _num(fare_settings.get(f"{key}_fare"))
             if custom is not None and custom > 0:
                 fares[key] = round(custom, 2)
-    passenger_revenue = round(pax_split["economy"] * fares["economy"] + pax_split["business"] * fares["business"] + pax_split["first"] * fares["first"], 2)
+    passenger_revenue = round(pax_split["economy"] * fares["economy"] + pax_split["business"] * fares["business"] + pax_split["first"] * fares["first"], 2) if is_passenger_operation else 0.0
     cargo_rate = _num(fare_settings.get("cargo_rate"))
-    cargo_revenue = round(cargo * ((0.18 + distance * 0.00055) * demand if auto_fares or not cargo_rate else cargo_rate), 2)
+    effective_freight_rate = (0.18 + distance * 0.00055) * demand if (auto_fares or not cargo_rate) else cargo_rate
+    cargo_revenue = round(freight_kg * effective_freight_rate, 2)
     fuel_lb = _num((meta.get("fuel") or {}).get("used_lb")) or _num(flight.get("planned_trip_fuel")) or distance * 11.0
     fuel_kg = max(0.0, fuel_lb * 0.45359237)
     modeled_fuel_cost = round(fuel_kg * 0.86, 2)
@@ -507,9 +547,8 @@ def estimate_statement(meta: dict[str, Any], career: dict[str, Any] | None = Non
     invoices = service_costs["invoices"]
     airport_fee = round(({"high": 1200, "medium-high": 900, "medium": 650, "low": 420}.get(tier, 650) + pax * 1.6), 2)
     crew_maintenance = round(450 + block * 430 + distance * 0.28, 2)
-    airline_revenue = round(passenger_revenue + cargo_revenue, 2)
     airline_costs = round(fuel_cost + service_cost + airport_fee + crew_maintenance, 2)
-    airline_profit = round(airline_revenue - airline_costs, 2)
+    satisfaction_applicable = is_passenger_operation
     entries = previous_entries or []
     completed = sum(1 for e in entries if (e.get("state") == "COMPLETE" or e.get("status") == "COMPLETE"))
     block_hours_total = sum((_num((e.get("durations") or {}).get("block_seconds")) or 0.0) / 3600.0 for e in entries)
@@ -529,7 +568,12 @@ def estimate_statement(meta: dict[str, Any], career: dict[str, Any] | None = Non
         pilot_bonus += 70
     pilot_pay = round((pilot_base + pilot_bonus) * pay_mult, 2)
     xp = int(max(35, min(175, round(score + (15 if distance < 500 else 30 if distance < 1800 else 45) + (10 if score >= 80 else 0)))))
-    # v0.25.9: passenger satisfaction revenue weighting. High satisfaction gives a bonus; low satisfaction subtracts. Weights are configurable under integrations.passenger_satisfaction.
+    # v0.25.9+: passenger satisfaction revenue weighting applies to passenger
+    # revenue ONLY.  Commercial freight revenue, reimbursements and unrelated
+    # income are never satisfaction-scaled, and freighter/ferry operations
+    # have no passenger satisfaction at all.
+    _satis_mult = 1.0
+    _satis_rep = 0
     try:
         from .passenger_satisfaction import compute as _satis_compute
         _satis_in = (meta or {}).get('passenger_satisfaction')
@@ -545,25 +589,40 @@ def estimate_statement(meta: dict[str, Any], career: dict[str, Any] | None = Non
             )
         _satis_mult = float(_satis_in.get('revenue_multiplier') or 1.0)
         _satis_rep = int(_satis_in.get('reputation_delta') or 0)
-        airline_revenue = round(airline_revenue * _satis_mult, 2)
-        airline_profit = round(airline_revenue - airline_costs, 2)
         _satis_out = {**_satis_in,
-                      'applied_revenue_multiplier': _satis_mult,
+                      'applied_revenue_multiplier': _satis_mult if satisfaction_applicable else 1.0,
                       'applied_reputation_delta': _satis_rep}
     except Exception as _satis_e:
         _satis_out = {'error': f"{type(_satis_e).__name__}: {_satis_e}"}
+    if not satisfaction_applicable:
+        _satis_mult = 1.0
+        _satis_rep = 0
+    passenger_revenue_before = round(passenger_revenue, 2)
+    passenger_revenue_after = round(passenger_revenue * _satis_mult, 2)
+    airline_revenue = round(passenger_revenue_after + cargo_revenue, 2)
+    airline_profit = round(airline_revenue - airline_costs, 2)
 
     return {
         "ok": True,
         "currency": career["currency"],
         "symbol": career["symbol"],
         "route": {"origin": origin, "destination": destination, "distance_nm": round(distance, 1), "demand": tier, "distance_band": _distance_band(distance)},
+        "operation": operation,
+        "load_breakdown_source": str(load.get("load_breakdown_source") or "combined-simbrief-cargo"),
+        "satisfaction_applicable": satisfaction_applicable,
         "passengers": pax_split,
         "fare_settings": fare_settings,
         "fares": fares,
-        "cargo_kg": round(cargo, 1),
+        "cargo_kg": round(freight_kg, 1),
+        "cargo_hold_total": round(cargo_hold_total, 1) if cargo_hold_total is not None else None,
+        "commercial_freight_weight": round(commercial_freight, 1) if commercial_freight is not None else None,
+        "passenger_revenue_before_satisfaction": passenger_revenue_before,
+        "passenger_revenue_after_satisfaction": passenger_revenue_after,
+        "commercial_freight_revenue": round(cargo_revenue, 2),
+        "total_revenue": round(airline_revenue, 2),
+        "effective_freight_rate_per_kg": round(effective_freight_rate, 4),
         "airline": {
-            "revenue": {"passenger": passenger_revenue, "cargo": cargo_revenue, "total": airline_revenue},
+            "revenue": {"passenger": passenger_revenue_after, "cargo": round(cargo_revenue, 2), "total": round(airline_revenue, 2)},
             "costs": {"fuel": fuel_cost, "fuel_source": "gsx" if service_costs["fuel_invoice_total"] > 0 else "ops-room-estimate", "ground_services": service_cost, "ground_services_source": service_source, "ground_services_departure": service_costs["departure"], "ground_services_arrival": service_costs["arrival"], "ground_services_departure_source": service_costs["departure_source"], "ground_services_arrival_source": service_costs["arrival_source"], "airport_fees": airport_fee, "crew_maintenance": crew_maintenance, "total": airline_costs},
             "profit": airline_profit,
             "invoices": invoices,

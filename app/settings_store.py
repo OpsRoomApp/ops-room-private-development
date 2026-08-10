@@ -91,6 +91,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "chartfox_oauth_redirect_uri": "",
         "raas_voice_path": "",
         "raas_unit": "ft",
+        "raas_notam_callouts": True,
+        "notam_notifications": True,
+        "simobjects_notam_markers": False,
+        "marker_radius_nm": 50.0,
+        "marker_altitude_gate_ft": 15000.0,
     },
     "server": {
         "lan_access": False,
@@ -274,6 +279,21 @@ def save_settings(settings: dict[str, Any]) -> dict[str, Any]:
     normalized["integrations"]["raas_voice_path"] = str(normalized["integrations"].get("raas_voice_path", "") or "").strip()[:520]
     raas_unit = str(normalized["integrations"].get("raas_unit", "ft") or "ft").strip().lower()
     normalized["integrations"]["raas_unit"] = "m" if raas_unit in {"m", "meter", "meters", "metre", "metres"} else "ft"
+    # v0.25.65: NOTAM alerting toggles (RAAS spoken closure call-outs and the
+    # proximity pop-up channel). Default on; safe boolean normalization.
+    normalized["integrations"]["raas_notam_callouts"] = bool(normalized["integrations"].get("raas_notam_callouts", True))
+    normalized["integrations"]["notam_notifications"] = bool(normalized["integrations"].get("notam_notifications", True))
+    normalized["integrations"]["simobjects_notam_markers"] = bool(normalized["integrations"].get("simobjects_notam_markers", False))
+    try:
+        marker_radius = float(normalized["integrations"].get("marker_radius_nm", 50.0))
+    except (TypeError, ValueError):
+        marker_radius = 50.0
+    normalized["integrations"]["marker_radius_nm"] = max(1.0, min(marker_radius, 200.0))
+    try:
+        marker_gate = float(normalized["integrations"].get("marker_altitude_gate_ft", 15000.0))
+    except (TypeError, ValueError):
+        marker_gate = 15000.0
+    normalized["integrations"]["marker_altitude_gate_ft"] = max(500.0, min(marker_gate, 60000.0))
     normalized["integrations"]["simbrief_auto_load"] = bool(normalized["integrations"].get("simbrief_auto_load", True))
     normalized["integrations"]["announcements_enabled"] = bool(normalized["integrations"].get("announcements_enabled", False))
     normalized["integrations"]["announcements_root"] = str(normalized["integrations"].get("announcements_root", "") or "").strip()

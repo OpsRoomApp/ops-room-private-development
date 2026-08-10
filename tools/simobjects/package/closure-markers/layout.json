@@ -1,0 +1,459 @@
+{
+  "content": [
+    {
+      "path": "simobjects/misc/barricade_t3_orange/effects/ors_beacon.fx",
+      "size": 1158,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_orange/model/barricade_t3_orange.xml",
+      "size": 271,
+      "date": 134307475910000003
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_orange/model/barricade_t3_orange_lod00.bin",
+      "size": 127332,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_orange/model/barricade_t3_orange_lod00.gltf",
+      "size": 4696,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_orange/model/barricade_t3_orange_lod01.bin",
+      "size": 76596,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_orange/model/barricade_t3_orange_lod01.gltf",
+      "size": 4704,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_orange/model/model.cfg",
+      "size": 40,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_orange/sim.cfg",
+      "size": 122,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_orange/systems.cfg",
+      "size": 452,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_white/effects/ors_beacon.fx",
+      "size": 1158,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_white/model/barricade_t3_white.xml",
+      "size": 269,
+      "date": 134307475910000003
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_white/model/barricade_t3_white_lod00.bin",
+      "size": 127332,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_white/model/barricade_t3_white_lod00.gltf",
+      "size": 4695,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_white/model/barricade_t3_white_lod01.bin",
+      "size": 76596,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_white/model/barricade_t3_white_lod01.gltf",
+      "size": 4703,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_white/model/model.cfg",
+      "size": 39,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_white/sim.cfg",
+      "size": 121,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/barricade_t3_white/systems.cfg",
+      "size": 452,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/barrier_low_orange/model/barrier_low_orange.xml",
+      "size": 206,
+      "date": 134307475910000003
+    },
+    {
+      "path": "simobjects/misc/barrier_low_orange/model/barrier_low_orange_lod00.bin",
+      "size": 54576,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barrier_low_orange/model/barrier_low_orange_lod00.gltf",
+      "size": 8462,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barrier_low_orange/model/model.cfg",
+      "size": 39,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/barrier_low_orange/sim.cfg",
+      "size": 123,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/barrier_low_white/model/barrier_low_white.xml",
+      "size": 205,
+      "date": 134307475910000003
+    },
+    {
+      "path": "simobjects/misc/barrier_low_white/model/barrier_low_white_lod00.bin",
+      "size": 54576,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barrier_low_white/model/barrier_low_white_lod00.gltf",
+      "size": 8409,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/barrier_low_white/model/model.cfg",
+      "size": 38,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/barrier_low_white/sim.cfg",
+      "size": 122,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_beacon.fx",
+      "size": 1158,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_00.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_01.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_02.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_03.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_04.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_05.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_06.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_07.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_08.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_09.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_10.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_11.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_12.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_13.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_14.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_15.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_16.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_17.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_18.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_19.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_20.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_21.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_22.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_23.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_24.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_25.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_26.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_27.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_28.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_29.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_30.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_31.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_32.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_33.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_34.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_35.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_36.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_37.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_38.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_39.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_40.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_41.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_42.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/effects/ors_led_43.fx",
+      "size": 1162,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/model/model.cfg",
+      "size": 38,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/model/x_lighted_trailer.xml",
+      "size": 267,
+      "date": 134307475910000003
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/model/x_lighted_trailer_lod00.bin",
+      "size": 889848,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/model/x_lighted_trailer_lod00.gltf",
+      "size": 186911,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/model/x_lighted_trailer_lod01.bin",
+      "size": 429276,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/model/x_lighted_trailer_lod01.gltf",
+      "size": 187472,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/sim.cfg",
+      "size": 121,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_lighted_trailer/systems.cfg",
+      "size": 5940,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_marker_runway/model/model.cfg",
+      "size": 36,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_marker_runway/model/x_marker_runway.xml",
+      "size": 203,
+      "date": 134307475910000003
+    },
+    {
+      "path": "simobjects/misc/x_marker_runway/model/x_marker_runway_lod00.bin",
+      "size": 1872,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/x_marker_runway/model/x_marker_runway_lod00.gltf",
+      "size": 3751,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/x_marker_runway/sim.cfg",
+      "size": 120,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_marker_taxiway/model/model.cfg",
+      "size": 37,
+      "date": 134307475910000000
+    },
+    {
+      "path": "simobjects/misc/x_marker_taxiway/model/x_marker_taxiway.xml",
+      "size": 204,
+      "date": 134307475910000003
+    },
+    {
+      "path": "simobjects/misc/x_marker_taxiway/model/x_marker_taxiway_lod00.bin",
+      "size": 3744,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/x_marker_taxiway/model/x_marker_taxiway_lod00.gltf",
+      "size": 6690,
+      "date": 134307475910262163
+    },
+    {
+      "path": "simobjects/misc/x_marker_taxiway/sim.cfg",
+      "size": 121,
+      "date": 134307475910000000
+    }
+  ]
+}

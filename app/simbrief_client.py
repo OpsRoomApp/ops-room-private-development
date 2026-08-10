@@ -11,6 +11,18 @@ import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _app_version() -> str:
+    """v0.25.67: user-agent version comes from version.json, never a stale literal."""
+    try:
+        raw = (Path(__file__).resolve().parent.parent / "version.json").read_text(encoding="utf-8")
+        return str(json.loads(raw).get("version") or "0.25.73")
+    except Exception:  # pragma: no cover - defensive version read
+        return "0.25.73"
+
+
+_USER_AGENT = f"OPS ROOM/{_app_version()} (+flight-simulation utility)"
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -708,6 +720,25 @@ def _normalize(raw: dict[str, Any], user_ref: str) -> dict[str, Any]:
             "zfw": _integer(_first(weights.get("est_zfw"), weights.get("zfw"))),
             "tow": _integer(_first(weights.get("est_tow"), weights.get("tow"))),
             "ldw": _integer(_first(weights.get("est_ldw"), weights.get("ldw"))),
+            # v0.25.73: ZFW / TOW CG (% MAC) for the performance calculator.
+            # SimBrief provides these in the OFP weights block; previously
+            # dropped on parse, which left the Performance tab without the
+            # CG input the takeoff V-speed / trim model needs.
+            "zfwcg": _number(weights.get("zfwcg")),
+            "towcg": _number(weights.get("towcg")),
+            "ldwcg": _number(weights.get("ldwcg")),
+            # v0.25.65: verified baggage/freight split + limits (raw payload
+            # fields confirmed on real SimBrief responses).  ``cargo`` remains
+            # the combined BAGS/CARGO hold; ``freight_added`` is commercial
+            # freight.  See app/load_model.py for the split cross-check.
+            "freight_added": _integer(weights.get("freight_added")),
+            "bag_count": _integer(_first(weights.get("bag_count"), weights.get("bag_count_actual"))),
+            "bag_weight": _integer(_first(weights.get("bag_weight"), weights.get("bag_weight_kg"))),
+            "pax_weight": _integer(_first(weights.get("pax_weight"), weights.get("pax_weight_kg"))),
+            "oew": _integer(weights.get("oew")),
+            "max_zfw": _integer(weights.get("max_zfw")),
+            "max_tow": _integer(weights.get("max_tow")),
+            "max_ldw": _integer(weights.get("max_ldw")),
         },
         "remarks": _text(_first(general.get("remarks"), general.get("rmk"))),
         "files": {
@@ -734,7 +765,57 @@ def _normalize(raw: dict[str, Any], user_ref: str) -> dict[str, Any]:
         result["airline_branding"] = resolve_airline_branding(result)
     except Exception:
         result["airline_branding"] = {"enabled": True, "code": airline, "name": airline or "OPS ROOM", "source": "simbrief", "logo_url": None, "logo_available": False, "fallback": "monogram" if airline else "generic"}
+    _enrich_plan_airport_data(result)
     return result
+
+
+def _enrich_plan_airport_data(plan: dict[str, Any]) -> None:
+    """Add runway / elevation / weather to origin & destination for the
+    Performance tab auto-fill (v0.25.73).
+
+    Additive only: existing consumers keep working because these keys are
+    new.  Weather is decoded from the METAR text the OFP already carries, so
+    no extra network fetch is needed; navdata supplies runway geometry and
+    elevation when installed."""
+    try:
+        from . import navdata
+        from .weather_client import decode_metar
+        for key in ("origin", "destination"):
+            station = plan.get(key)
+            if not isinstance(station, dict):
+                continue
+            icao = str(station.get("icao") or "").upper()
+            if not icao:
+                continue
+            airdata = navdata.airport(icao)
+            if airdata:
+                elev = airdata.get("altitude_ft") or airdata.get("elevation_ft")
+                if elev:
+                    station["elevation_ft"] = round(float(elev))
+            rwy_name = str(station.get("runway") or "").replace("RWY", "").replace("RW", "").strip().upper()
+            if rwy_name:
+                rwy = navdata.runway_by_name(icao, rwy_name)
+                if rwy:
+                    length_ft = rwy.get("length_ft") or rwy.get("lda_ft")
+                    if length_ft:
+                        station["runway_length_m"] = round(float(length_ft) * 0.3048)
+                    heading = rwy.get("heading_deg")
+                    if heading is not None:
+                        station["runway_heading"] = round(float(heading))
+            metar = station.get("metar")
+            if metar:
+                wx = decode_metar(metar)
+                station["weather"] = {
+                    "temp_c": wx.get("temperature_c"),
+                    "qnh_hpa": wx.get("qnh_hpa"),
+                    "wind_dir": wx.get("wind_direction_deg"),
+                    "wind_kt": wx.get("wind_speed_kts"),
+                    "wind_gust_kt": wx.get("wind_gust_kts"),
+                    "raw": metar,
+                }
+    except Exception as exc:
+        _ofp_log("OFP_PERF_ENRICH_SKIPPED reason=%s", f"{type(exc).__name__}: {exc}")
+
 
 def _cache_path() -> Path:
     return app_data_dir() / CACHE_FILE
@@ -830,7 +911,7 @@ def _download_resource(url: str, target: Path, kind: str) -> Path:
             target.with_name(target.name + ".tmp").unlink(missing_ok=True)
         except OSError:
             pass
-        response = requests.get(url, headers={"User-Agent": "OPS ROOM/0.24.107 (+flight-simulation utility)"}, timeout=(4, 15))
+        response = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=(4, 15))
         response.raise_for_status()
         content = response.content or b""
         if not _resource_content_valid(content, kind):
@@ -1022,7 +1103,7 @@ def _fetch_simbrief_json(user_ref: str, key: str, json_format: str) -> dict[str,
     response = requests.get(
         SIMBRIEF_URL,
         params={key: user_ref, "json": json_format},
-        headers={"User-Agent": "OPS ROOM/0.24.107 (+flight-simulation utility)"},
+        headers={"User-Agent": _USER_AGENT},
         timeout=(3, 8),
     )
     if response.status_code >= 400:

@@ -11,8 +11,8 @@ from .simbrief_client import cached_plan
 from .simconnect_position import read_position
 from .vatsim_client import get_vatsim_data
 from .weather_client import fetch_metar
-from .notam_client import get_notams as _notam_get  # v0.25.63: closure badges
-from . import notam_translate  # v0.25.63: closure keyword check
+from .notam_client import get_notams as _notam_get  # v0.25.65: closure badges
+from . import notam_translate  # v0.25.65: closure keyword check
 
 AIRCRAFT_PROFILES: dict[str, dict[str, Any]] = {
     "ga": {"label": "GENERAL AVIATION", "speed": 125, "overhead": 12, "types": {"small_airport", "medium_airport", "large_airport"}, "max_nm": 650, "simbrief_type": "C172", "flight_level": 100},
@@ -281,7 +281,7 @@ def discover_routes(
         final.append(row)
     final.sort(key=lambda row: (-row["score"], abs(row["duration_delta_minutes"]), row["destination"]))
 
-    # v0.25.63: badge route cards when origin/destination has closure-relevant
+    # v0.25.65: badge route cards when origin/destination has closure-relevant
     # NOTAMs. Additive signal only -- it never filters a route.
     if final:
         closure_map = _notam_closure_map([origin_airport.ident] + [row["destination"] for row in final[:6]])

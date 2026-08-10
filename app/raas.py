@@ -71,8 +71,8 @@ except Exception as _raas_audio_import_exc:
 
 from .navdata import available as navdata_available, project_local, runway_ends_near
 from .telemetry_provider import read_telemetry, telemetry_diagnostics
-from . import notam_client  # v0.25.63: NOTAM runway-closure cross-reference
-from . import notam_translate  # v0.25.63: closure keyword check
+from . import notam_client  # v0.25.65: NOTAM runway-closure cross-reference
+from . import notam_translate  # v0.25.65: closure keyword check
 
 _LOG = logging.getLogger("opsroom.raas")
 
@@ -379,7 +379,7 @@ def _callout(text: str, event_type: str, *, runway: str = "", distance_ft: int |
     created_epoch = time.time()
     spoken_unit = "meters" if str(distance_unit).upper() == "M" else ("feet" if str(distance_unit).upper() == "FT" else _raas_spoken_unit())
     _raas_queue_callout(text, event_type=event_type, runway=runway, distance_ft=distance_ft, priority=priority, distance_value=distance_value, distance_unit=spoken_unit)
-    # v0.25.63: NOTAM cross-reference -- ADD-ONLY. When the aircraft is on or
+    # v0.25.65: NOTAM cross-reference -- ADD-ONLY. When the aircraft is on or
     # approaching a runway, check whether an active NOTAM closes it and fire
     # an extra warning. Never suppresses or replaces an existing callout.
     if event_type in ("on_runway", "approaching_runway") and runway:
@@ -406,14 +406,28 @@ def _strip_key(rwy: dict[str, Any] | None) -> str:
     return f"{airport}:{_runway_name(item)}"
 
 
-# ── v0.25.63: NOTAM runway-closure cross-reference (ADD-ONLY) ──────────────
+# ── v0.25.65: NOTAM runway-closure cross-reference (ADD-ONLY) ──────────────
 # Determines whether an active NOTAM closes the runway the aircraft is on or
 # approaching, and fires an extra warning callout. This integration can only
 # ADD a warning -- a missed match must never change RAAS's existing logic.
 
-_NOTAM_CLOSURE_CACHE: dict[str, tuple[float, bool, str]] = {}
+_NOTAM_CLOSURE_CACHE: dict[str, tuple[float, bool, str, str]] = {}
 _NOTAM_CLOSURE_LOCK = threading.Lock()
 _NOTAM_CLOSURE_TTL = 900.0  # 15 minutes -- plenty for a taxi/approach phase
+
+# v0.25.72 (#17): once a closure NOTAM has been announced for a physical
+# runway strip, it is never announced again until the closure clears (or a
+# new NOTAM appears). Keyed by ``airport:physical-strip`` -> announced notam
+# id, so 26L then 26R of the same closed runway share one latch.
+_NOTAM_ANNOUNCED: dict[str, str] = {}
+
+
+def _closure_announce_key(airport: str, runway: str) -> str:
+    """Physical-strip key for the announced latch (26L/26R/08/26 -> one key)."""
+    strip = str(_RUNWAY_SESSION.get("strip") or "")
+    if ":" in strip and str(strip).split(":", 1)[0] == str(airport or "").upper().strip():
+        return strip
+    return f"{str(airport or '').upper().strip()}:{str(runway or '').rstrip('LRC')}"
 
 
 def _runway_tokens(text_upper: str) -> list[str]:
@@ -432,18 +446,23 @@ def _runway_matches(token: str, runway: str) -> bool:
     return any(part.rstrip("LRC") == base for part in parts)
 
 
-def _notam_runway_closed(airport: str, runway: str) -> tuple[bool, str]:
-    """Best-effort: is there an active closure NOTAM for this runway?"""
+def _notam_runway_closed(airport: str, runway: str) -> tuple[bool, str, str]:
+    """Best-effort: is there an active closure NOTAM for this runway?
+
+    Returns ``(matched, notam_id, detail)`` — the NOTAM id is the stable
+    closure identity the announced-latch keys on (v0.25.72, #17).
+    """
     airport = str(airport or "").upper().strip()
     runway = str(runway or "").upper().strip()
     if len(airport) != 4 or not runway:
-        return False, ""
+        return False, "", ""
     key = f"{airport}:{runway}"
     with _NOTAM_CLOSURE_LOCK:
         hit = _NOTAM_CLOSURE_CACHE.get(key)
         if hit and time.time() - hit[0] <= _NOTAM_CLOSURE_TTL:
-            return bool(hit[1]), hit[2]
+            return bool(hit[1]), hit[2], hit[3]
     matched = False
+    notam_id = ""
     detail = ""
     try:
         package = notam_client.get_notams(airport)
@@ -453,29 +472,54 @@ def _notam_runway_closed(airport: str, runway: str) -> tuple[bool, str]:
                 continue
             if any(_runway_matches(token, runway) for token in _runway_tokens(text)):
                 matched = True
+                notam_id = str(row.get("id") or row.get("number") or row.get("nms_id") or "").strip()
                 detail = str(row.get("text") or "")
                 break
     except Exception as exc:
         _LOG.debug("RAAS NOTAM check failed for %s: %s", airport, exc)
     with _NOTAM_CLOSURE_LOCK:
-        _NOTAM_CLOSURE_CACHE[key] = (time.time(), matched, detail)
+        _NOTAM_CLOSURE_CACHE[key] = (time.time(), matched, notam_id, detail)
     if matched:
         # Inspectable match log -- this is exactly the feature that needs
         # real-world regex tuning after launch.
         _LOG.info("RAAS NOTAM cross-ref: RWY %s at %s closed per NOTAM: %s", runway, airport, detail[:200])
-    return matched, detail
+    return matched, notam_id, detail
+
+
+def _notam_callouts_enabled() -> bool:
+    """v0.25.65: spoken NOTAM closure call-outs on/off (default on)."""
+    try:
+        from .settings_store import load_settings
+
+        integrations = load_settings().get("integrations", {}) or {}
+        return bool(integrations.get("raas_notam_callouts", True))
+    except Exception:
+        return True
 
 
 def _maybe_notam_closure_callout(runway: str) -> None:
     """Run the closure check off the RAAS loop so callouts never stall on
-    network I/O, then fire the add-on warning in a daemon thread."""
+    network I/O, then fire the add-on warning in a daemon thread. The spoken
+    call-out is short by design ("RUNWAY CLOSED PER NOTAM") and can be
+    disabled via the ``raas_notam_callouts`` setting."""
     def _worker() -> None:
         try:
+            if not _notam_callouts_enabled():
+                return
             strip = str(_RUNWAY_SESSION.get("strip") or "")
             airport = strip.split(":", 1)[0] if ":" in strip else ""
-            closed, _detail = _notam_runway_closed(airport, runway)
+            closed, notam_id, _detail = _notam_runway_closed(airport, runway)
+            # v0.25.72 (#17): announce once per closure NOTAM per physical
+            # runway strip. Re-arm only when the closure clears or the NOTAM id
+            # changes (a new/updated closure). 26L then 26R of the same closed
+            # strip can never announce twice.
+            announce_key = _closure_announce_key(airport, runway)
             if closed:
-                _callout("RUNWAY CLOSED PER NOTAM", "notam_runway_closed", runway=runway, priority="warning", cooldown=600.0)
+                if _NOTAM_ANNOUNCED.get(announce_key) != notam_id:
+                    _callout("RUNWAY CLOSED PER NOTAM", "notam_runway_closed", runway=runway, priority="warning", cooldown=600.0)
+                    _NOTAM_ANNOUNCED[announce_key] = notam_id
+            else:
+                _NOTAM_ANNOUNCED.pop(announce_key, None)
         except Exception:
             pass
 

@@ -29,6 +29,13 @@ let vpilotInitialized = false;
 let commsSendMode = 'private';
 let briefingWeatherTimer = null;
 let briefingOfpTheme = 'dark';
+// v0.25.65: live OFP completion panel state (chip-toggle polling lifecycle).
+let briefingOfpLiveTimer = null;
+let briefingOfpLiveBusy = false;
+let briefingOfpLiveRevision = '';
+let briefingOfpLiveData = null;
+let briefingOfpLiveOpen = false;
+let briefingOfpLiveAbortController = null;
 let activePage = 'status';
 let groundTimer = null;
 let groundBusy = false;
@@ -186,6 +193,35 @@ const TERMINAL_HOME_STYLES = new Set(['auto','classic','efb']);
 const RAIL_COLLAPSED_KEY = 'opsroom-classic-rail-collapsed-v1815';
 
 const $ = id => document.getElementById(id);
+
+// v0.25.73 (#8 sweep): in-app confirm modal. WebView2 silently blocks native
+// window.confirm(), so every confirm-gated action goes through a real <dialog>.
+// Returns a Promise<boolean>; resolve is wired before showModal() so the
+// rejection path (ESC / backdrop click) also resolves false.
+let _uiConfirmDialog = null;
+function uiConfirm(message, okLabel){
+  if(!_uiConfirmDialog){
+    _uiConfirmDialog = document.createElement('dialog');
+    _uiConfirmDialog.className = 'ui-confirm-dialog';
+    _uiConfirmDialog.innerHTML =
+      '<div class="ui-confirm-box">' +
+        '<p class="ui-confirm-message"></p>' +
+        '<div class="ui-confirm-actions">' +
+          '<button type="button" class="control-button" data-ui-confirm-cancel>CANCEL</button>' +
+          '<button type="button" class="control-button danger-control" data-ui-confirm-ok>CONFIRM</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(_uiConfirmDialog);
+    _uiConfirmDialog.querySelector('[data-ui-confirm-ok]').addEventListener('click', ()=>{ _uiConfirmDialog._resolve(true); _uiConfirmDialog.close(); });
+    _uiConfirmDialog.querySelector('[data-ui-confirm-cancel]').addEventListener('click', ()=>{ _uiConfirmDialog._resolve(false); _uiConfirmDialog.close(); });
+    _uiConfirmDialog.addEventListener('cancel', e=>{ e.preventDefault(); _uiConfirmDialog._resolve(false); _uiConfirmDialog.close(); });
+    _uiConfirmDialog.addEventListener('click', e=>{ if(e.target === _uiConfirmDialog){ _uiConfirmDialog._resolve(false); _uiConfirmDialog.close(); } });
+  }
+  _uiConfirmDialog.querySelector('.ui-confirm-message').textContent = String(message || 'Continue?');
+  const ok = _uiConfirmDialog.querySelector('[data-ui-confirm-ok]');
+  if(ok) ok.textContent = String(okLabel || 'CONFIRM');
+  return new Promise(resolve=>{ _uiConfirmDialog._resolve = resolve; _uiConfirmDialog.showModal(); });
+}
 
 // v0.25.60: minimal showToast replacement — uses browser Notification API
 // when available with permission, falls back to console logging.
@@ -421,7 +457,7 @@ async function safeJsonResponse(response){
 
 function reportFrontendError(source, detail){
   try{
-    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.63', ts:new Date().toISOString()};
+    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.73', ts:new Date().toISOString()};
     lastFrontendError = payload.detail;
     navigator.sendBeacon?.('/api/frontend/log', new Blob([JSON.stringify(payload)], {type:'application/json'})) || fetch('/api/frontend/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true}).catch(()=>{});
   }catch(_){ }
@@ -437,10 +473,45 @@ function runModuleStart(name, fn){
 function stopRaas(){
   if(raasTimer){ clearInterval(raasTimer); raasTimer=null; }
 }
+let closureProximityKey = '';
+let closureProximityExitSince = 0;
+// v0.25.65: amber/red proximity pop-up when the aircraft is near a closed
+// runway/taxiway per active NOTAMs. Rides the global 5s RAAS poll (no extra
+// timer), reuses showRaasGlobalAlert (amber for taxiway/barrier, red for
+// runway), and leaves a silent drawer record via notifyOps. The backend gates
+// on the notam_notifications setting and never spawns.
+// v0.25.72 (#17): the alert is announced once per closure NOTAM. The key is
+// the stable closure identity (backend ``closure_id`` = NOTAM id, else
+// airport:kind:ref) so switching between markers of the same closure never
+// re-alerts, and the latch re-arms only after a sustained 30s exit instead of
+// resetting on every near:false — drifting across the radius boundary stops
+// re-triggering.
+function pollClosureProximity(){
+  fetch('/api/notams/closure-proximity',{cache:'no-store'}).then(r=>r.json()).then(data=>{
+    if(!data?.ok){ return; }
+    if(!data.near){
+      if(!closureProximityExitSince) closureProximityExitSince = Date.now();
+      else if(Date.now()-closureProximityExitSince >= 30000) closureProximityKey='';
+      return;
+    }
+    closureProximityExitSince = 0;
+    const key = String(data.closure_id||String(data.kind||'')+':'+String(data.ref||'')+':'+String(data.airport_icao||''));
+    if(!key || key===closureProximityKey) return;
+    closureProximityKey = key;
+    // Barriers are hold-short lines carrying a runway ref -> treat as runway.
+    const rwy = data.kind==='runway' || data.kind==='barrier';
+    const text = rwy
+      ? `RWY ${String(data.ref||'').toUpperCase()} CLOSED ${String(data.distance_nm||'')} NM AHEAD`
+      : `TWY ${String(data.ref||'').toUpperCase()} CLOSED ${String(data.distance_nm||'')} NM AHEAD`;
+    showRaasGlobalAlert(text, rwy ? 'critical' : 'amber');
+    notifyOps({source:'NOTAM CLOSURE', title:rwy?'RUNWAY CLOSED AHEAD':'TAXIWAY CLOSED AHEAD', message:text, priority:rwy?'critical':'operational', page:'briefing', tag:'closure-proximity:'+key});
+  }).catch(()=>{});
+}
 function startGlobalRaasListener(){
   if(raasGlobalPollTimer) return;
   loadRaas();
-  raasGlobalPollTimer = setInterval(()=>loadRaas(), 5000);
+  pollClosureProximity();
+  raasGlobalPollTimer = setInterval(()=>{loadRaas(); pollClosureProximity();}, 5000);
 }
 function startAnnouncements(){
   stopAnnouncements();
@@ -535,14 +606,14 @@ function sensitiveValueHtml(value, visible, label='sensitive value'){
   return `<span class="sensitive-inline"><b class="streamer-sensitive ${visible?'revealed':'concealed'}" aria-label="${escapeHtml(label)}">${display}</b><button class="sensitive-toggle" type="button" data-sensitive="vatsim-cid">${visible?'HIDE':'SHOW'}</button></span>`;
 }
 
-function toggleSensitiveField(kind){
+async function toggleSensitiveField(kind){
   if(kind !== 'vatsim-cid') return;
   if(networkCidVisible){
     networkCidVisible = false;
     if(networkLoaded) loadNetwork(false);
     return;
   }
-  if(streamerModeEnabled() && !confirm('Streamer Mode is enabled. This may reveal your VATSIM CID on stream or in screenshots. Reveal anyway?')) return;
+  if(streamerModeEnabled() && !(await uiConfirm('Streamer Mode is enabled. This may reveal your VATSIM CID on stream or in screenshots. Reveal anyway?', 'REVEAL'))) return;
   networkCidVisible = true;
   if(networkLoaded) loadNetwork(false);
 }
@@ -713,6 +784,7 @@ function showPage(name){
   if(name !== 'ground') stopGroundControl();
   if(name !== 'map') stopMapStream();
   if(name !== 'briefing' && briefingWeatherTimer){clearInterval(briefingWeatherTimer);briefingWeatherTimer=null;}
+  if(name !== 'briefing') stopBriefingOfpLive();
   if(name !== 'procedures') stopProcedures();
   if(name !== 'logbook') stopLogbook();
   if(name !== 'blackbox') stopBlackBox();
@@ -1063,7 +1135,11 @@ async function setBriefingSection(name){
   document.querySelectorAll('[data-briefing-tab]').forEach(button=>button.classList.toggle('active',button.dataset.briefingTab===briefingSection));
   if(briefingSection==='weather')refreshBriefingWeather(false);
   if(['notams','hazards','sigwx','charts'].includes(briefingSection))loadOperationalBriefing(false);
+  if(briefingSection==='notams')refreshClosureDeploy(false);
   if(briefingSection==='charts'){ await loadCharts(); cfState.pins = cfLoadPins(); cfRenderPinnedStrip(); if(cfState && cfState.airport) cfLoadAirport(cfState.airport); }
+  // v0.25.65: live OFP completion polling follows the OFP section visibility.
+  if(briefingSection==='ofp' && briefingOfpLiveOpen) startBriefingOfpLive();
+  else stopBriefingOfpLive();
 }
 function briefingUtc(value){
   const formatted=utcHm(value);
@@ -1095,7 +1171,7 @@ function briefingNoticeCard(item){
   // v0.25.60: source chip distinguishes live FAA NMS rows from flight-plan rows.
   const src=String(item.source||'').toUpperCase();
   const sourceChip=src==='FAA NMS'?`<i class="briefing-source-chip live">LIVE</i>`:(src?`<i class="briefing-source-chip">${escapeHtml(src)}</i>`:'');
-  // v0.25.63: plain-English expansion when available; raw ICAO always kept.
+  // v0.25.65: plain-English expansion when available; raw ICAO always kept.
   const body = item.translated_text || item.text || '';
   const showRaw = item.raw && (item.translated_text || item.raw.trim() !== String(item.text||'').trim());
   return `<article class="briefing-notice" data-notam-scope="${escapeHtml(item.scope_key||'enroute')}"><header><div><strong>${escapeHtml(item.id||'NOTICE')}</strong><small>${escapeHtml(item.scope||item.location||'Flight briefing')}</small></div><span>${escapeHtml(item.location_name||item.location||item.source||'SIMBRIEF')}</span></header>${(badges.length||sourceChip)?`<div class="briefing-notice-badges">${sourceChip}${item.translated_text?`<i class="briefing-source-chip plain">PLAIN ENGLISH</i>`:''}${badges.map(x=>`<i>${escapeHtml(x)}</i>`).join('')}</div>`:''}<pre>${escapeHtml(body)}</pre>${validity.length||item.schedule?`<footer><span>${escapeHtml(validity.join(' · '))}</span>${item.schedule?`<span>${escapeHtml(item.schedule)}</span>`:''}</footer>`:''}${showRaw?`<details><summary>RAW ICAO NOTAM</summary><pre>${escapeHtml(item.raw)}</pre></details>`:''}</article>`;
@@ -1252,17 +1328,21 @@ function renderBriefing(plan){
       </div></section>
     </div>
     <div class="briefing-section-panel" data-briefing-section="weather" hidden><section class="panel briefing-panel weather-panel"><header><span>Weather and ATIS</span><span id="briefingWeatherUpdated">Updates every 5 min</span></header><div id="briefingLiveWeather" class="briefing-live-weather"><article><h3>LOADING</h3><small>Fetching live briefing weather...</small></article></div></section></div>
-    <div class="briefing-section-panel" data-briefing-section="notams" hidden><section class="panel briefing-panel"><header><span>Route-relevant NOTAMs</span><span>Structured SimBrief OFP data</span></header><div id="briefingNotams"></div></section></div>
+    <div class="briefing-section-panel" data-briefing-section="notams" hidden><section class="panel briefing-panel"><header><span>Route-relevant NOTAMs</span><span>Structured SimBrief OFP data</span></header><section id="simClosureDeploy" class="panel briefing-panel sim-closure-deploy" hidden><!-- v0.25.71: closure-marker DEPLOY IN SIM control is hidden (feature shelved; re-enable later) --><header><span>Runway & taxiway closure markers</span><span>NOTAM → MSFS SimObjects</span></header><div class="sim-closure-body"><div class="sim-closure-actions"><button id="closureDeployToggle" class="control-button closure-deploy-toggle" type="button" aria-pressed="false">DEPLOY IN SIM</button><button id="closureDeployClear" class="control-button closure-deploy-clear" type="button">REMOVE</button></div><div id="closureDeployStatus" class="map-layer-status">CLOSURE MARKERS — OFF · NO DEPLOYMENT</div><div id="closureDeployInstall" class="map-layer-status dim" hidden></div></div></section><div id="briefingNotams"></div></section></div>
     <div class="briefing-section-panel" data-briefing-section="hazards" hidden><section class="panel briefing-panel"><header><span>Aviation weather hazards</span><span>AIRMET · SIGMET · TC · VA</span></header><div id="briefingHazards"></div></section></div>
     <div class="briefing-section-panel" data-briefing-section="sigwx" hidden><section class="panel briefing-panel"><header><span>SIGWX</span><span>Separate SimBrief chart images</span></header><div id="briefingSigwx"></div></section></div>
     <div class="briefing-section-panel" data-briefing-section="charts" hidden><section class="panel briefing-panel" id="briefingChartFoxSection"><header><span>ChartFox charts</span><span>ChartFox API</span></header><div id="briefingChartFoxPanel" class="bridge-charts-panel"><b>LOADING CHARTFOX...</b></div></section><section class="panel briefing-panel"><header><span>SimBrief briefing charts</span><span>Route · winds · vertical profile</span></header><div id="briefingSimbriefCharts"></div></section><!-- v0.25.60 RC: legacy briefingChartViewer + briefingChartFrame iframe removed (was a hidden dead block that confused users who saw "chartfox.org refused to connect"). ChartFox charts render exclusively through cfRenderPreview (img via proxy + PDF.js canvas). --></div>
-    <div class="briefing-section-panel" data-briefing-section="ofp" hidden><section id="briefingOfpPanel" class="panel briefing-panel ofp-embed-panel"><header><span>Operational flight plan</span><span></span></header>${(()=>{const pdf=plan.files?.pdf_local||plan.files?.pdf;const src=`/api/simbrief/ofp-view?theme=${encodeURIComponent(briefingOfpTheme)}`;return `<div class="briefing-ofp-actions"><div class="ofp-theme-buttons"><button id="ofpThemeDark" class="${briefingOfpTheme==='dark'?'active':''}" type="button">DARK</button><button id="ofpThemeLight" class="${briefingOfpTheme==='light'?'active':''}" type="button">LIGHT</button></div><div class="ofp-reader-actions"><span class="page-readout">OFP reader</span>${pdf?`<a class="control-button" href="${escapeHtml(pdf)}" target="opsroom-ofp-pdf" rel="noopener">Open SimBrief PDF</a>`:''}</div></div><iframe id="briefingOfpFrame" class="briefing-ofp-frame" src="${escapeHtml(src)}" title="Operational Flight Plan"></iframe>`;})()}</section></div>
+    <div class="briefing-section-panel" data-briefing-section="ofp" hidden><section id="briefingOfpPanel" class="panel briefing-panel ofp-embed-panel"><header><span>Operational flight plan</span><span></span></header>${(()=>{const pdf=plan.files?.pdf_local||plan.files?.pdf;const src=`/api/simbrief/ofp-view?theme=${encodeURIComponent(briefingOfpTheme)}`;return `<div class="briefing-ofp-actions"><div class="ofp-theme-buttons"><button id="ofpThemeDark" class="${briefingOfpTheme==='dark'?'active':''}" type="button">DARK</button><button id="ofpThemeLight" class="${briefingOfpTheme==='light'?'active':''}" type="button">LIGHT</button></div><div class="ofp-reader-actions"><span class="page-readout">OFP reader</span><button id="ofpLiveToggle" class="ofp-live-chip ${briefingOfpLiveOpen?'active':''}" type="button" aria-expanded="${briefingOfpLiveOpen?'true':'false'}" title="Toggle the live OFP completion panel">◈ LIVE OFP</button>${pdf?`<a class="control-button" href="${escapeHtml(pdf)}" target="opsroom-ofp-pdf" rel="noopener">Open SimBrief PDF</a>`:''}</div></div><section id="briefingOfpLivePanel" class="ofp-live-panel" ${briefingOfpLiveOpen?'':'hidden'}><div class="network-empty">LIVE OFP completion is standing by — click ◈ LIVE OFP to open the live comparison.</div></section><iframe id="briefingOfpFrame" class="briefing-ofp-frame" src="${escapeHtml(src)}" title="Operational Flight Plan"></iframe>`;})()}</section></div>
     <div id="briefingImageViewer" class="briefing-image-viewer" hidden><div class="briefing-image-viewer-head"><strong id="briefingImageViewerTitle">SIMBRIEF CHART</strong><div><span id="briefingImageZoomReadout">100%</span><button id="briefingImageZoomOut" type="button">−</button><button id="briefingImageZoomIn" type="button">+</button><button id="briefingImageZoomReset" type="button">RESET</button><a id="briefingImageViewerDownload" href="#" download>DOWNLOAD</a><button id="briefingImageViewerClose" type="button">CLOSE</button></div></div><div id="briefingImageViewerStage" class="briefing-image-viewer-stage"><img id="briefingImageViewerImg" alt="Expanded SimBrief chart"></div></div>`;
   document.querySelectorAll('[data-briefing-tab]').forEach(button=>button.addEventListener('click',()=>setBriefingSection(button.dataset.briefingTab)));
   $('briefingViewOfp')?.addEventListener('click',()=>setBriefingSection('ofp'));
   $('ofpThemeDark')?.addEventListener('click',()=>setBriefingOfpTheme('dark'));$('ofpThemeLight')?.addEventListener('click',()=>setBriefingOfpTheme('light'));
+  $('ofpLiveToggle')?.addEventListener('click',()=>setBriefingOfpLiveOpen(!briefingOfpLiveOpen));
   setupBriefingImageViewer();
   setBriefingSection(briefingSection||'overview');refreshBriefingWeather(false);loadOperationalBriefing(false);
+  // v0.25.71: closure-marker DEPLOY IN SIM control is shelved - the panel is
+  // hidden above, so bindClosureDeploy() (and its API calls) are not wired.
+  // bindClosureDeploy();
   // Auto-pin charts from SimBrief flight plan (handles loading airport data itself)
   if (plan && plan.ok) {
     cfAutoPinFromSimBrief(plan);
@@ -1275,6 +1355,370 @@ function setBriefingOfpTheme(theme){
   const frame=$('briefingOfpFrame');
   if(frame && !String(frame.src||'').includes('/api/simbrief/ofp-cache/')) frame.src=`/api/simbrief/ofp-view?theme=${encodeURIComponent(briefingOfpTheme)}&t=${Date.now()}`;
 }
+
+// ── Live OFP completion (v0.25.65) ───────────────────────────────────────
+// Toggle chip in the OFP reader action row. While open, polls
+// GET /api/briefing/ofp-live every 2 s and patches stable DOM cells by
+// data-ofp-live attributes. The SimBrief iframe is never reloaded by this
+// polling, and missing values are always rendered as "—", never zero.
+function briefingOfpLiveActive(){
+  return briefingOfpLiveOpen && activePage === 'briefing' && briefingSection === 'ofp' && !document.hidden;
+}
+function briefingOfpStateLabel(state){
+  return {waiting:'WAITING',live:'LIVE',complete:'COMPLETE',stale:'STALE',mismatch:'PLAN MISMATCH','no-plan':'NO PLAN'}[state] || String(state||'—').toUpperCase();
+}
+function briefingOfpCellClass(state){
+  return {waiting:'state-standby',live:'state-live',complete:'state-complete',stale:'state-stale',mismatch:'state-fault','no-plan':'state-fault'}[state] || 'state-standby';
+}
+function briefingOfpNum(value, digits=0){
+  if(value === null || value === undefined || value === '') return '—';
+  const n = Number(value);
+  if(!Number.isFinite(n)) return '—';
+  return digits>0 ? n.toFixed(digits) : Math.round(n).toLocaleString();
+}
+function briefingOfpTime(iso){
+  if(!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '—' : `${String(d.getUTCHours()).padStart(2,'0')}${String(d.getUTCMinutes()).padStart(2,'0')}Z`;
+}
+function briefingOfpDelta(seconds){
+  if(seconds === null || seconds === undefined || seconds === '') return '—';
+  const s = Number(seconds);
+  if(!Number.isFinite(s)) return '—';
+  if(Math.abs(s) <= 0) return 'ON TIME';
+  // v0.25.72 (#13): whole-minute deltas match the minute-precision times
+  // (OUT 1735Z -> 1754Z shows +19, never +1909).
+  const minutes = Math.round(Math.abs(s)/60);
+  const sign = s > 0 ? '+' : '-';
+  if(minutes <= 0) return 'ON TIME';
+  const h = Math.floor(minutes/60), m = minutes%60;
+  return h ? `${sign}${h}${String(m).padStart(2,'0')}` : `${sign}${m}`;
+}
+function briefingOfpDuration(seconds){
+  if(seconds === null || seconds === undefined || seconds === '') return '—';
+  const s = Number(seconds);
+  if(!Number.isFinite(s) || s < 0) return '—';
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+  return `${String(h).padStart(2,'0')}${String(m).padStart(2,'0')}`;
+}
+function briefingOfpUnit(unit){
+  const u = String(unit || '').toUpperCase();
+  return u === 'KGS' ? 'KG' : (u === 'LBS' ? 'LB' : u || '');
+}
+function briefingOfpWeight(value, unit, digits=0){
+  if(value === null || value === undefined || value === '') return '—';
+  const n = Number(value);
+  if(!Number.isFinite(n)) return '—';
+  const base = digits>0 ? n.toFixed(digits) : Math.round(n).toLocaleString();
+  return unit ? `${base} ${unit}` : base;
+}
+function briefingOfpLiveSkeleton(data){
+  const unit = briefingOfpUnit(data?.units?.display);
+  // Columns in the fourth argument are editable: clicking the ACTUAL cell
+  // opens an inline input that writes a manual override (source=manual).
+  const row = (label,key,cols,ovrCols=[]) => `<tr><th scope="row">${label}</th>${cols.map(c=>{const attrs=ovrCols.includes(c)?' data-ofp-override="'+key+'" class="ofp-ovr" title="Click to enter a manual value"':'';return `<td data-ofp-live="${key}:${c}"${attrs}>—</td>`;}).join('')}</tr>`;
+  return `<div class="ofp-live-status-strip"><b id="ofpLiveState" class="ofp-live-state state-standby">WAITING</b><span><i>PHASE</i><b id="ofpLivePhase">—</b></span><span><i>SOURCE</i><b id="ofpLiveSource">—</b></span><span><i>OPERATION</i><b id="ofpLiveOp">—</b></span><span><i>UPDATED</i><b id="ofpLiveUpdated">—</b></span><span class="ofp-live-manual" id="ofpLiveManualChip" hidden><i>MANUAL</i><b id="ofpLiveManualCount">0</b></span><span class="ofp-live-hint">click ACTUAL cells to enter manual values</span><span class="ofp-live-actions"><button type="button" class="control-button" id="ofpLiveClearOverrides" hidden>CLEAR OVERRIDES</button><button type="button" class="control-button" data-ofp-copy="actuals">COPY ACTUALS</button><button type="button" class="control-button" data-ofp-copy="full">COPY FULL COMPARISON</button><button type="button" class="control-button" id="ofpLivePrint" data-ofp-print title="Print the live comparison to the configured Thermal/POS printer">PRINT</button></span></div>
+  <div class="ofp-live-tables">
+  <table class="ofp-live-table"><caption>TIMES</caption><thead><tr><th scope="col">EVENT</th><th scope="col">SCHEDULED</th><th scope="col">ACTUAL</th><th scope="col">DELTA</th><th scope="col">NOTE</th></tr></thead><tbody>
+  ${row('OUT','times:out',['sched','actual','delta','est'],['actual'])}${row('OFF','times:off',['sched','actual','delta','est'],['actual'])}${row('ON','times:on',['sched','actual','delta','est'],['actual'])}${row('IN','times:in',['sched','actual','delta','est'],['actual'])}${row('BLOCK','times:block',['sched','actual','delta','est'])}
+  </tbody></table>
+  <table class="ofp-live-table"><caption>WEIGHTS ${escapeHtml(unit||'KG')}</caption><thead><tr><th scope="col">ITEM</th><th scope="col">PLANNED</th><th scope="col">MAX</th><th scope="col">ACTUAL</th><th scope="col">DELTA</th></tr></thead><tbody>
+  ${row('PAX','weights:pax',['planned','max','actual','delta'],['actual'])}${row('BAG/CARGO','weights:bags',['planned','max','actual','delta'])}${row('COMMERCIAL FREIGHT','weights:freight',['planned','max','actual','delta'])}${row('PAYLOAD','weights:payload',['planned','max','actual','delta'])}${row('ZFW','weights:zfw',['planned','max','actual','delta'],['actual'])}${row('TOW','weights:tow',['planned','max','actual','delta'],['actual'])}${row('LDW','weights:ldw',['planned','max','actual','delta'],['actual'])}
+  </tbody></table>
+  <table class="ofp-live-table"><caption>FUEL ${escapeHtml(unit||'KG')}</caption><thead><tr><th scope="col">ITEM</th><th scope="col">PLANNED</th><th scope="col">ACTUAL</th><th scope="col">DELTA</th></tr></thead><tbody>
+  ${row('RAMP / OUT','fuel:ramp',['planned','actual','delta'],['actual'])}${row('TAKEOFF / OFF','fuel:takeoff',['planned','actual','delta'],['actual'])}${row('TRIP','fuel:trip',['planned','actual','delta'])}${row('LANDING / ON','fuel:landing',['planned','actual','delta'],['actual'])}${row('BLOCK IN','fuel:blockin',['planned','actual','delta'],['actual'])}${row('EXTRA / SURPLUS','fuel:extra',['planned','actual','delta'])}
+  </tbody></table>
+  </div>`;
+}
+function briefingOfpSetCell(panel, key, text, opts={}){
+  const cell = panel.querySelector(`[data-ofp-live="${key}"]`);
+  if(!cell) return;
+  if(cell.classList.contains('editing')) return; // never clobber an open editor
+  cell.textContent = text;
+  if(opts.manual){
+    cell.classList.add('manual');
+    cell.dataset.manualValue = String(opts.manualValue ?? '');
+    cell.title = 'Manual override — click to edit';
+  }else if(cell.dataset.ofpOverride){
+    cell.classList.remove('manual');
+    delete cell.dataset.manualValue;
+    cell.title = 'Click to enter a manual value';
+  }else{
+    cell.classList.remove('manual');
+    delete cell.dataset.manualValue;
+    cell.title = '';
+  }
+}
+function patchBriefingOfpLive(data){
+  const panel = $('briefingOfpLivePanel');
+  if(!panel) return;
+  const stateEl = $('ofpLiveState');
+  if(stateEl){ stateEl.textContent = briefingOfpStateLabel(data.state); stateEl.className = 'ofp-live-state ' + briefingOfpCellClass(data.state); }
+  const live = data.live || {};
+  const unit = briefingOfpUnit(data?.units?.display);
+  const manual = data.manual_overrides || {};
+  const manualCount = Object.keys(manual).length;
+  const manualChip = $('ofpLiveManualChip');
+  if(manualChip) manualChip.hidden = manualCount === 0;
+  const manualCountEl = $('ofpLiveManualCount');
+  if(manualCountEl) manualCountEl.textContent = String(manualCount);
+  const clearBtn = $('ofpLiveClearOverrides');
+  if(clearBtn) clearBtn.hidden = manualCount === 0;
+  const set = (key,text,opts)=>briefingOfpSetCell(panel,key,text,opts);
+  if($('ofpLivePhase')) $('ofpLivePhase').textContent = uiWords(live.phase) || '—';
+  if($('ofpLiveSource')) $('ofpLiveSource').textContent = String(live.telemetry_source || '—').toUpperCase();
+  if($('ofpLiveOp')) $('ofpLiveOp').textContent = String((data.operation||{}).resolved || '—').toUpperCase();
+  if($('ofpLiveUpdated')) $('ofpLiveUpdated').textContent = briefingOfpTime(data.updated_utc);
+  const times = data.times || {};
+  for(const k of ['out','off','on','in']){
+    const row = times[k] || {};
+    set(`times:${k}:sched`, briefingOfpTime(row.scheduled_utc));
+    set(`times:${k}:actual`, briefingOfpTime(row.actual_utc), row.source === 'manual' ? {manual:true, manualValue:manual[`times:${k}`]} : undefined);
+    set(`times:${k}:delta`, briefingOfpDelta(row.delta_seconds));
+    set(`times:${k}:est`, row.estimated ? 'ESTIMATED' : '');
+  }
+  const block = times.block || {};
+  set('times:block:sched', briefingOfpDuration(block.planned_seconds));
+  set('times:block:actual', briefingOfpDuration(block.actual_seconds));
+  set('times:block:delta', briefingOfpDelta(block.delta_seconds));
+  set('times:block:est', '');
+  const weights = data.weights || {};
+  const disp = (item,key,digits=0)=>briefingOfpWeight(item?.[key+'_display'] ?? item?.[key], unit, digits);
+  const wrow = (key,item,isCount=false,ovrKey=null)=>{ if(!item) return; set(`weights:${key}:planned`, isCount?briefingOfpWeight(item.planned, '', 0):disp(item,'planned')); set(`weights:${key}:max`, disp(item,'max')); set(`weights:${key}:actual`, disp(item,'actual'), (ovrKey && manual[ovrKey] !== undefined) ? {manual:true, manualValue:manual[ovrKey]} : undefined); set(`weights:${key}:delta`, briefingOfpWeight(item.delta_display ?? item.delta, unit, 1)); };
+  wrow('pax', weights.passengers, true, 'weights:pax'); wrow('bags', weights.bags_cargo); wrow('freight', weights.commercial_freight);
+  wrow('payload', weights.payload); wrow('zfw', weights.zfw, false, 'weights:zfw'); wrow('tow', weights.tow, false, 'weights:tow'); wrow('ldw', weights.ldw, false, 'weights:ldw');
+  const fuel = data.fuel || {};
+  const frow = (key,item,ovrKey=null)=>{ if(!item) return; set(`fuel:${key}:planned`, disp(item,'planned')); set(`fuel:${key}:actual`, disp(item,'actual'), (ovrKey && manual[ovrKey] !== undefined) ? {manual:true, manualValue:manual[ovrKey]} : undefined); set(`fuel:${key}:delta`, briefingOfpWeight(item.delta_display ?? item.delta, unit, 1)); };
+  frow('ramp', fuel.ramp_out, 'fuel:ramp'); frow('takeoff', fuel.takeoff_off, 'fuel:takeoff'); frow('trip', fuel.trip);
+  frow('landing', fuel.landing_on, 'fuel:landing'); frow('blockin', fuel.block_in, 'fuel:blockin'); frow('extra', fuel.extra_surplus);
+  bindBriefingOfpLiveEditors(panel);
+}
+function renderBriefingOfpLive(data){
+  const panel = $('briefingOfpLivePanel');
+  if(!panel) return;
+  if(!data?.ok){ if(!panel.querySelector('.ofp-live-tables')) panel.innerHTML = '<div class="network-empty">Live OFP data is unavailable.</div>'; return; }
+  if(!panel.querySelector('.ofp-live-tables')){
+    briefingOfpLiveRevision = '';
+    panel.innerHTML = briefingOfpLiveSkeleton(data);
+  }
+  if(data.revision && data.revision !== briefingOfpLiveRevision){
+    briefingOfpLiveRevision = data.revision;
+    patchBriefingOfpLive(data);
+  }
+}
+// Manual override editing (v0.25.65): click an ACTUAL cell to type a value.
+// Enter commits, Escape cancels, blur commits.  Empty input removes the
+// override.  Overrides are stored server-side (source=manual) and never touch
+// phase detection or the recorder.
+function bindBriefingOfpLiveEditors(panel){
+  if(!panel || panel.dataset.ofpEditorsBound) return;
+  panel.dataset.ofpEditorsBound = '1';
+  panel.addEventListener('click', event=>{
+    const cell = event.target.closest('[data-ofp-override]');
+    if(!cell || cell.classList.contains('editing')) return;
+    briefingOfpStartEdit(cell);
+  });
+  const clearBtn = $('ofpLiveClearOverrides');
+  if(clearBtn && !clearBtn.dataset.ofpClearBound){
+    clearBtn.dataset.ofpClearBound = '1';
+    clearBtn.addEventListener('click', async ()=>{
+      try{
+        const response = await fetch('/api/briefing/ofp-live/overrides', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({clear_all:true}), cache:'no-store'});
+        const data = await safeJsonResponse(response);
+        if(!data?.ok) throw new Error(data.reason || 'Clear failed');
+        showToast('LIVE OFP','OVERRIDES CLEARED','Manual entries removed.','info');
+        refreshBriefingOfpLive(true);
+      }catch(error){
+        showToast('LIVE OFP','CLEAR FAILED',friendlyError(error.message),'warn');
+      }
+    });
+  }
+  const copyButtons = panel.querySelectorAll('[data-ofp-copy]');
+  copyButtons.forEach(btn=>{
+    if(btn.dataset.ofpCopyBound) return;
+    btn.dataset.ofpCopyBound = '1';
+    btn.addEventListener('click',()=>briefingOfpCopy(btn.dataset.ofpCopy));
+  });
+  const printButton = panel.querySelector('[data-ofp-print]');
+  if(printButton && !printButton.dataset.ofpPrintBound){
+    printButton.dataset.ofpPrintBound = '1';
+    printButton.addEventListener('click',briefingOfpPrint);
+  }
+}
+function briefingOfpStartEdit(cell){
+  if(cell.querySelector('input')) return;
+  const key = cell.dataset.ofpOverride;
+  const previous = cell.textContent;
+  const current = cell.dataset.manualValue !== undefined ? cell.dataset.manualValue : '';
+  cell.classList.add('editing');
+  cell.innerHTML = `<input class="ofp-ovr-input" value="${escapeHtml(current)}" inputmode="${key && key.startsWith('times:') ? 'numeric' : 'decimal'}" aria-label="Manual ${escapeHtml(key || '')}" autocomplete="off" spellcheck="false">`;
+  const input = cell.querySelector('input');
+  if(!input) return;
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (commit)=>{
+    if(done) return;
+    done = true;
+    cell.classList.remove('editing');
+    if(commit){
+      briefingOfpCommitOverride(cell, key, input.value.trim());
+    }else{
+      cell.textContent = previous;
+    }
+  };
+  input.addEventListener('keydown', event=>{
+    if(event.key === 'Enter'){ event.preventDefault(); finish(true); }
+    else if(event.key === 'Escape'){ event.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', ()=>finish(true));
+}
+async function briefingOfpCommitOverride(cell, key, value){
+  const previous = cell.dataset.manualValue !== undefined ? cell.dataset.manualValue : '';
+  try{
+    const body = value === '' ? {clear_key:key} : {overrides:{[key]:value}};
+    const response = await fetch('/api/briefing/ofp-live/overrides', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), cache:'no-store'});
+    const data = await safeJsonResponse(response);
+    if(!data?.ok) throw new Error(data.reason || 'Override rejected');
+    if(data.errors && data.errors[key]){
+      showToast('LIVE OFP','OVERRIDE REJECTED',data.errors[key],'warn');
+      cell.textContent = previous || '—';
+      return;
+    }
+    refreshBriefingOfpLive(true);
+  }catch(error){
+    showToast('LIVE OFP','OVERRIDE FAILED',friendlyError(error.message),'warn');
+    cell.textContent = previous || '—';
+  }
+}
+async function refreshBriefingOfpLive(force=false){
+  if(briefingOfpLiveBusy && !force) return;
+  briefingOfpLiveBusy = true;
+  const controller = new AbortController();
+  briefingOfpLiveAbortController = controller;
+  try{
+    const response = await fetch('/api/briefing/ofp-live', {cache:'no-store', signal: controller.signal});
+    const data = await safeJsonResponse(response);
+    briefingOfpLiveData = data;
+    if(!briefingOfpLiveOpen) return;
+    renderBriefingOfpLive(data);
+  }catch(error){
+    if(error && error.name === 'AbortError') return;
+    const panel = $('briefingOfpLivePanel');
+    if(panel && !panel.querySelector('.ofp-live-tables')) panel.innerHTML = `<div class="network-empty">LIVE OFP UNAVAILABLE — ${escapeHtml(friendlyError(error.message))}</div>`;
+  }finally{
+    briefingOfpLiveBusy = false;
+    if(briefingOfpLiveAbortController === controller) briefingOfpLiveAbortController = null;
+  }
+}
+function startBriefingOfpLive(){
+  if(!briefingOfpLiveOpen || briefingSection !== 'ofp' || activePage !== 'briefing' || document.hidden) return;
+  if(briefingOfpLiveTimer) return;
+  refreshBriefingOfpLive(true);
+  briefingOfpLiveTimer = setInterval(()=>refreshBriefingOfpLive(false), 2000);
+}
+function stopBriefingOfpLive(){
+  if(briefingOfpLiveTimer){ clearInterval(briefingOfpLiveTimer); briefingOfpLiveTimer = null; }
+  if(briefingOfpLiveAbortController){ try{ briefingOfpLiveAbortController.abort(); }catch(_){} briefingOfpLiveAbortController = null; }
+  briefingOfpLiveBusy = false;
+}
+function setBriefingOfpLiveOpen(open){
+  briefingOfpLiveOpen = Boolean(open);
+  const panel = $('briefingOfpLivePanel');
+  if(panel) panel.hidden = !briefingOfpLiveOpen;
+  const chip = $('ofpLiveToggle');
+  if(chip){ chip.classList.toggle('active', briefingOfpLiveOpen); chip.setAttribute('aria-expanded', briefingOfpLiveOpen ? 'true' : 'false'); }
+  if(briefingOfpLiveOpen){
+    briefingOfpLiveRevision = '';
+    // v0.25.72 (#18): render the comparison tables immediately on open so the
+    // stale "standing by — click ◈ LIVE OFP" placeholder never stands in for
+    // live data. Planned values from SimBrief fill in on the first (instant)
+    // poll; actuals stay "—" until a recording starts.
+    if(panel && !panel.querySelector('.ofp-live-tables')){
+      panel.innerHTML = briefingOfpLiveSkeleton({state:'waiting', units:{display:(unitPrefs().weight||'kg').toUpperCase()}, live:{phase:'STANDING BY'}, operation:{resolved:'AUTO'}});
+    }
+    refreshBriefingOfpLive(true);
+    startBriefingOfpLive();
+  }else{
+    stopBriefingOfpLive();
+  }
+}
+function briefingOfpCopy(scope){
+  const data = briefingOfpLiveData;
+  if(!data?.ok){ showToast('LIVE OFP','COPY','No live OFP data available yet.','warn'); return; }
+  const unit = briefingOfpUnit(data?.units?.display) || 'KG';
+  const lines = [];
+  const times = data.times || {};
+  const pad = (s,n)=>String(s||'').padEnd(n);
+  if(scope === 'full'){
+    lines.push('LIVE OFP COMPLETION — ' + String((data.operation||{}).resolved||'AUTO').toUpperCase());
+    lines.push('STATUS ' + briefingOfpStateLabel(data.state) + ' · PHASE ' + String((data.live||{}).phase||'—').toUpperCase() + ' · SOURCE ' + String((data.live||{}).telemetry_source||'—').toUpperCase() + ' · UNITS ' + unit);
+    lines.push('');
+    lines.push('TIMES         SCHED   ACTUAL  DELTA');
+    for(const [label,k] of [['OUT','out'],['OFF','off'],['ON','on'],['IN','in']]){
+      const row = times[k] || {};
+      lines.push(pad(label,13) + ' ' + briefingOfpTime(row.scheduled_utc) + '   ' + briefingOfpTime(row.actual_utc) + '   ' + briefingOfpDelta(row.delta_seconds));
+    }
+    const block = times.block || {};
+    lines.push(pad('BLOCK',13) + ' ' + briefingOfpDuration(block.planned_seconds) + '   ' + briefingOfpDuration(block.actual_seconds) + '   ' + briefingOfpDelta(block.delta_seconds));
+    lines.push('');
+    lines.push('WEIGHTS (' + unit + ')  PLANNED    MAX      ACTUAL    DELTA');
+    for(const [label,k] of [['PAX','passengers'],['BAG/CARGO','bags_cargo'],['COMMERCIAL FREIGHT','commercial_freight'],['PAYLOAD','payload'],['ZFW','zfw'],['TOW','tow'],['LDW','ldw']]){
+      const w = (data.weights||{})[k] || {};
+      lines.push(pad(label,19) + ' ' + pad(briefingOfpWeight(w.planned,unit),9) + ' ' + pad(briefingOfpWeight(w.max,unit),8) + ' ' + pad(briefingOfpWeight(w.actual,unit),8) + ' ' + briefingOfpWeight(w.delta,unit,1));
+    }
+    lines.push('');
+    lines.push('FUEL (' + unit + ')     PLANNED    ACTUAL    DELTA');
+    for(const [label,k] of [['RAMP/OUT','ramp_out'],['TAKEOFF/OFF','takeoff_off'],['TRIP','trip'],['LANDING/ON','landing_on'],['BLOCK IN','block_in'],['EXTRA/SURPLUS','extra_surplus']]){
+      const f = (data.fuel||{})[k] || {};
+      lines.push(pad(label,19) + ' ' + pad(briefingOfpWeight(f.planned,unit),9) + ' ' + pad(briefingOfpWeight(f.actual,unit),8) + ' ' + briefingOfpWeight(f.delta,unit,1));
+    }
+  }else{
+    lines.push('ACTUAL TIMES (' + unit + ')');
+    for(const [label,k] of [['OUT','out'],['OFF','off'],['ON','on'],['IN','in']]){
+      const row = times[k] || {};
+      lines.push(label + ' ' + briefingOfpTime(row.actual_utc));
+    }
+    const block = times.block || {};
+    lines.push('BLOCK ' + briefingOfpDuration(block.actual_seconds));
+    lines.push('');
+    lines.push('ACTUAL WEIGHTS (' + unit + ')');
+    for(const [label,k] of [['ZFW','zfw'],['TOW','tow'],['LDW','ldw']]){
+      const w = (data.weights||{})[k] || {};
+      lines.push(label + ' ' + briefingOfpWeight(w.actual, unit));
+    }
+    lines.push('');
+    lines.push('ACTUAL FUEL (' + unit + ')');
+    const fuel = data.fuel || {};
+    for(const [label,k] of [['OUT','ramp_out'],['OFF','takeoff_off'],['ON','landing_on'],['IN','block_in'],['TRIP','trip']]){
+      const f = fuel[k] || {};
+      lines.push(label + ' ' + briefingOfpWeight(f.actual, unit));
+    }
+  }
+  const text = lines.join('\n');
+  try{
+    navigator.clipboard.writeText(text).then(()=>showToast('LIVE OFP','COPIED', scope==='full' ? 'Full comparison copied.' : 'Actuals copied.','info')).catch(()=>showToast('LIVE OFP','COPY FAILED','Clipboard unavailable.','warn'));
+  }catch(_){ showToast('LIVE OFP','COPY FAILED','Clipboard unavailable.','warn'); }
+}
+async function briefingOfpPrint(){
+  const btn = $('ofpLivePrint');
+  const original = btn ? btn.textContent : 'PRINT';
+  if(btn) btn.textContent = 'PRINTING...';
+  try{
+    const response = await fetchWithTimeout('/api/briefing/ofp-live/print',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'},10000);
+    const data = await safeJsonResponse(response);
+    if(!data?.ok) throw new Error(data.error || 'Print failed');
+    showToast('LIVE OFP','PRINTED',`Receipt sent to ${String(data.printer||'').toUpperCase()}.`,'info');
+  }catch(error){
+    showToast('LIVE OFP','PRINT FAILED',friendlyError(error.message),'warn');
+  }finally{
+    if(btn) btn.textContent = original;
+  }
+}
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden){ stopBriefingOfpLive(); }
+  else if(briefingOfpLiveOpen && briefingSection === 'ofp' && activePage === 'briefing'){ startBriefingOfpLive(); }
+});
 
 // ChartFox OAuth popup listener (callback page postMessages back when ready).
 let chartfoxOAuthPollTimer = null;
@@ -1521,7 +1965,7 @@ async function loadCharts(){
   // The loadCharts shell rebuild is async; cfInitAirportCharts wires cfWireSearchBox after it.
   $('briefingChartFoxReload')?.addEventListener('click', ()=>loadCharts());
   $('briefingChartFoxConnectBtn')?.addEventListener('click', ()=>chartfox_open_authorization_window());
-  $('briefingChartFoxDisconnectBtn')?.addEventListener('click', ()=>{if(confirm('Disconnect ChartFox? You will need to reconnect to use ChartFox charts.'))chartfox_disconnect();});
+  $('briefingChartFoxDisconnectBtn')?.addEventListener('click', async ()=>{if(await uiConfirm('Disconnect ChartFox? You will need to reconnect to use ChartFox charts.', 'DISCONNECT'))chartfox_disconnect();});
   document.addEventListener('click', event=>{
     const root = $('briefingChartFoxSearchResults');
     const input = $('briefingChartFoxSearch');
@@ -3234,6 +3678,16 @@ function watchValue(value,suffix=''){
   const number=Number(value);
   return Number.isFinite(number)?`${Math.round(number).toLocaleString()}${suffix}`:`---${suffix}`;
 }
+function fcuValue(ap,key,format){
+  // v0.25.72 (#15): a raw 0 on an unset FCU field renders as "---", never as
+  // a real 0. Only a locked mode (e.g. HDG engaged at exactly north) proves a
+  // 0 is a genuine selection.
+  const n=Number(ap[key]);
+  if(!Number.isFinite(n))return '---';
+  const modeKey={selected_altitude_ft:'ALT',selected_heading_deg:'HDG',selected_speed_kts:'SPD',selected_vertical_speed_fpm:'VS'}[key];
+  if(n===0&&!(ap.modes||[]).includes(modeKey))return '---';
+  return format(n);
+}
 
 function watchTime(value){
   if(!value)return '----Z';
@@ -3289,10 +3743,10 @@ function renderFlightWatch(data){
   $('watchAp').textContent=ap.ap1===true?'AP1 ON':ap.ap1===false?'OFF':ap.engaged===true?'MODE ACTIVE':'---';
   $('watchApModes').textContent=(ap.modes||[]).length?(ap.modes||[]).join(' / '):(ap.engagement_source==='active_modes'?'MODE DETECTED':'NO ACTIVE MODES');
   $('watchUpdated').textContent=watchTime(data.updated_utc);
-  $('fcuAltitudeRead').textContent=formatAltitude(ap.selected_altitude_ft);
-  $('fcuHeadingRead').textContent=watchValue(ap.selected_heading_deg,'°');
-  $('fcuSpeedRead').textContent=formatSpeed(ap.selected_speed_kts);
-  $('fcuVsRead').textContent=formatVerticalSpeed(ap.selected_vertical_speed_fpm);
+  $('fcuAltitudeRead').textContent=fcuValue(ap,'selected_altitude_ft',formatAltitude);
+  $('fcuHeadingRead').textContent=fcuValue(ap,'selected_heading_deg',v=>watchValue(v,'°'));
+  $('fcuSpeedRead').textContent=fcuValue(ap,'selected_speed_kts',formatSpeed);
+  $('fcuVsRead').textContent=fcuValue(ap,'selected_vertical_speed_fpm',formatVerticalSpeed);
   const support=ap.control_support||{},adapter=t.aircraft_adapter||{},adapterStatus=t.adapter_status||{};
   $('fcuSupportState').textContent=adapter.supported?`${adapter.label||adapter.key} · READ ONLY`:(support.label||'READ ONLY TARGETS');
   const notes=[];
@@ -3559,7 +4013,7 @@ async function loadStorageStatus(){
 
 async function clearLocalStorage(mapCache=false){
   const message=mapCache?'Clear OPS ROOM logs, diagnostics ZIPs and map cache? Settings, secrets and logbook are preserved.':'Clear OPS ROOM logs and diagnostics ZIPs? Settings, secrets and logbook are preserved.';
-  if(!confirm(message))return;
+  if(!(await uiConfirm(message, 'CLEAR')))return;
   try{
     const response=await fetch('/api/diagnostics/clear-local-cache',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({logs:true,diagnostics:true,map_cache:mapCache})});
     const data=await safeJsonResponse(response);
@@ -3631,11 +4085,14 @@ async function previewPrinterReceipt(){
   const btn = $('printerPreviewBtn');
   if (btn) btn.textContent = 'GENERATING...';
   try {
-    const sample = 'OPS ROOM CPDLC RECEIPT PREVIEW\n\nTEST MESSAGE — This is a simulated 80mm thermal receipt.\n\nYour actual CPDLC messages will appear here when printed.\n\nEND OF PREVIEW';
+    const kind = ($('printerPreviewKind') && $('printerPreviewKind').value) || 'cpdlc';
+    const sample = kind === 'custom'
+      ? 'OPS ROOM CUSTOM RECEIPT PREVIEW\n\nTYPE your own content here to check how it fits on an 80mm thermal roll.\n\nEND OF PREVIEW'
+      : '';
     const resp = await fetch('/api/printer/preview', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({content: sample, type: 'cpdlc'})
+      body: JSON.stringify({content: sample, type: kind})
     });
     if (!resp.ok) throw new Error('Preview API returned ' + resp.status);
     const data = await resp.json();
@@ -3775,7 +4232,7 @@ async function checkUpdates(force=false, quiet=false){
 }
 
 async function startUpdate(manifest){
-  if(!manifest||!confirm('Download and install this OPS ROOM update now? The app will close, replace files, then restart.'))return;
+  if(!manifest||!(await uiConfirm('Download and install this OPS ROOM update now? The app will close, replace files, then restart.', 'INSTALL')))return;
   try{
     $('updaterState').textContent='DOWNLOADING';
     $('updaterBox').className='maintenance-box waiting';
@@ -3995,6 +4452,122 @@ function applyMapNotamFilter(value){
 
 function mapLayerChecked(id,defaultValue=false){const el=$(id);return el?!!el.checked:!!defaultValue}
 function syncMapNotamToggle(){const btn=$('mapNotamToggle');if(!btn)return;const on=mapLayerChecked('mapLayerNotams',false);btn.classList.toggle('active',on);btn.setAttribute('aria-pressed',on?'true':'false')}
+// v0.25.65: runway/taxiway closure marker deployment control (Briefing ->
+// NOTAMS). ARM deploys the current NOTAM-closure SimObject plan into MSFS
+// (threshold X's + hold-short barrier lines); CLEAR ALL removes everything
+// this session spawned. The map keeps its NOTAM overlay; this control is the
+// in-sim deployment arm, not a map layer.
+let closureDeployBusy = false;
+let closureDeployState = {enabled:false, plan:null, spawn:null, lastError:''};
+function closureDeploySetStatus(text){
+  const status=$('closureDeployStatus');
+  if(status && status.textContent!==String(text||''))status.textContent=String(text||'');
+}
+async function refreshClosureDeploy(forceDeploy=false){
+  if(closureDeployBusy)return;
+  const toggle=$('closureDeployToggle');
+  if(!toggle)return;
+  closureDeployBusy=true;
+  try{
+    const data=await safeJsonResponse(await fetch('/api/simobjects/notam-closures',{cache:'no-store'}));
+    closureDeployState={enabled:!!data?.enabled,plan:data?.plan||null,spawn:data?.spawn||null};
+    // v0.25.65: auto-deploy config + Community package install status readout.
+    let cfg={};
+    try{
+      cfg=await safeJsonResponse(await fetch('/api/simobjects/install-status',{cache:'no-store'}));
+      const instEl=$('closureDeployInstall');
+      if(instEl){
+        const folders=Array.isArray(cfg?.community_folders)?cfg.community_folders:[];
+        const detected=folders.filter(f=>f?.exists);
+        const installed=folders.filter(f=>f?.exists&&f?.installed);
+        if(detected.length&&installed.length<detected.length){
+          instEl.hidden=false;
+          instEl.textContent=`PACKAGE: ${installed.length}/${detected.length} COMMUNITY FOLDERS HAVE CLOSURE MARKERS — REINSTALL`;
+        }else{
+          instEl.hidden=true;
+        }
+      }
+    }catch(err){/* config readout is best-effort */}
+    const plan=closureDeployState.plan,spawn=closureDeployState.spawn;
+    const placed=Array.isArray(plan?.placed)?plan.placed.length:0;
+    const enabled=!!data?.enabled;
+    const radius=Number(cfg?.auto_deploy_radius_nm ?? data?.radius_nm ?? 50);
+    const gate=Number(cfg?.auto_deploy_altitude_gate_ft ?? 15000);
+    toggle.classList.toggle('active',enabled);
+    toggle.setAttribute('aria-pressed',enabled?'true':'false');
+    toggle.textContent=enabled?'DEPLOYED — TAP TO REMOVE':'DEPLOY IN SIM';
+    const simBit=(spawn?.ok===false)?` · SIM FAULT: ${spawn.reason||'failed'}`:'';
+    const cfgBit=` · AUTO · ${radius} NM · SKIP >${gate.toLocaleString()} FT`;
+    // v0.25.66: nearest-marker distance from the user aircraft explains why
+    // deployed markers can be out of sight (the sim culls AI objects beyond a
+    // few NM, so markers far from the aircraft are not rendered).
+    const prox=data?.proximity||{};
+    const nearest=prox?.nearest;
+    const proxBit=(prox?.ok&&nearest)?` · NEAREST MARKER ${nearest.distance_nm} NM AWAY`:'';
+    closureDeploySetStatus(enabled?`CLOSURE MARKERS — DEPLOYED · ${placed} PLACED${cfgBit}${simBit}${proxBit}`:`CLOSURE MARKERS — OFF · ${placed} PLANNED${cfgBit}${simBit}`);
+  }catch(error){
+    closureDeployState.lastError=friendlyError(error.message);
+    closureDeploySetStatus(`CLOSURE MARKERS — UNAVAILABLE: ${closureDeployState.lastError}`);
+  }finally{
+    closureDeployBusy=false;
+  }
+}
+async function toggleClosureDeploy(){
+  if(closureDeployBusy)return;
+  closureDeployBusy=true;
+  const toggle=$('closureDeployToggle');
+  try{
+    const next=!closureDeployState.enabled;
+    const res=await fetch('/api/simobjects/notam-closures',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:next})});
+    const data=await safeJsonResponse(res);
+    closureDeployState.enabled=!!data?.enabled;
+    closureDeploySetStatus('CLOSURE MARKERS — '+(data?.enabled?'DEPLOYED':'REMOVED'));
+    if(toggle){
+      toggle.classList.toggle('active',!!data?.enabled);
+      toggle.setAttribute('aria-pressed',data?.enabled?'true':'false');
+      toggle.textContent=data?.enabled?'DEPLOYED — TAP TO REMOVE':'DEPLOY IN SIM';
+    }
+    // The spawn-triggering status GET runs AFTER the busy flag clears (below)
+    // - calling refreshClosureDeploy() here would hit its closureDeployBusy
+    // guard and return immediately, leaving the toggle showing DEPLOYED while
+    // nothing is actually spawned (the dead manual deploy the user reported).
+  }catch(error){
+    closureDeployState.lastError=friendlyError(error.message);
+    closureDeploySetStatus(`CLOSURE MARKERS — FAILED: ${closureDeployState.lastError}`);
+  }finally{
+    closureDeployBusy=false;
+  }
+  if(closureDeployState.enabled)await refreshClosureDeploy();
+}
+async function clearClosureDeploy(){
+  if(closureDeployBusy)return;
+  closureDeployBusy=true;
+  const toggle=$('closureDeployToggle');
+  try{
+    const res=await fetch('/api/simobjects/notam-closures/clear',{method:'POST'});
+    const data=await safeJsonResponse(res);
+    const cleared=data?.clear||{};
+    const removed=Number(cleared.removed||0);
+    closureDeploySetStatus(`CLOSURE MARKERS — CLEARED (${removed} objects removed${cleared.reason==='ok'?'':' · '+String(cleared.reason||'')})`);
+    if(toggle){
+      toggle.classList.remove('active');
+      toggle.setAttribute('aria-pressed','false');
+      toggle.textContent='DEPLOY IN SIM';
+    }
+    closureDeployState.enabled=false;
+    await refreshClosureDeploy();
+  }catch(error){
+    closureDeployState.lastError=friendlyError(error.message);
+    closureDeploySetStatus(`CLOSURE MARKERS — CLEAR FAILED: ${closureDeployState.lastError}`);
+  }finally{
+    closureDeployBusy=false;
+  }
+}
+function bindClosureDeploy(){
+  $('closureDeployToggle')?.addEventListener('click',toggleClosureDeploy);
+  $('closureDeployClear')?.addEventListener('click',clearClosureDeploy);
+  if(document.querySelector('[data-briefing-section="notams"]'))refreshClosureDeploy(false);
+}
 function updateMapAviationStatus(text){const el=$('mapAviationStatus');if(!el)return;const next=String(text||'');if(el.textContent!==next)el.textContent=next}
 
 function surfaceZoomMode(zoom=null){
@@ -4692,7 +5265,7 @@ async function saveLogbookEntry(){
     await safeJsonResponse(r);$('logbookLiveState').textContent='DEBRIEF SAVED';await loadLogbook();
   }catch(e){$('logbookLiveState').textContent=`SAVE FAILED: ${friendlyError(e.message)}`}
 }
-async function deleteLogbookEntry(){if(!selectedLogbookId||!confirm('Delete this flight record permanently?'))return;const id=selectedLogbookId;selectedLogbookId='';await logbookCommand(`/api/logbook/${encodeURIComponent(id)}`,'DELETE')}
+async function deleteLogbookEntry(){if(!selectedLogbookId||!(await uiConfirm('Delete this flight record permanently?', 'DELETE')))return;const id=selectedLogbookId;selectedLogbookId='';await logbookCommand(`/api/logbook/${encodeURIComponent(id)}`,'DELETE')}
 
 function blackBoxAdapterStatusText(data){
   const adapter=data?.current_adapter||{},fsuipc=data?.fsuipc||{},module=fsuipc.lvar_module||{},pmdg=data?.pmdg777||{};
@@ -4773,7 +5346,7 @@ async function requestPmdgSdkEulaAcceptance(){
 async function installBlackBoxAdapters(){
   if(blackBoxAdapterBusy)return;
   const status=await loadBlackBoxAdapterStatus(true);
-  if(status?.msfs_running&&!confirm('Microsoft Flight Simulator is currently running. OPS ROOM can install the compact mappings now, but you must close and restart MSFS and FSUIPC7 before testing them. Continue?'))return;
+  if(status?.msfs_running&&!(await uiConfirm('Microsoft Flight Simulator is currently running. OPS ROOM can install the compact mappings now, but you must close and restart MSFS and FSUIPC7 before testing them. Continue?', 'INSTALL')))return;
   let acceptPmdgEula=false;
   if((status?.pmdg777?.options_found||[]).length&&!status?.pmdg777?.eula?.accepted){acceptPmdgEula=await requestPmdgSdkEulaAcceptance();if(!acceptPmdgEula)return}
   blackBoxAdapterBusy=true;renderBlackBoxAdapterStatus(status||{});
@@ -4794,7 +5367,7 @@ function bbHumanValue(key,value){if(value==null)return 'N/A';if(typeof value==='
 function blackBoxTime(seconds){seconds=Math.max(0,Number(seconds)||0);const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=Math.floor(seconds%60);return h?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
 function blackBoxFlightLabel(row){const f=row?.flight||{},route=[f.origin,f.destination].filter(Boolean).join(' ? ');return `${f.callsign||'FLIGHT'}${route?' · '+route:''}`}
 function blackBoxTechnicalDetails(detail,id){const file=detail?.file||'---',schema=detail?.schema??'---',categories=detail?.provider_categories||detail?.capability_manifest?.providers||{},sourceParts=[categories.core?'Flight path':null,categories.controls?'Controls':null,categories.engines?'Engines':null].filter(Boolean);const source=sourceParts.length?sourceParts.join(', '):(detail?.last_provider?'Recorded':'Saving');return `<details class="blackbox-technical"><summary>More details</summary><div><span>Saved file</span><code>${escapeHtml(file)}</code></div><div><span>Recording tag</span><code title="${escapeHtml(id||'')}">${escapeHtml(id||'---')}</code></div><div><span>What was captured</span><code>${escapeHtml(source)} · ${escapeHtml(String(schema))}</code></div></details>`}
-function blackBoxHealthLabel(value){const v=String(value||'').toUpperCase();return v==='OK'||v==='GOOD'?'Good':v==='WAITING'?'Starting up':v==='PARTIAL'||v==='PARTIAL_RECORDING'?'Partial':v==='STALLED'||v==='TIMEOUT'?'Stalled':'Recording'}
+function blackBoxHealthLabel(value){const v=String(value||'').toUpperCase();return v==='OK'||v==='GOOD'?'Good':v==='WAITING'?'Starting up':v==='PARTIAL'||v==='PARTIAL_RECORDING'?'Partial':v==='STALLED'||v==='TIMEOUT'||v==='STALE'?'Telemetry lost':'Recording'}
 function blackBoxSourceLabel(providers){const cats=providers||{};const parts=[cats.core?'Flight path':null,cats.controls?'Controls':null,cats.engines?'Engines':null].filter(Boolean);return parts.length?parts.join(', '):'Connecting to simulator'}
 function blackBoxActiveItem(status){const id=status?.active?.recording_id;return (blackBoxData?.items||[]).find(row=>row.recording_id===id)||null}
 function renderBlackBoxRecorder(status){
@@ -4802,7 +5375,8 @@ function renderBlackBoxRecorder(status){
   $('blackBoxState').textContent=status?.replay_active?'Replaying in simulator':active?'Recording * Live':'Ready to record';
   if(active){
     const label=blackBoxFlightLabel(item||{}),health=blackBoxHealthLabel(active.data_health),quality=Number(active.data_quality),sourceText=blackBoxSourceLabel(active.provider_categories);
-    $('blackBoxRecorder').innerHTML=`<div class="blackbox-live blackbox-fdr-live"><i></i><div><b>Recording * ${escapeHtml(active.phase||'flight')}</b><strong>${escapeHtml(label)}</strong><span>${blackBoxTime(active.elapsed_seconds)} elapsed · ${Number(active.sample_count||0).toLocaleString()} samples</span><small>${Number(active.actual_hz||0).toFixed(1)} samples/sec · capturing: ${escapeHtml(sourceText)} · quality: <em class="bb-health-${health.toLowerCase().replace(/\s+/g,'-')}">${escapeHtml(health)}</em>${Number.isFinite(quality)?` · ${quality.toFixed(1)}% valid`:''}</small></div><button id="blackBoxStopFdr" class="control-button" type="button">STOP RECORDING</button></div>`;
+    const staleBanner=active.stale?`<div class="blackbox-stale-banner">STALE · TELEMETRY LOST — ${Number(active.stale_seconds||0).toFixed(0)}s without a fresh sample. The recorder is retrying FSUIPC / SimConnect; recording resumes automatically when telemetry returns.</div>`:'';
+    $('blackBoxRecorder').innerHTML=`<div class="blackbox-live blackbox-fdr-live"><i></i><div><b>Recording * ${escapeHtml(active.phase||'flight')}</b><strong>${escapeHtml(label)}</strong><span>${blackBoxTime(active.elapsed_seconds)} elapsed · ${Number(active.sample_count||0).toLocaleString()} samples</span><small>${Number(active.actual_hz||0).toFixed(1)} samples/sec · capturing: ${escapeHtml(sourceText)} · quality: <em class="bb-health-${health.toLowerCase().replace(/\s+/g,'-')}">${escapeHtml(health)}</em>${Number.isFinite(quality)?` · ${quality.toFixed(1)}% valid`:''}</small></div><button id="blackBoxStopFdr" class="control-button" type="button">STOP RECORDING</button></div>${staleBanner}`;
   }else{
     $('blackBoxRecorder').innerHTML=`<div class="blackbox-ready"><b>Automatic flight-data recording</b><span>Starts when engines are running on the ground</span><small>Records flight path, motion, controls, engines and available aircraft systems through FSUIPC or SimConnect.</small></div>`;
   }
@@ -5383,7 +5957,7 @@ function drawBlackBox(){
   if(blackBoxView==='track')drawBlackBoxTrack(pack);else drawBlackBoxFlight(pack);
   if(!unchanged){blackBoxPlayback.renderSignature=signature;renderBlackBoxInstruments(row)}
 }
-function renderBlackBoxInstruments(row){if(!row){$('blackBoxInstruments').innerHTML='';return}const value=(key,digits=0,suffix='')=>Number.isFinite(Number(row[key]))?`${Number(row[key]).toFixed(digits)}${suffix}`:'---';$('blackBoxInstruments').innerHTML=[['ALT',value('altitude_ft',0,' FT')],['RA',value('radio_altitude_ft',0,' FT')],['IAS',value('indicated_speed_kts',0,' KT')],['GS',value('ground_speed_kts',0,' KT')],['VS',value('vertical_speed_fpm',0,' FPM')],['HDG',value('heading_deg',0,'°')],['PITCH',value('pitch_deg',1,'°')],['BANK',value('bank_deg',1,'°')],['G',value('g_force',2,'')],['PHASE',String(row.phase||'---')]].map(([a,b])=>`<div><span>${a}</span><b>${escapeHtml(b)}</b></div>`).join('')}
+function renderBlackBoxInstruments(row){if(!row){$('blackBoxInstruments').innerHTML='';return}if(blackBoxData?.status?.active?.stale){$('blackBoxInstruments').innerHTML=`<div class="blackbox-stale-instruments"><b>STALE</b><span>TELEMETRY LOST — ${Number(blackBoxData.status.active.stale_seconds||0).toFixed(0)}s</span><small>The last good frame is kept for review, but no new samples are arriving. Recording resumes automatically when a telemetry source recovers.</small></div>`;return}const value=(key,digits=0,suffix='')=>Number.isFinite(Number(row[key]))?`${Number(row[key]).toFixed(digits)}${suffix}`:'---';$('blackBoxInstruments').innerHTML=[['ALT',value('altitude_ft',0,' FT')],['RA',value('radio_altitude_ft',0,' FT')],['IAS',value('indicated_speed_kts',0,' KT')],['GS',value('ground_speed_kts',0,' KT')],['VS',value('vertical_speed_fpm',0,' FPM')],['HDG',value('heading_deg',0,'°')],['PITCH',value('pitch_deg',1,'°')],['BANK',value('bank_deg',1,'°')],['G',value('g_force',2,'')],['PHASE',String(row.phase||'---')]].map(([a,b])=>`<div><span>${a}</span><b>${escapeHtml(b)}</b></div>`).join('')}
 function renderBlackBoxLiveSummary(status,detail=blackBoxDetail){const target=$('blackBoxLiveSummary');if(!target)return;const active=status?.active,selectedActive=active&&active.recording_id===selectedBlackBoxId;if(selectedActive){const source=blackBoxSourceLabel(active.provider_categories),health=blackBoxHealthLabel(active.data_health);target.innerHTML=`<article><span>Status</span><b>Recording · ${escapeHtml(active.phase||'flight')}</b></article><article><span>Elapsed</span><b>${blackBoxTime(active.elapsed_seconds)}</b></article><article><span>Capture rate</span><b>${Number(active.actual_hz||0).toFixed(1)} samples/sec</b></article><article><span>What is captured</span><b title="${escapeHtml(source)}">${escapeHtml(source)}</b></article><article><span>Quality</span><b>${escapeHtml(health)}</b></article><article><span>Samples being saved</span><b>${Number(active.buffer_samples||0)} queued · ${Number(active.ring_samples||0)} written</b></article>`}else if(detail){const count=Array.isArray(detail.capabilities)?detail.capabilities.length:Number(detail.capability_manifest?.counts?.core||0)+Number(detail.capability_manifest?.counts?.controls||0)+Number(detail.capability_manifest?.counts?.engines||0)+Number(detail.capability_manifest?.counts?.systems||0);const source=blackBoxSourceLabel(detail.provider_categories||detail.capability_manifest?.providers||{});target.innerHTML=`<article><span>Status</span><b>${escapeHtml(detail.state?String(detail.state).toLowerCase().replace(/^\w/,c=>c.toUpperCase()):'Saved')}</b></article><article><span>Duration</span><b>${blackBoxTime(detail.duration_seconds)}</b></article><article><span>Samples</span><b>${Number(detail.sample_count||0).toLocaleString()}</b></article><article><span>Quality</span><b>${Number.isFinite(Number(detail.data_quality))?Number(detail.data_quality).toFixed(1)+'%':'---'}</b></article><article><span>What was captured</span><b title="${escapeHtml(source)}">${escapeHtml(source)}</b></article><article><span>Parameters available</span><b>${Number.isFinite(count)?count:'---'}</b></article>`}else target.innerHTML='<div class="network-empty">Select a recording. Active flight data updates automatically.</div>'}
 function renderBlackBoxReplayDiagnostics(replay){const target=$('blackBoxReplayDiagnostics');if(!target)return;if(!replay?.active){target.hidden=true;target.innerHTML='';return}target.hidden=false;const smoothLabel=String(replay.interpolation||'').toUpperCase().includes('HERMITE')?'Smooth motion (cubic)':'Smooth motion';const clockLabel=String(replay.clock_source||'').toUpperCase().includes('SIMCONNECT')?'Synced to simulator frames':String(replay.clock_source||'Steady clock');target.innerHTML=`<span>In-simulator replay</span><b>${escapeHtml(clockLabel)}</b><small>${Number(replay.frame_callbacks_per_second||0).toFixed(1)} frames/sec shown · ${Number(replay.writes_per_second||0).toFixed(1)} updates/sec to aircraft · ${Number(replay.write_latency_ms||0).toFixed(2)} ms per update · ${Number(replay.dropped_updates||0)} skipped frames · ${escapeHtml(smoothLabel)}</small>`}
 function blackBoxStopAnimation(){
@@ -5449,7 +6023,7 @@ function stopBlackBox(){
   blackBoxLoadBusy=false;
   const pulse=$('blackBoxLivePulse');if(pulse)pulse.classList.add('paused');
 }
-async function startInSimReplay(){if(!selectedBlackBoxId)return;const warning='In-simulator replay will take control of your aircraft and move it through the recorded flight path. Before you continue:\n\n* Disconnect from any online network (VATSIM, IVAO, etc.)\n* Load the same aircraft you flew in the recording\n* Park near where the recording started\n\nOPS ROOM will not move your camera. Click OK to begin.';if(!confirm(warning))return;try{const r=await fetch(`/api/blackbox/${encodeURIComponent(selectedBlackBoxId)}/replay/start`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({speed:Number($('blackBoxSpeed').value||1),loop:$('blackBoxLoop').checked,cursor:Number($('blackBoxTimeline').value||0)})});await safeJsonResponse(r);await loadBlackBox(true)}catch(e){showToast('BLACK BOX','COULD NOT START IN-SIMULATOR REPLAY',friendlyError(e.message),'critical')}}
+async function startInSimReplay(){if(!selectedBlackBoxId)return;const warning='In-simulator replay will take control of your aircraft and move it through the recorded flight path. Before you continue:\n\n* Disconnect from any online network (VATSIM, IVAO, etc.)\n* Load the same aircraft you flew in the recording\n* Park near where the recording started\n\nOPS ROOM will not move your camera. Click OK to begin.';if(!(await uiConfirm(warning, 'START REPLAY')))return;try{const r=await fetch(`/api/blackbox/${encodeURIComponent(selectedBlackBoxId)}/replay/start`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({speed:Number($('blackBoxSpeed').value||1),loop:$('blackBoxLoop').checked,cursor:Number($('blackBoxTimeline').value||0)})});await safeJsonResponse(r);await loadBlackBox(true)}catch(e){showToast('BLACK BOX','COULD NOT START IN-SIMULATOR REPLAY',friendlyError(e.message),'critical')}}
 async function controlInSim(payload){try{const r=await fetch('/api/blackbox/replay/control',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});await safeJsonResponse(r);await loadBlackBox(true)}catch(e){showToast('BLACK BOX','COULD NOT CONTROL THE REPLAY',friendlyError(e.message),'critical')}}
 async function stopInSimReplay(){try{await safeJsonResponse(await fetch('/api/blackbox/replay/stop',{method:'POST'}));await loadBlackBox(true)}catch(e){showToast('BLACK BOX','COULD NOT RELEASE THE AIRCRAFT',friendlyError(e.message),'critical')}}
 
@@ -5461,14 +6035,63 @@ async function loadFinances(){
 function rankStr(row){return row?`${escapeHtml(row.label)} · ${row.pireps} PIREPs / ${row.block_hours}h`:'MAX RANK'}
 function rankInsignia(key){const spec={cadet:[1,'cadet'],junior_first_officer:[2,'junior'],first_officer:[2,'first-officer'],senior_first_officer:[3,'senior-first-officer'],captain:[4,'captain'],senior_captain:[4,'senior-captain'],training_captain:[4,'training-captain'],line_check_captain:[4,'line-check'],base_captain:[4,'base-captain'],fleet_captain:[4,'fleet-captain']}[String(key||'').toLowerCase()]||[1,'cadet'];return `<i class="rank-insignia rank-${spec[1]}" aria-hidden="true">${Array.from({length:spec[0]},()=>'<u></u>').join('')}</i>`}
 function financeFareSettingsFromUi(){return {auto:!!$('financeFareAuto')?.checked,economy_fare:$('financeEconomyFare')?.value||null,business_fare:$('financeBusinessFare')?.value||null,first_fare:$('financeFirstFare')?.value||null,cargo_rate:$('financeCargoRate')?.value||null,economy_pct:$('financeEconomyPct')?.value||90,business_pct:$('financeBusinessPct')?.value||10,first_pct:$('financeFirstPct')?.value||0}}
-function financeMetaFromPlan(){const plan=flightPlan||{},ofp=plan.ofp||plan,general=ofp?.general||{},origin=ofp.origin||{},destination=ofp.destination||{},weights=ofp.weights||{},fuel=ofp.fuel||{};const distance=Number(general.route_distance||general.distance||ofp.distance_nm||plan.distance_nm)||300;const blockSeconds=Number(general.block_time_seconds||general.est_block_time_seconds)||Number(general.block_time ? String(general.block_time).split(':').reduce((a,b)=>a*60+Number(b||0),0) : 0)||Math.max(1800,distance/430*3600+1800);return {flight:{origin:origin.icao_code||origin.icao||plan.origin?.icao||plan.origin||'',destination:destination.icao_code||destination.icao||plan.destination?.icao||plan.destination||'',aircraft_icao:general.aircraft_icao||ofp.aircraft?.icao||plan.aircraft_icao||'',passengers:Number(general.passengers||weights.pax_count||weights.passengers)||undefined,cargo:Number(weights.cargo||weights.payload_cargo)||undefined,distance_nm:distance,planned_trip_fuel:Number(fuel.plan_ramp||fuel.trip||fuel.enroute_burn)||undefined},durations:{block_seconds:blockSeconds},finance_options:{fare_settings:financeFareSettingsFromUi()}}}
+function finiteNumberOrUndefined(value){
+  if(value === null || value === undefined || value === '') return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+function financeOperationFromUi(){
+  const value = String($('financeOperationType')?.value || 'auto').toLowerCase();
+  return ['auto','passenger','freighter','combi','ferry'].includes(value) ? value : 'auto';
+}
+function financeCommercialFreightFromUi(){
+  const raw = $('financeCommercialFreight')?.value;
+  if(raw === null || raw === undefined || String(raw).trim() === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+// v0.25.65: operation-aware load model. Explicit zero passengers stays zero,
+// the combined SimBrief cargo is cargo_hold_total (BAGS/CARGO), commercial
+// freight comes from the manual field or SimBrief's verified freight_added,
+// and plan trip fuel is normalized to LB for the estimator.
+function financeMetaFromPlan(){
+  const plan=flightPlan||{},ofp=plan.ofp||plan,general=ofp?.general||{},origin=ofp.origin||{},destination=ofp.destination||{},weights=ofp.weights||{},fuel=ofp.fuel||{};
+  const distance=finiteNumberOrUndefined(general.route_distance||general.distance||ofp.distance_nm||plan.distance_nm)||300;
+  const blockSeconds=finiteNumberOrUndefined(general.block_time_seconds||general.est_block_time_seconds)||(general.block_time?String(general.block_time).split(':').reduce((a,b)=>a*60+Number(b||0),0):null)||Math.max(1800,distance/430*3600+1800);
+  const weightUnits=String(weights.units||plan.weights?.units||'').toUpperCase();
+  const fuelUnits=String(fuel.units||plan.fuel?.units||'').toUpperCase();
+  const pax=finiteNumberOrUndefined(general.passengers||weights.pax_count||weights.passengers||plan.weights?.passengers);
+  const cargoHold=finiteNumberOrUndefined(weights.cargo||weights.payload_cargo||plan.weights?.cargo);
+  const manualFreight=financeCommercialFreightFromUi();
+  const freight=manualFreight!==undefined?manualFreight:finiteNumberOrUndefined(weights.freight_added||plan.weights?.freight_added);
+  const tripFuel=finiteNumberOrUndefined(fuel.plan_ramp||fuel.trip||fuel.enroute_burn||plan.fuel?.trip);
+  const tripFuelLb=tripFuel===undefined?undefined:(String(fuelUnits).startsWith('KG')?tripFuel/0.45359237:tripFuel);
+  return {flight:{
+    origin:origin.icao_code||origin.icao||plan.origin?.icao||plan.origin||'',
+    destination:destination.icao_code||destination.icao||plan.destination?.icao||plan.destination||'',
+    aircraft_icao:general.aircraft_icao||ofp.aircraft?.icao||plan.aircraft_icao||'',
+    passengers:pax,
+    cargo:cargoHold,
+    cargo_hold_total:cargoHold,
+    commercial_freight_weight:freight,
+    payload:finiteNumberOrUndefined(weights.payload||plan.weights?.payload),
+    weight_units:weightUnits,
+    fuel_units:fuelUnits,
+    operation_type_requested:financeOperationFromUi(),
+    distance_nm:distance,
+    planned_trip_fuel:tripFuelLb
+  },durations:{block_seconds:blockSeconds},finance_options:{fare_settings:financeFareSettingsFromUi()}};
+}
 async function loadFinanceEstimate(){if(!$('financeEstimate')||!financeCareerEnabled())return;try{const payload=financeMetaFromPlan();const r=await fetch('/api/economy/estimate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await safeJsonResponse(r);renderFinanceEstimate(d)}catch(e){$('financeEstimate').innerHTML=`<div class="network-empty">ESTIMATE UNAVAILABLE: ${escapeHtml(friendlyError(e.message))}</div>`}}
 function financeCostSource(value){const key=String(value||'').toLowerCase();if(key==='gsx')return 'GSX receipt';if(key==='estimated-from-departure')return 'Estimated from departure';if(key==='estimated-from-arrival')return 'Estimated from arrival';if(key==='ops-room-estimate')return 'OPS ROOM estimate';return key==='mixed'?'GSX + estimate':key==='estimated'?'Estimated':key||'Not available'}
 function renderFinanceEstimate(d){
   if(!d?.ok){if($('financeEstimate'))$('financeEstimate').innerHTML='<div class="network-empty">Finance & Career is disabled in Settings.</div>';return}
   const sym=d.symbol||'',air=d.airline||{},pilot=d.pilot||{},route=d.route||{},pax=d.passengers||{},fares=d.fares||{},costs=air.costs||{};
   const depSource=financeCostSource(costs.ground_services_departure_source),arrSource=financeCostSource(costs.ground_services_arrival_source);
-  $('financeEstimate').innerHTML=`<div class="finance-statement-grid"><article><span>Flight plan</span><b>${escapeHtml(route.origin||'----')} ? ${escapeHtml(route.destination||'----')}</b><small>${Number(route.distance_nm||0).toFixed(0)} NM planned distance</small></article><article><span>Passenger plan</span><b>${pax.total||0}</b><small>Economy ${pax.economy||0} · Business ${pax.business||0} · First ${pax.first||0}</small></article><article><span>Automatic fare plan</span><b>${money(fares.economy,sym)} / ${money(fares.business,sym)} / ${money(fares.first,sym)}</b><small>Economy · Business · First</small></article><article><span>Expected revenue</span><b>${money(air.revenue?.total,sym)}</b><small>Passengers ${money(air.revenue?.passenger,sym)} · Cargo ${money(air.revenue?.cargo,sym)}</small></article><article><span>Expected operating cost</span><b>${money(costs.total,sym)}</b><small>Fuel ${money(costs.fuel,sym)} · Services ${money(costs.ground_services,sym)}</small></article><article><span>Expected flight result</span><b class="${Number(air.profit)>=0?'profit-positive':'profit-negative'}">${money(air.profit,sym)}</b><small>Estimate before the flight is posted</small></article><article><span>Estimated pilot pay</span><b>${money(pilot.pay,sym)}</b><small>${escapeHtml(pilot.rank?.label||'Pilot')} · current pay model</small></article><article><span>Ground-service basis</span><b>${money(costs.ground_services,sym)}</b><small>Departure ${money(costs.ground_services_departure,sym)} · ${escapeHtml(depSource)}<br>Arrival ${money(costs.ground_services_arrival,sym)} · ${escapeHtml(arrSource)}</small></article></div>`
+  const opLabel=String(d.operation?.resolved||'auto').toUpperCase();
+  const freightHtml=(d.commercial_freight_weight!==null&&d.commercial_freight_weight!==undefined)?`<article><span>Commercial freight</span><b>${numberOr(d.commercial_freight_weight)} ${escapeHtml(unitPrefs().weight.toUpperCase())}</b><small>${d.commercial_freight_weight>0?`Freight revenue ${money(d.commercial_freight_revenue,d.symbol)}`:'No revenue-generating freight'}</small></article>`:'';
+  const paxHtml=pax.total!==undefined&&pax.total!==null?`<b>${pax.total}</b><small>Economy ${pax.economy||0} · Business ${pax.business||0} · First ${pax.first||0}</small>`:`<b>—</b><small>No passenger load for this operation</small>`;
+  $('financeEstimate').innerHTML=`<div class="finance-statement-grid"><article><span>Flight plan</span><b>${escapeHtml(route.origin||'----')} ? ${escapeHtml(route.destination||'----')}</b><small>${Number(route.distance_nm||0).toFixed(0)} NM planned distance</small></article><article><span>Operation</span><b>${escapeHtml(opLabel)}</b><small>${escapeHtml(d.operation?.reason||'Automatic classification')}</small></article><article><span>Passenger plan</span>${paxHtml}</article>${freightHtml}<article><span>Automatic fare plan</span><b>${money(fares.economy,sym)} / ${money(fares.business,sym)} / ${money(fares.first,sym)}</b><small>Economy · Business · First</small></article><article><span>Expected revenue</span><b>${money(air.revenue?.total,sym)}</b><small>Passengers ${money(air.revenue?.passenger,sym)} · Cargo ${money(air.revenue?.cargo,sym)}</small></article><article><span>Expected operating cost</span><b>${money(costs.total,sym)}</b><small>Fuel ${money(costs.fuel,sym)} · Services ${money(costs.ground_services,sym)}</small></article><article><span>Expected flight result</span><b class="${Number(air.profit)>=0?'profit-positive':'profit-negative'}">${money(air.profit,sym)}</b><small>Estimate before the flight is posted</small></article><article><span>Estimated pilot pay</span><b>${money(pilot.pay,sym)}</b><small>${escapeHtml(pilot.rank?.label||'Pilot')} · current pay model</small></article><article><span>Ground-service basis</span><b>${money(costs.ground_services,sym)}</b><small>Departure ${money(costs.ground_services_departure,sym)} · ${escapeHtml(depSource)}<br>Arrival ${money(costs.ground_services_arrival,sym)} · ${escapeHtml(arrSource)}</small></article></div>`
 }
 
 function renderFinances(data){
@@ -5708,7 +6331,7 @@ function drawPhaseTimeline(canvas,samples){
   const rows=(samples||[]).filter(x=>x.phase&&Number.isFinite(Number(x.elapsed_seconds)));if(!rows.length){drawEmptyChart(canvas,'NO PHASE DATA');return}const state=prepCanvas(canvas);if(!state)return;const {ctx,w,h}=state,end=Math.max(Number(rows.at(-1).elapsed_seconds)||1,1),segments=[];let start=Number(rows[0].elapsed_seconds)||0,phase=rows[0].phase;rows.slice(1).forEach(row=>{const elapsed=Number(row.elapsed_seconds)||0;if(row.phase!==phase){segments.push({start,end:elapsed,phase});start=elapsed;phase=row.phase}});segments.push({start,end,phase});const colors=['#1b7f91','#9b6b1d','#2b7a3d','#7b4173','#6b7280','#854d0e'];ctx.font='8px B612 Mono';segments.forEach((seg,i)=>{const x=8+seg.start/end*(w-16),right=8+seg.end/end*(w-16),width=Math.max(2,right-x);ctx.fillStyle=colors[i%colors.length];ctx.fillRect(x,36,width,42);if(width>45){ctx.save();ctx.beginPath();ctx.rect(x,36,width,42);ctx.clip();ctx.fillStyle='#fff';ctx.fillText(String(seg.phase).slice(0,18),x+4,60);ctx.restore()}});ctx.fillStyle='#8f9279';ctx.fillText('0',8,h-10);ctx.textAlign='right';ctx.fillText(end<120?`${Math.round(end)}s`:`${Math.round(end/60)}m`,w-8,h-10);ctx.textAlign='left'
 }
 async function loadLogbookTelemetry(entryId){
-  if(!entryId)return;try{let payload=selectedTelemetryCache.get(entryId);if(!payload){const r=await fetch(`/api/logbook/${encodeURIComponent(entryId)}/telemetry?max_points=2400`,{cache:'no-store'});payload=await r.json();if(!r.ok)throw new Error(payload.detail||`HTTP ${r.status}`);selectedTelemetryCache.set(entryId,payload)}if(entryId!==selectedLogbookId)return;const samples=payload.samples||[],masterApproach=Array.isArray(payload.analysis?.approach?.profile)?payload.analysis.approach.profile:[],rawApproach=samples.filter(x=>Number.isFinite(Number(x.distance_to_touchdown_nm))&&Number(x.distance_to_touchdown_nm)<=20&&Number(x.seconds_to_touchdown)<=0).sort((a,b)=>Number(b.distance_to_touchdown_nm)-Number(a.distance_to_touchdown_nm)),approach=(masterApproach.length?masterApproach:rawApproach).filter(x=>Number.isFinite(Number(masterApproach.length?x.nm_to_threshold:x.distance_to_touchdown_nm))).sort((a,b)=>Number(masterApproach.length?b.nm_to_threshold:b.distance_to_touchdown_nm)-Number(masterApproach.length?a.nm_to_threshold:a.distance_to_touchdown_nm)),approachX=masterApproach.length?'nm_to_threshold':'distance_to_touchdown_nm',landing=samples.filter(x=>Number.isFinite(Number(x.seconds_to_touchdown))&&Number(x.seconds_to_touchdown)>=-90&&Number(x.seconds_to_touchdown)<=60);$('logbookCharts').hidden=!samples.length;requestAnimationFrame(()=>{
+  if(!entryId)return;try{let payload=selectedTelemetryCache.get(entryId);if(!payload){const r=await fetch(`/api/logbook/${encodeURIComponent(entryId)}/telemetry?max_points=2400`,{cache:'no-store'});payload=await r.json();if(!r.ok)throw new Error(payload.detail||`HTTP ${r.status}`);selectedTelemetryCache.set(entryId,payload)}if(entryId!==selectedLogbookId)return;const samples=payload.samples||[],masterApproach=Array.isArray(payload.analysis?.approach?.profile)?payload.analysis.approach.profile:[],rawApproach=samples.filter(x=>Number.isFinite(Number(x.distance_to_touchdown_nm))&&Number(x.distance_to_touchdown_nm)<=20&&Number(x.seconds_to_touchdown)<=0&&Number(x.ground_speed_kts)<=250&&(!Number.isFinite(Number(x.approach_agl_ft))||Number(x.approach_agl_ft)<=5000)).sort((a,b)=>Number(b.distance_to_touchdown_nm)-Number(a.distance_to_touchdown_nm)),approach=(masterApproach.length?masterApproach:rawApproach).filter(x=>Number.isFinite(Number(masterApproach.length?x.nm_to_threshold:x.distance_to_touchdown_nm))).sort((a,b)=>Number(masterApproach.length?b.nm_to_threshold:b.distance_to_touchdown_nm)-Number(masterApproach.length?a.nm_to_threshold:a.distance_to_touchdown_nm)),approachX=masterApproach.length?'nm_to_threshold':'distance_to_touchdown_nm',landing=samples.filter(x=>Number.isFinite(Number(x.seconds_to_touchdown))&&Number(x.seconds_to_touchdown)>=-90&&Number(x.seconds_to_touchdown)<=60);$('logbookCharts').hidden=!samples.length;requestAnimationFrame(()=>{
     drawLineChart($('chartAltitude'),samples,[{key:'altitude_ft',label:'ACTUAL'},{key:'planned_cruise_altitude_ft',label:'PLAN'}],{xScale:1/60});
     drawLineChart($('chartSpeed'),samples,[{key:'ias_kts',label:'IAS'},{key:'ground_speed_kts',label:'GS'}],{xScale:1/60});
     drawLineChart($('chartVerticalSpeed'),samples,[{key:'vertical_speed_fpm',label:'VS'}],{xScale:1/60,includeZero:true});
@@ -5839,7 +6462,7 @@ function renderPerformanceTlr(){
   const mode=$('perfMode')?.value||'takeoff';
   const tlr=tlrSpeedSummary(mode);
   if(!tlr){box.hidden=true;box.innerHTML='';return;}
-  box.innerHTML=`<strong>SIMBRIEF TLR DETAILS</strong><span>${escapeHtml(tlr.detailText)}</span><span>Main speed card is using SimBrief TLR.</span>`;
+  box.innerHTML=`<strong>SIMBRIEF TLR DETAILS</strong><span>${escapeHtml(tlr.detailText)}</span><span>OPS ROOM calculator is primary; TLR shown as cross-check.</span>`;
   box.hidden=false;
 }
 function fillPerformanceFromSimbrief(){
@@ -5848,9 +6471,27 @@ function fillPerformanceFromSimbrief(){
   const mode = $('perfMode')?.value || 'takeoff';
   const tow = Number(weights.takeoff_kg || weights.tow_kg || flightPlan.takeoff_weight_kg || 0);
   const lw = Number(weights.landing_kg || weights.lw_kg || flightPlan.landing_weight_kg || 0);
+  const zfw = Number(weights.zfw_kg || weights.zfw || 0);
   if($('perfWeight')) $('perfWeight').value = Math.round((mode === 'landing' ? lw : tow) || tow || lw || Number($('perfWeight').value) || 0);renderPerformanceTlr();
+  // ZFW / CG from SimBrief weights (CG is % MAC — the V-speed + trim model needs it).
+  if($('perfCg')){
+    const cg = Number(weights.zfwcg ?? weights.zfw_cg ?? 0);
+    if(cg > 0) $('perfCg').value = cg;
+  }
   if(flightPlan.origin?.elevation_ft && mode !== 'landing') $('perfElevation').value = Math.round(Number(flightPlan.origin.elevation_ft)||0);
   if(flightPlan.destination?.elevation_ft && mode === 'landing') $('perfElevation').value = Math.round(Number(flightPlan.destination.elevation_ft)||0);
+  // Runway + weather from the departure/destination station: the OFP/METAR
+  // already carry these, so the only thing the pilot must type is ZFW (+CG).
+  const origin = flightPlan.origin || {};
+  const dest = flightPlan.destination || {};
+  const station = mode === 'landing' ? dest : origin;
+  if(station.runway && $('perfRunwayLength')) $('perfRunwayLength').value = Math.round(Number(station.runway_length_m || station.runway_length || 0) || Number($('perfRunwayLength').value) || 0);
+  if(station.runway && $('perfRunwayHeading')) $('perfRunwayHeading').value = Math.round(Number(station.runway_heading || station.runway_deg || 0) || Number($('perfRunwayHeading').value) || 0);
+  const wx = station.weather || origin.weather || {};
+  if(wx.temp_c != null && $('perfOat')) $('perfOat').value = Math.round(Number(wx.temp_c));
+  if(wx.qnh_hpa != null && $('perfQnh')) $('perfQnh').value = Math.round(Number(wx.qnh_hpa));
+  if(wx.wind_dir != null && $('perfWindDir')) $('perfWindDir').value = Math.round(Number(wx.wind_dir));
+  if(wx.wind_kt != null && $('perfWindSpeed')) $('perfWindSpeed').value = Math.round(Number(wx.wind_kt));
 }
 
 async function calculatePerformance(){
@@ -5869,6 +6510,7 @@ async function calculatePerformance(){
     slope_pct: numberInput('perfSlope', 0),
     condition: $('perfCondition')?.value || 'dry',
     flap: $('perfFlap')?.value || '',
+    cg_pct: ($('perfCg')?.value === '' || $('perfCg')?.value == null) ? null : numberInput('perfCg', null),
     anti_ice: $('perfAntiIce')?.value === 'true',
     packs_on: $('perfPacks')?.value === 'true'
   };
@@ -5877,9 +6519,16 @@ async function calculatePerformance(){
     const result = await fetch('/api/performance/calculate', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r=>{if(!r.ok)throw new Error((await r.json()).detail||'Performance calculation failed'); return r.json()});
     const tlr = tlrSpeedSummary(result.mode || payload.mode);
     const localSpeeds = result.mode === 'landing' ? `VREF ${result.speeds.vref_kt} / VAPP ${result.speeds.vapp_kt}` : `V1 ${result.speeds.v1_kt} / VR ${result.speeds.vr_kt} / V2 ${result.speeds.v2_kt}${result.speeds.flex_or_assumed_c?` / FLEX ${result.speeds.flex_or_assumed_c}`:''}`;
-    const speeds = tlr?.speedText || localSpeeds;
-    const speedSource = tlr ? 'SIMBRIEF TLR' : 'OPS ROOM';
-    if(box) box.innerHTML = `<div><span>STATUS</span><b>${escapeHtml(result.status)}</b></div><div><span>REQUIRED</span><b>${result.distances.factored_required_m} M</b></div><div><span>MARGIN</span><b>${result.distances.runway_margin_m ?? '---'} M</b></div><div><span>SPEEDS · ${escapeHtml(speedSource)}</span><b>${escapeHtml(speeds)}</b></div>`;
+    // OPS ROOM is the primary speed source (own calculator); SimBrief TLR is
+    // shown as a cross-check when present, never as the headline.
+    const speeds = localSpeeds;
+    const speedSource = 'OPS ROOM';
+    const extra = [];
+    if(result.recommended_flap) extra.push(`<div><span>FLAP</span><b>${escapeHtml(result.recommended_flap)}</b></div>`);
+    if(result.speeds.pitch_trim != null) extra.push(`<div><span>PITCH TRIM</span><b>${escapeHtml(String(result.speeds.pitch_trim))} UP</b></div>`);
+    if(result.speeds.flex_or_assumed_c != null) extra.push(`<div><span>FLEX TEMP</span><b>${escapeHtml(String(result.speeds.flex_or_assumed_c))} °C</b></div>`);
+    if(tlr) extra.push(`<div><span>TLR CROSS-CHECK</span><b>${escapeHtml(tlr.speedText)}</b></div>`);
+    if(box) box.innerHTML = `<div><span>STATUS</span><b>${escapeHtml(result.status)}</b></div><div><span>REQUIRED</span><b>${result.distances.factored_required_m} M</b></div><div><span>MARGIN</span><b>${result.distances.runway_margin_m ?? '---'} M</b></div><div><span>SPEEDS · ${escapeHtml(speedSource)}</span><b>${escapeHtml(speeds)}</b></div>${extra.join('')}`;
     if($('performanceWarnings')) $('performanceWarnings').innerHTML = (result.warnings||[]).map(w=>`<div>* ${escapeHtml(w)}</div>`).join('') || `<div>${escapeHtml(result.source || '')}</div>`;
     if($('performanceState')) $('performanceState').textContent = `${result.aircraft.icao || ''} ${result.mode.toUpperCase()} ${result.status}`;renderPerformanceTlr();
   }catch(error){
@@ -5997,8 +6646,8 @@ async function downloadBugReportZip(){
 
 async function sendBugReport(){
   const payload = bugReportPayload();
-  if(!payload.userDescription.trim() && !confirm('Send a bug report without a description? Useful reports should say what happened.')) return;
-  if(payload.includeDiagnosticsZip && !confirm('Send this bug report with redacted OPS ROOM diagnostics and recent logs?')) return;
+  if(!payload.userDescription.trim() && !(await uiConfirm('Send a bug report without a description? Useful reports should say what happened.', 'SEND'))) return;
+  if(payload.includeDiagnosticsZip && !(await uiConfirm('Send this bug report with redacted OPS ROOM diagnostics and recent logs?', 'SEND'))) return;
   setBugReportBusy(true);
   bugReportSetStatus('Sending bug report and diagnostics...');
   try{
@@ -6033,7 +6682,7 @@ function renderScratchpad(){const blank=scratchpadPage==='blank'||scratchpadData
 function collectScratchpadFields(){const fields=scratchpadDefaultFields();document.querySelectorAll('[data-scratch-field]').forEach(el=>{fields[el.dataset.scratchField]=el.value||''});return fields}
 function scheduleScratchpadSave(delay=1200){if(activePage!=='scratchpad')return;scratchpadDirty=true;setScratchpadState(scratchpadDrawing?'WRITING':'SAVE PENDING');clearTimeout(scratchpadSaveTimer);scratchpadSaveTimer=setTimeout(()=>{if(!scratchpadDrawing)saveScratchpad();else scheduleScratchpadSave(1200)},Math.max(900,delay))}
 async function saveScratchpad(){if(scratchpadDrawing){scheduleScratchpadSave(1400);return}if(scratchpadSaving)return;scratchpadSaving=true;try{scratchpadData.fields=collectScratchpadFields();const strokesSnapshot=JSON.parse(JSON.stringify(scratchpadData.strokes||[]));const response=await fetch(`/api/scratchpad/page/${encodeURIComponent(scratchpadPage)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:scratchpadModeForPage(scratchpadPage),fields:scratchpadData.fields,strokes:strokesSnapshot})});const saved=await safeJsonResponse(response);scratchpadDirty=false;scratchpadData.updated_at=saved.updated_at||scratchpadData.updated_at;setScratchpadState('SAVED');$('scratchpadUpdated').textContent=scratchpadData.updated_at?`SAVED ${messageTime(scratchpadData.updated_at)}Z`:'SAVED'}catch(error){setScratchpadState('SAVE FAILED');console.warn(error)}finally{scratchpadSaving=false}}
-function bindScratchpadCanvas(){if(scratchpadCanvasReady)return;scratchpadCanvasReady=true;document.querySelectorAll('[data-scratch-field]').forEach(el=>el.addEventListener('input',()=>scheduleScratchpadSave(1200)));document.querySelectorAll('[data-scratchpad-page]').forEach(b=>b.addEventListener('click',()=>loadScratchpadPage(b.dataset.scratchpadPage)));$('scratchpadType')?.addEventListener('click',()=>setScratchpadTool('type'));$('scratchpadPen')?.addEventListener('click',()=>setScratchpadTool('pen'));$('scratchpadEraser')?.addEventListener('click',()=>setScratchpadTool('eraser'));$('scratchpadUndo')?.addEventListener('click',()=>{(scratchpadData.strokes||[]).pop();drawScratchpad();scheduleScratchpadSave(1200)});$('scratchpadClearInk')?.addEventListener('click',()=>{if(confirm('Clear handwriting from this scratchpad page?')){scratchpadData.strokes=[];drawScratchpad();scheduleScratchpadSave(1200)}});$('scratchpadClearPage')?.addEventListener('click',clearScratchpadPage);$('scratchpadAutofill')?.addEventListener('click',autofillScratchpadFromFlight);$('scratchpadSize')?.addEventListener('input',()=>{});const canvas=$('scratchpadCanvas');canvas.addEventListener('pointerdown',scratchpadPointerDown);canvas.addEventListener('pointermove',scratchpadPointerMove);canvas.addEventListener('pointerup',scratchpadPointerUp);canvas.addEventListener('pointercancel',scratchpadPointerUp);window.addEventListener('resize',()=>{if(activePage==='scratchpad'&&!scratchpadDrawing)resizeScratchpadCanvas()});window.addEventListener('beforeunload',()=>{if(scratchpadDirty&&!scratchpadDrawing){try{navigator.sendBeacon(`/api/scratchpad/page/${encodeURIComponent(scratchpadPage)}`,new Blob([JSON.stringify({mode:scratchpadModeForPage(scratchpadPage),fields:collectScratchpadFields(),strokes:scratchpadData.strokes||[]})],{type:'application/json'}))}catch(_){}}});setScratchpadTool('type')}
+function bindScratchpadCanvas(){if(scratchpadCanvasReady)return;scratchpadCanvasReady=true;document.querySelectorAll('[data-scratch-field]').forEach(el=>el.addEventListener('input',()=>scheduleScratchpadSave(1200)));document.querySelectorAll('[data-scratchpad-page]').forEach(b=>b.addEventListener('click',()=>loadScratchpadPage(b.dataset.scratchpadPage)));$('scratchpadType')?.addEventListener('click',()=>setScratchpadTool('type'));$('scratchpadPen')?.addEventListener('click',()=>setScratchpadTool('pen'));$('scratchpadEraser')?.addEventListener('click',()=>setScratchpadTool('eraser'));$('scratchpadUndo')?.addEventListener('click',()=>{(scratchpadData.strokes||[]).pop();drawScratchpad();scheduleScratchpadSave(1200)});$('scratchpadClearInk')?.addEventListener('click',async()=>{if(await uiConfirm('Clear handwriting from this scratchpad page?', 'CLEAR')){scratchpadData.strokes=[];drawScratchpad();scheduleScratchpadSave(1200)}});$('scratchpadClearPage')?.addEventListener('click',clearScratchpadPage);$('scratchpadAutofill')?.addEventListener('click',autofillScratchpadFromFlight);$('scratchpadSize')?.addEventListener('input',()=>{});const canvas=$('scratchpadCanvas');canvas.addEventListener('pointerdown',scratchpadPointerDown);canvas.addEventListener('pointermove',scratchpadPointerMove);canvas.addEventListener('pointerup',scratchpadPointerUp);canvas.addEventListener('pointercancel',scratchpadPointerUp);window.addEventListener('resize',()=>{if(activePage==='scratchpad'&&!scratchpadDrawing)resizeScratchpadCanvas()});window.addEventListener('beforeunload',()=>{if(scratchpadDirty&&!scratchpadDrawing){try{navigator.sendBeacon(`/api/scratchpad/page/${encodeURIComponent(scratchpadPage)}`,new Blob([JSON.stringify({mode:scratchpadModeForPage(scratchpadPage),fields:collectScratchpadFields(),strokes:scratchpadData.strokes||[]})],{type:'application/json'}))}catch(_){}}});setScratchpadTool('type')}
 function setScratchpadTool(tool){if(!['type','pen','eraser'].includes(tool))tool='type';scratchpadTool=tool;$('scratchpadType')?.classList.toggle('primary-control',tool==='type');$('scratchpadPen')?.classList.toggle('primary-control',tool==='pen');$('scratchpadEraser')?.classList.toggle('primary-control',tool==='eraser');const canvas=$('scratchpadCanvas');if(canvas){canvas.dataset.tool=tool;canvas.style.pointerEvents=tool==='type'?'none':'auto';canvas.style.touchAction=tool==='type'?'auto':'none';canvas.setAttribute('aria-hidden',tool==='type'?'true':'false')}const wrap=canvas?.parentElement;if(wrap)wrap.dataset.scratchpadMode=tool}
 function scratchpadPoint(event){const canvas=$('scratchpadCanvas');const rect=canvas.getBoundingClientRect();const w=Math.max(1,rect.width||canvas.clientWidth||1),h=Math.max(1,rect.height||canvas.clientHeight||1);return {x:Math.max(0,Math.min(1,(event.clientX-rect.left)/w)),y:Math.max(0,Math.min(1,(event.clientY-rect.top)/h))}}
 function scratchpadPointerDown(event){if(activePage!=='scratchpad'||scratchpadTool==='type')return;event.preventDefault();clearTimeout(scratchpadSaveTimer);const canvas=$('scratchpadCanvas');canvas?.setPointerCapture?.(event.pointerId);scratchpadDrawing=true;scratchpadDirty=true;scratchpadCurrentStroke={tool:scratchpadTool,width:Number($('scratchpadSize')?.value||4),points:[scratchpadPoint(event)]};(scratchpadData.strokes||(scratchpadData.strokes=[])).push(scratchpadCurrentStroke);setScratchpadState(`WRITING ${String(event.pointerType||'POINTER').toUpperCase()}`);drawScratchpad()}
@@ -6041,7 +6690,7 @@ function scratchpadPointerMove(event){if(!scratchpadDrawing||!scratchpadCurrentS
 function scratchpadPointerUp(event){if(!scratchpadDrawing)return;event.preventDefault();scratchpadDrawing=false;scratchpadCurrentStroke=null;scheduleScratchpadSave(1400)}
 function resizeScratchpadCanvas(){const canvas=$('scratchpadCanvas'),wrap=canvas?.parentElement;if(!canvas||!wrap)return;const rect=wrap.getBoundingClientRect();const scale=window.devicePixelRatio||1;const width=Math.max(300,Math.round(rect.width));const height=Math.max(420,Math.round(rect.height));if(canvas.width!==Math.round(width*scale)||canvas.height!==Math.round(height*scale)){canvas.width=Math.round(width*scale);canvas.height=Math.round(height*scale);canvas.style.width=`${width}px`;canvas.style.height=`${height}px`;const ctx=canvas.getContext('2d');ctx.setTransform(scale,0,0,scale,0,0);drawScratchpad()}}
 function drawScratchpad(){const canvas=$('scratchpadCanvas');if(!canvas)return;const ctx=canvas.getContext('2d');const rect=canvas.getBoundingClientRect();const w=Math.max(1,rect.width||canvas.clientWidth||1),h=Math.max(1,rect.height||canvas.clientHeight||1);ctx.clearRect(0,0,w,h);ctx.lineCap='round';ctx.lineJoin='round';for(const stroke of scratchpadData.strokes||[]){const points=stroke.points||[];if(!points.length)continue;ctx.globalCompositeOperation=stroke.tool==='eraser'?'destination-out':'source-over';ctx.strokeStyle=stroke.tool==='eraser'?'rgba(0,0,0,1)':'#f2f0e5';ctx.lineWidth=Number(stroke.width||4);ctx.beginPath();ctx.moveTo(points[0].x*w,points[0].y*h);if(points.length===1){ctx.arc(points[0].x*w,points[0].y*h,Math.max(1,Number(stroke.width||4)/2),0,Math.PI*2);ctx.fillStyle=ctx.strokeStyle;ctx.fill()}else{for(const point of points.slice(1))ctx.lineTo(point.x*w,point.y*h);ctx.stroke()}}ctx.globalCompositeOperation='source-over'}
-async function clearScratchpadPage(){if(!confirm('Clear typed notes and handwriting from this scratchpad page?'))return;try{const response=await fetch(`/api/scratchpad/page/${encodeURIComponent(scratchpadPage)}`,{method:'DELETE'});scratchpadData=await safeJsonResponse(response);scratchpadData.fields={...scratchpadDefaultFields(),...(scratchpadData.fields||{})};renderScratchpad();setScratchpadState('PAGE CLEARED')}catch(error){setScratchpadState('CLEAR FAILED')}}
+async function clearScratchpadPage(){if(!(await uiConfirm('Clear typed notes and handwriting from this scratchpad page?', 'CLEAR')))return;try{const response=await fetch(`/api/scratchpad/page/${encodeURIComponent(scratchpadPage)}`,{method:'DELETE'});scratchpadData=await safeJsonResponse(response);scratchpadData.fields={...scratchpadDefaultFields(),...(scratchpadData.fields||{})};renderScratchpad();setScratchpadState('PAGE CLEARED')}catch(error){setScratchpadState('CLEAR FAILED')}}
 function autofillScratchpadFromFlight(){const plan=flightPlan||{};const ofp=plan.ofp||plan;const general = ofp?.general || {};const origin=ofp.origin||{};const destination=ofp.destination||{};const fields={...scratchpadDefaultFields(),...collectScratchpadFields()};const airline=general.icao_airline||general.airline||'';const flightNo=general.flight_number||general.flight||'';fields.callsign=fields.callsign||(airline&&flightNo?`${airline}${flightNo}`:'')||ofp.callsign||plan.callsign||'';fields.aircraft=fields.aircraft||general.aircraft_icao||general.aircraft||'';fields.departure=fields.departure||origin.icao_code||origin.icao||'';fields.destination=fields.destination||destination.icao_code||destination.icao||'';fields.flight_level=fields.flight_level||general.initial_altitude||general.cruise_profile||'';fields.route=fields.route||(ofp.navlog&&ofp.navlog.route)||ofp.route||general.route||'';scratchpadData.fields=fields;renderScratchpad();scheduleScratchpadSave()}
 
 async function loadCameraBridgeStatus(){if(!$('cameraBridgeBox'))return;try{const response=await fetch('/api/camera/bridge/status',{cache:'no-store'});const data=await safeJsonResponse(response);renderCameraBridgeStatus(data);if(data?.target?.view)syncCameraControls(data.target.view);if(!cameraBridgeTimer)cameraBridgeTimer=setInterval(loadCameraBridgeStatus,3500)}catch(error){if($('cameraBridgeState'))$('cameraBridgeState').textContent='FAULT';$('cameraBridgeBox').className='maintenance-box fault';$('cameraBridgeBox').innerHTML=`<b>NATIVE WASM CAMERA</b><p>${escapeHtml(friendlyError(error.message))}</p>`}}
@@ -6538,7 +7187,7 @@ function setup(){
   $('logbookFinalize').addEventListener('click',()=>logbookCommand('/api/logbook/finalize'));
   $('logbookScoringRules')?.addEventListener('click',()=>window.open('/scoring-rules','_blank','noopener'));
   $('landingToastClose')?.addEventListener('click',()=>{if($('landingToast'))$('landingToast').hidden=true});
-  $('logbookDiscard').addEventListener('click',()=>{if(confirm('Discard the active recording without saving it?'))logbookCommand('/api/logbook/active','DELETE')});
+  $('logbookDiscard').addEventListener('click',()=>{const btn=$('logbookDiscard');if(btn.dataset.armed==='1'){delete btn.dataset.armed;btn.textContent='Discard active';btn.classList.remove('danger-control');logbookCommand('/api/logbook/active','DELETE')}else{btn.dataset.armed='1';btn.textContent='CONFIRM DISCARD?';btn.classList.add('danger-control');setTimeout(()=>{if(btn.dataset.armed==='1'){delete btn.dataset.armed;btn.textContent='Discard active';btn.classList.remove('danger-control')}},4000)}});
   $('logbookSearch').addEventListener('click',loadLogbook);
   $('logbookQuery').addEventListener('keydown',event=>{if(event.key==='Enter')loadLogbook()});
   $('logbookEntries').addEventListener('click',event=>{const button=event.target.closest('[data-logbook-entry]');if(!button)return;selectedLogbookId=button.dataset.logbookEntry;renderLogbook(logbookData)});
@@ -6561,7 +7210,7 @@ function setup(){
   $('blackBoxSimStop')?.addEventListener('click',async()=>{try{await safeJsonResponse(await fetch('/api/blackbox/replay/stop',{method:'POST'}));await loadBlackBox()}catch(e){showToast('BLACK BOX','COULD NOT STOP THE REPLAY',friendlyError(e.message),'critical')}});
   document.addEventListener('click',async(event)=>{const btn=event.target.closest('#blackBoxStopFdr');if(!btn)return;try{await safeJsonResponse(await fetch('/api/blackbox/stop',{method:'POST'}));await loadBlackBox(true);showToast('BLACK BOX','RECORDING STOPPED','Flight data recording stopped by user.','standard')}catch(e){showToast('BLACK BOX','COULD NOT STOP RECORDING',friendlyError(e.message),'critical')}});
   $('financeSaveSetup')?.addEventListener('click',()=>saveFinanceSetup(false));
-  $('financeResetCareer')?.addEventListener('click',()=>{if(confirm('Reset the OPS ROOM finance career and balances?'))saveFinanceSetup(true)});
+  $('financeResetCareer')?.addEventListener('click',async()=>{if(await uiConfirm('Reset the OPS ROOM finance career and balances?', 'RESET'))saveFinanceSetup(true)});
   $('autoFetchOfpToggle')?.addEventListener('change',saveAutoFetchOfpSetting);
   $('financeCareerToggle')?.addEventListener('change',saveFinanceCareerSetting);
   $('airlineBrandingToggle')?.addEventListener('change',saveAirlineBrandingSetting);

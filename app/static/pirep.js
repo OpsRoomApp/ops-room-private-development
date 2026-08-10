@@ -330,9 +330,9 @@ function renderMetrics(){
   const score=analysis.score||entry.debrief||{};
   $('flightCallsign').textContent=f.callsign||'UNASSIGNED';
   if($('airlineLogoTop'))$('airlineLogoTop').innerHTML=pirepBrandHtml('small',false);
-  if($('airlineHero'))$('airlineHero').innerHTML=`${pirepBrandHtml('large',true)}<div><b>${esc(f.callsign||'FLIGHT')}</b><span>${esc(f.origin||'----')} ? ${esc(f.destination||'----')}</span><small>${esc([f.aircraft,f.registration].filter(Boolean).join(' · '))}</small></div>`;
+  if($('airlineHero'))$('airlineHero').innerHTML=`${pirepBrandHtml('large',true)}<div><b>${esc(f.callsign||'FLIGHT')}</b><span>${esc(f.origin||'----')} → ${esc(f.destination||'----')}</span><small>${esc([f.aircraft,f.registration].filter(Boolean).join(' · '))}</small></div>`;
   if($('financeAirlineIdentity'))$('financeAirlineIdentity').innerHTML=pirepBrandHtml('medium',true);
-  $('flightRoute').textContent=`${f.origin||'----'} ? ${f.destination||'----'}`;
+  $('flightRoute').textContent=`${f.origin||'----'} → ${f.destination||'----'}`;
   $('originIcao').textContent=f.origin||'----';
   $('destinationIcao').textContent=f.destination||'----';
   $('aircraftLine').textContent=[f.aircraft_icao||a.type||a.model||a.title,f.registration,entry.telemetry_source?`DATA: ${String(entry.telemetry_source).toUpperCase()}`:''].filter(Boolean).join(' · ')||'AIRCRAFT NOT REPORTED';
@@ -404,18 +404,22 @@ function renderFinance(){
   }
   const sym=fin.symbol||'',air=fin.airline||{},pilot=fin.pilot||{},route=fin.route||{},open=fin.opening_balance||{},close=fin.closing_balance||{};
   const invoiceHtml=receiptHtml||`<div class="metric-tile finance-wide"><span>GSX service receipts</span><strong>No matching GSX receipts</strong><small>Departure and arrival service costs were estimated automatically.</small></div>`;
+  // v0.25.72 (#22): passenger satisfaction (computed by passenger_satisfaction
+  // inside analyse_pirep) is finally rendered here in the finance section.
+  const satis=analysis?.passenger_satisfaction;
+  const satisHtml=satis?`<div class="metric-tile finance-wide finance-satisfaction"><span>Passenger satisfaction</span><strong>${esc(satis.category||'—')} · ${Number(satis.score||0)} / 100</strong><small>Revenue multiplier ×${Number(satis.revenue_multiplier??1).toFixed(2)} · reputation ${Number(satis.reputation_delta||0)>0?'+':''}${Number(satis.reputation_delta||0)}</small>${satis.breakdown?`<div class="satis-breakdown">${Object.entries(satis.breakdown).map(([k,v])=>`<span><b>${esc(String(k).toUpperCase())}</b>${Number(v).toFixed(0)}</span>`).join('')}</div>`:''}${((satis.explanations?.positive||[]).length||(satis.explanations?.negative||[]).length)?`<div class="satis-notes">${[...(satis.explanations?.positive||[]).map(x=>`<i class="satis-good">+ ${esc(x)}</i>`),...(satis.explanations?.negative||[]).map(x=>`<i class="satis-bad">− ${esc(x)}</i>`)].join('')}</div>`:''}</div>`:'';
   $('financeReport').innerHTML=[
     metric('Airline opening balance',moneyP(open.airline,sym),fin.currency||''),
     metric('Airline revenue',moneyP(air.revenue?.total,sym),`Pax ${moneyP(air.revenue?.passenger,sym)} · Cargo ${moneyP(air.revenue?.cargo,sym)}`),
     metric('Airline costs',moneyP(air.costs?.total,sym),`Fuel ${moneyP(air.costs?.fuel,sym)} · Ground services ${moneyP(air.costs?.ground_services,sym)}`),
     metric('Departure services',moneyP(air.costs?.ground_services_departure,sym),financeSourceLabel(air.costs?.ground_services_departure_source)),
     metric('Arrival services',moneyP(air.costs?.ground_services_arrival,sym),financeSourceLabel(air.costs?.ground_services_arrival_source)),
-    metric('Airline flight result',moneyP(air.profit,sym),`${route.origin||'----'} ? ${route.destination||'----'}`),
+    metric('Airline flight result',moneyP(air.profit,sym),`${route.origin||'----'} → ${route.destination||'----'}`),
     metric('Airline closing balance',moneyP(close.airline,sym),''),
     metric('Pilot opening balance',moneyP(open.pilot,sym),''),
     metric('Pilot flight pay',moneyP(pilot.pay,sym),`${pilot.rank?.label||'Pilot'}`),
     metric('Pilot closing balance',moneyP(close.pilot,sym),''),
-  ].join('') + invoiceHtml;
+  ].join('') + satisHtml + invoiceHtml;
 }
 
 function setupInteractiveCharts(){
@@ -511,6 +515,43 @@ function drawLandingCharts(){
 function renderSection(name,fn){
   try{fn();return true}catch(error){console.error(`PIREP ${name} render failed`,error);renderFailures.push(name);return false}
 }
+function ofpUtc(value){if(!value)return'—';const d=new Date(value);if(Number.isNaN(d.getTime()))return'—';return `${d.toISOString().slice(11,13)}${d.toISOString().slice(14,16)}Z`}
+function ofpDelta(seconds){const n=num(seconds);if(n==null)return'—';const s=Math.round(n);if(s===0)return'ON TIME';const sign=s<0?'-':'+',abs=Math.abs(s);return `${sign}${String(Math.floor(abs/3600)).padStart(2,'0')}${String(Math.floor(abs%3600/60)).padStart(2,'0')}`}
+function ofpBlock(seconds){const n=num(seconds);if(n==null)return'—';const s=Math.max(0,Math.round(n));return `${String(Math.floor(s/3600)).padStart(2,'0')}:${String(Math.floor(s%3600/60)).padStart(2,'0')}`}
+function ofpCell(value){const n=num(value);return n==null?'—':n.toLocaleString(undefined,{maximumFractionDigits:1,minimumFractionDigits:1})}
+function ofpDeltaCell(planned,actual){const p=num(planned),a=num(actual);if(p==null||a==null)return'—';const d=a-p;return `${d>=0?'+':''}${d.toLocaleString(undefined,{maximumFractionDigits:1,minimumFractionDigits:1})}`}
+function ofpCompletionTable(headers,rows){
+  return `<div class="ofp-completion-table-wrap"><table class="ofp-completion-table"><thead><tr>${headers.map(h=>`<th scope="col">${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+function renderOfpCompletion(){
+  const target=$('ofpCompletionReport');if(!target)return;
+  const data=ofpCompletion;
+  if(!data||data.ok===false||(data.state&&['no-plan','waiting','mismatch','unavailable'].includes(data.state))){
+    const reason=data?.reason||'No plan snapshot was stored for this flight.';
+    target.innerHTML=`<div class="empty">OFP completion is not available for this flight. ${esc(reason)}</div>`;
+    return;
+  }
+  const units=data.units||{},unit=String(units.display||units.weight||'KGS').toUpperCase();
+  const operation=data.operation||{};
+  const manualCount=Object.keys(data.manual_overrides||{}).length;
+  const times=data.times||{};
+  const timeRows=[
+    ['OUT',times.out,true],['OFF',times.off,true],['ON',times.on,true],['IN',times.in,true],
+  ].map(([label,row])=>[esc(label),ofpUtc(row?.scheduled_utc),ofpUtc(row?.actual_utc),ofpDelta(row?.delta_seconds)]);
+  const block=times.block||{};
+  timeRows.push(['BLOCK',ofpBlock(block.planned_seconds),ofpBlock(block.actual_seconds),ofpDelta(block.delta_seconds)]);
+  const weights=data.weights||{};
+  const weightRows=Object.entries(weights).map(([key,cell])=>{
+    const labels={passengers:'PAX',bags_cargo:'BAG/CARGO',commercial_freight:'COMMERCIAL FREIGHT',payload:'PAYLOAD',zfw:'ZFW',tow:'TOW',ldw:'LDW'};
+    return [esc(labels[key]||key.toUpperCase()),ofpCell(cell?.planned_display ?? cell?.planned),ofpCell(cell?.max_display ?? cell?.max),ofpCell(cell?.actual_display ?? cell?.actual),ofpDeltaCell(cell?.planned_display ?? cell?.planned,cell?.actual_display ?? cell?.actual)];
+  });
+  const fuel=data.fuel||{};
+  const fuelRows=Object.entries(fuel).map(([key,cell])=>{
+    const labels={ramp_out:'RAMP / OUT',takeoff_off:'TAKEOFF / OFF',trip:'TRIP',landing_on:'LANDING / ON',block_in:'BLOCK IN',extra_surplus:'EXTRA / SURPLUS'};
+    return [esc(labels[key]||key.toUpperCase()),ofpCell(cell?.planned_display ?? cell?.planned),ofpCell(cell?.actual_display ?? cell?.actual),ofpDeltaCell(cell?.planned_display ?? cell?.planned,cell?.actual_display ?? cell?.actual)];
+  });
+  target.innerHTML=`<div class="ofp-completion-head"><span><i>OPERATION</i><b>${esc(String(operation.resolved||'AUTO').toUpperCase())}</b></span><span><i>REQUESTED</i><b>${esc(String(operation.requested||'AUTO').toUpperCase())}</b></span><span><i>STATE</i><b>${esc(String(data.state||'COMPLETE').toUpperCase())}</b></span><span><i>UPDATED</i><b>${esc(data.updated_utc?String(data.updated_utc).slice(0,19).replace('T',' ')+'Z':'—')}</b></span>${manualCount?`<span class="ofp-manual-chip" title="Manual overrides applied to this flight's comparison">MANUAL OVERRIDES (${manualCount})</span>`:''}</div><div class="ofp-completion-grid"><section><h3>TIMES <span>UTC</span></h3>${ofpCompletionTable(['EVENT','SCHEDULED','ACTUAL','DELTA'],timeRows)}</section><section><h3>WEIGHTS <span>${esc(unit)}</span></h3>${ofpCompletionTable(['ITEM','PLANNED','MAX','ACTUAL','DELTA'],weightRows)}</section><section><h3>FUEL <span>${esc(unit)}</span></h3>${ofpCompletionTable(['ITEM','PLANNED','ACTUAL','DELTA'],fuelRows)}</section></div>`;
+}
 function finishReportStatus(){
   const stamp=new Date().toISOString().slice(0,19).replace('T',' ');
   $('reportGenerated').textContent=renderFailures.length?`REPORT ${stamp}Z · ${renderFailures.length} SECTION WARNING${renderFailures.length>1?'S':''}`:`REPORT ${stamp}Z`;
@@ -530,6 +571,7 @@ async function downloadPirepPdf(button,id){
 }
 
 let renderFailures=[];
+let ofpCompletion=null;
 function renderAll(){
   analysis=telemetry.analysis||entry.analysis_summary||{};
   samples=arr(telemetry.samples);
@@ -556,6 +598,7 @@ function renderAll(){
     drawRunway('landingRunwayChart',analysis.landing||{},'landing');
     drawLandingCharts();
   });
+  renderSection('ofp completion',()=>renderOfpCompletion());
   finishReportStatus();
   setupInteractiveCharts();
 }
@@ -565,10 +608,13 @@ async function boot(){
     const id=String(preloaded?.entry?.id||flightId()||'');
     if(!id)throw new Error('No flight record was selected.');
     const pdfButton=$('pdfExport');if(pdfButton){pdfButton.disabled=true;if(!preloaded)pdfButton.addEventListener('click',()=>downloadPirepPdf(pdfButton,id))}if(preloaded||new URLSearchParams(location.search).get('pdf_render')==='1')document.documentElement.classList.add('pdf-render');
-    let e,t,s;
-    if(preloaded){e={entry:preloaded.entry};t=preloaded.telemetry;s=preloaded.settings||{};}
-    else{[e,t,s]=await Promise.all([getJson(`/api/logbook/${encodeURIComponent(id)}`),getJson(`/api/logbook/${encodeURIComponent(id)}/telemetry?max_points=5000`),getJson('/api/settings/public')]);}
-    entry=e.entry;telemetry=t;settings=s;
+    let e,t,s,o;
+    if(preloaded){e={entry:preloaded.entry};t=preloaded.telemetry;s=preloaded.settings||{};o=preloaded.ofp_completion||null;}
+    else{
+      [e,t,s]=await Promise.all([getJson(`/api/logbook/${encodeURIComponent(id)}`),getJson(`/api/logbook/${encodeURIComponent(id)}/telemetry?max_points=5000`),getJson('/api/settings/public')]);
+      try{o=await getJson(`/api/logbook/${encodeURIComponent(id)}/ofp-completion`);}catch(error){o={ok:false,state:'unavailable',reason:error.message};}
+    }
+    entry=e.entry;telemetry=t;settings=s;ofpCompletion=o;
     $('scoringRules')?.addEventListener('click',()=>window.open('/scoring-rules','_blank','noopener'));
     if(!entry||!telemetry.ok)throw new Error('The flight report is incomplete.');
     $('loading').hidden=true;$('errorPanel').hidden=true;$('reportContent').hidden=false;$('report').setAttribute('aria-busy','false');

@@ -1,5 +1,5 @@
 """
-OPS ROOM -- NOTAM plain-English translation layer (v0.25.63).
+OPS ROOM -- NOTAM plain-English translation layer (v0.25.65).
 
 Live FAA NMS data confirmed the API's ``notamTranslation`` field comes back
 empty in real responses -- the raw ``text`` field is what we get, and it is
@@ -126,9 +126,64 @@ _CONTRACTIONS: dict[str, str] = {
     "ADJ": "Adjacent",
     "AFIS": "Aerodrome Flight Information Service",
     "FMS": "Flight Management System",
+    # v0.25.65: additions from a live FAA NMS corpus scan (509 NOTAM texts
+    # across 24 airports). Standard ICAO Doc 8400 / FAA JO 7340.2 contractions
+    # only; ambiguous tokens (AB, CD, DL, FRD, US ...) deliberately omitted.
+    "AD": "Aerodrome",
+    "AIP": "Aeronautical Information Publication",
+    "AIRAC": "Aeronautical Information Regulation And Control",
+    "ALS": "Approach Lighting System",
+    "AMDT": "Amendment",
+    "CAT": "Category",
+    "CHG": "Change",
+    "COORD": "Coordinates",
+    "DA": "Decision Altitude",
+    "DEG": "Degrees",
+    "DOD": "Department Of Defense",
+    "FLW": "Follow",
+    "HGT": "Height",
+    "IAC": "Instrument Approach Chart",
+    "ICAO": "International Civil Aviation Organization",
+    "INOP": "Inoperative",
+    "KHZ": "Kilohertz",
+    "LIT": "Lighted",
+    "LPV": "Localizer Performance With Vertical Guidance",
+    "LVP": "Low Visibility Procedures",
+    "MAX": "Maximum",
+    "MOCA": "Minimum Obstruction Clearance Altitude",
+    "MRA": "Minimum Reception Altitude",
+    "NM": "Nautical Miles",
+    "OCA": "Obstacle Clearance Altitude",
+    "OCH": "Obstacle Clearance Height",
+    "REF": "Reference",
+    "RNAV": "Area Navigation",
+    "RNP": "Required Navigation Performance",
+    "RVR/VIS": "Runway Visual Range/Visibility",
+    "SID": "Standard Instrument Departure",
+    "STAR": "Standard Terminal Arrival Route",
+    "SUP": "Supplement",
+    "WGS": "World Geodetic System",
+    # v0.25.65: second corpus pass (583 live texts) -- unambiguous ICAO
+    # Doc 8400 / FAA JO 7340.2 contractions and common operational words
+    # still unexpanded. Place names (LOS, ANGELES, KENNEDY, JFK ...) and
+    # ambiguous short tokens (CL, NE, SE, US, OE, FRD ...) deliberately
+    # omitted.
+    "MSL": "Mean Sea Level",
+    "HAT": "Height Above Threshold",
+    "IAP": "Instrument Approach Procedure",
+    "MDA": "Minimum Descent Altitude",
+    "GPS": "Global Positioning System",
+    "TEMP": "Temporary",
+    "INTL": "International",
+    "THRU": "Through",
+    "AD2": "Aerodrome Section (AIP Part 2)",
+    "TWY/EXIT": "Taxiway Exit",
 }
 
-_TOKEN_RE = re.compile(r"[A-Za-z]+(?:/[A-Za-z]+)*")
+# Digits are part of a token so contraction+number forms (AD2, H24, RVR/VIS)
+# expand as units instead of splitting at the digit. Pure numbers and runway
+# idents (08R, 26L) are not dict keys and pass through untouched.
+_TOKEN_RE = re.compile(r"[A-Za-z]+(?:/[A-Za-z]+)*[0-9]*(?:/[A-Za-z]+)*[0-9]*")
 
 
 def expand(text: Any) -> str:

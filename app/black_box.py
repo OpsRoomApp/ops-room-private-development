@@ -38,6 +38,18 @@ _ACTIVE: dict[str, Any] | None = None
 _RING: deque[dict[str, Any]] = deque(maxlen=18000)
 _PHASE_CONTEXT: dict[str, Any] = {"flight_id": None, "phase": "", "meta": {}}
 
+# v0.25.72 (#20): per-flight stop latch. Once a recording for flight_id X is
+# closed (TAXI IN / on-blocks / user request), the engine-on watchdog must not
+# start a new recording for the same flight — the taxi-in engine flicker from a
+# degraded SimConnect session produced ~36 ghost recordings per flight. A new
+# flight_id (new logbook session) is a fresh key and starts normally.
+_CLOSED_FLIGHT_IDS: dict[str, float] = {}
+
+# v0.25.72 (#20): engine-on edge debounce — a single telemetry flap (dead
+# SimConnect dispatch thread returning None) must never look like "engine just
+# started". Require this many consecutive engine-on samples before starting.
+_ENGINE_ON_DEBOUNCE = 3
+
 FIELDS = [
     "lat", "lon", "altitude_ft", "agl_ft", "radio_altitude_ft",
     "indicated_speed_kts", "true_speed_kts", "ground_speed_kts", "mach",
@@ -439,12 +451,49 @@ def stop_recording(reason: str = "TAXI IN") -> dict[str, Any]:
             Path(active["path"]).replace(final_path)
             active["path"] = final_path
         finished = {"ok": True, "recording_id": active["id"], "flight_id": active["flight_id"], "path": str(active["path"]), "sample_count": active.get("sample_count"), "duration_seconds": duration, "data_quality": quality}
+        # v0.25.72 (#20): latch the closed flight so the engine-on watchdog
+        # cannot immediately open a fresh recording for the same flight.
+        _CLOSED_FLIGHT_IDS[str(active["flight_id"])] = time.monotonic()
+        if len(_CLOSED_FLIGHT_IDS) > 100:
+            cutoff = time.monotonic() - 86400.0
+            _CLOSED_FLIGHT_IDS = {key: stamp for key, stamp in _CLOSED_FLIGHT_IDS.items() if stamp >= cutoff}
         _ACTIVE = None
         _THREAD = None
         _STOP.clear()
         if not _SHUTDOWN:
             start_watchdog()
         return finished
+
+
+def _cleanup_stale_parts() -> None:
+    """Finalize leftover ``.opsbb.part`` files (v0.25.72, #20).
+
+    Recordings that never reached a clean stop (crash, or the old engine-on
+    watchdog oscillation) leave ``.part`` files in the library. Any ``.part``
+    that is not the currently-active recording is finalized: state stamped,
+    WAL checkpointed and the file renamed to ``.opsbb`` so the library never
+    shows half-files.
+    """
+    with _LOCK:
+        active_path = str((_ACTIVE or {}).get("path") or "").lower()
+    for path in sorted(_root().glob("*.opsbb.part")):
+        try:
+            if str(path).lower() == active_path:
+                continue
+            meta = _metadata(path)
+            state = str(meta.get("state") or "INTERRUPTED")
+            if state == "RECORDING":
+                with _connect(path) as conn:
+                    row = conn.execute("SELECT COALESCE(MAX(ended_elapsed),0) duration,COALESCE(SUM(sample_count),0) samples FROM chunks").fetchone()
+                _set_metadata(path, state="INTERRUPTED", completed_utc=_utc_now(), stop_reason="OPS ROOM stopped before TAXI IN", duration_seconds=float(row["duration"] or 0), sample_count=int(row["samples"] or 0))
+            else:
+                _set_metadata(path, state=state, completed_utc=meta.get("completed_utc") or _utc_now())
+            _checkpoint(path)
+            final_path = _final_path(path)
+            if final_path != path and not final_path.exists():
+                path.replace(final_path)
+        except Exception:
+            continue
 
 
 def start_watchdog() -> None:
@@ -462,6 +511,7 @@ def start_watchdog() -> None:
     with _LOCK:
         if _THREAD is not None and _THREAD.is_alive():
             return
+        _cleanup_stale_parts()
         _STOP.clear()
         _THREAD = threading.Thread(target=_record_loop, name="OpsRoom-BlackBox", daemon=True)
         _THREAD.start()
@@ -614,6 +664,33 @@ def _target_interval(snapshot: dict[str, Any] | None, phase: str) -> float:
     return 1.0 / hz
 
 
+def _read_record_telemetry() -> dict[str, Any] | None:
+    """Black Box telemetry read with FSUIPC full-stream fallback (v0.25.72, #16).
+
+    The minimal SimConnect path is preferred while healthy (low subscription
+    count, no stutter), but when the SimConnect session degrades or dies the
+    recorder falls back to the FSUIPC-driven full stream — the same one Flight
+    Watch uses — so Black Box data stays identical to Flight Watch and the
+    true 30 Hz takeoff-roll/approach rate is reachable (FSUIPC is one batched
+    ``pyuipc.read`` per sample, so the high-rate fallback adds no stutter).
+    When both sources are dead the full stream reports ``stale`` and
+    ``_normalize`` rejects the row; ``status()`` then surfaces STALE instead
+    of replaying the last good row.
+    """
+    snapshot = read_telemetry(force=True, stream="minimal")
+    if isinstance(snapshot, dict) and snapshot.get("ok"):
+        return snapshot
+    fallback = read_telemetry(force=True, stream="full")
+    if isinstance(fallback, dict) and fallback.get("ok"):
+        fallback = dict(fallback)
+        fallback.setdefault("addon_event_meta", {})
+        fallback.setdefault("addon_state", {})
+        fallback.setdefault("adapter_status", {"active": False, "mode": "GENERIC FALLBACK", "reason": "minimal stream unavailable"})
+        fallback["minimal"] = True
+        return fallback
+    return snapshot if isinstance(snapshot, dict) else fallback if isinstance(fallback, dict) else None
+
+
 def _fingerprint(row: dict[str, Any]) -> tuple[Any, ...]:
     # Include the fast dynamics, controls and curated add-on state so short
     # aircraft-specific pulses are not discarded as duplicate position frames.
@@ -716,10 +793,12 @@ def _record_loop() -> None:
     next_run = time.monotonic()
     last_snapshot: dict[str, Any] | None = None
     last_engines_running = False
+    engine_on_streak = 0
     while not _STOP.is_set():
         with _LOCK:
             active = _ACTIVE
             phase = str(_PHASE_CONTEXT.get("phase") or "")
+            ctx_flight_id = str(_PHASE_CONTEXT.get("flight_id") or "")
         now = time.monotonic()
         # When no recording is active we keep the same daemon thread alive as
         # a low-overhead watchdog: pulls the SlimSet once a second via the
@@ -733,11 +812,17 @@ def _record_loop() -> None:
                 continue
             snapshot: dict[str, Any] | None = None
             try:
-                snapshot = read_telemetry(force=True, stream="minimal")
+                snapshot = _read_record_telemetry()
             except Exception:
                 snapshot = None
             engines_now = bool(isinstance(snapshot, dict) and snapshot.get("engines_running"))
-            if engines_now and not last_engines_running:
+            # v0.25.72 (#20): debounce — a single telemetry flap (dead
+            # SimConnect dispatch thread returning None) must never look like
+            # "engine just started". The streak needs _ENGINE_ON_DEBOUNCE
+            # consecutive engine-on samples AND a fresh off->on edge.
+            engine_on_streak = engine_on_streak + 1 if engines_now else 0
+            latched = _CLOSED_FLIGHT_IDS.get(ctx_flight_id)
+            if engines_now and engine_on_streak >= _ENGINE_ON_DEBOUNCE and not last_engines_running and (not ctx_flight_id or latched is None):
                 with _LOCK:
                     flight_id = str(_PHASE_CONTEXT.get("flight_id") or "")
                     flight_meta = dict(_PHASE_CONTEXT.get("meta") or {})
@@ -758,7 +843,7 @@ def _record_loop() -> None:
             continue
         snapshot: dict[str, Any] | None = None
         try:
-            snapshot = read_telemetry(force=True, stream="minimal")
+            snapshot = _read_record_telemetry()
         except Exception:
             snapshot = None
         with _LOCK:
@@ -780,6 +865,7 @@ def _record_loop() -> None:
                     active["last_fingerprint"] = fp
                     active["last_written_elapsed"] = elapsed
                     active["valid_count"] = int(active.get("valid_count") or 0) + 1
+                    active["last_valid_mono"] = time.monotonic()
                     active["last_source"] = row.get("source")
                     active["last_sample_utc"] = row.get("utc")
                     if isinstance(row.get("provider_categories"), dict): active["provider_categories"] = dict(row["provider_categories"])
@@ -821,13 +907,16 @@ def status() -> dict[str, Any]:
         attempts = max(1, int(active.get("attempt_count") or 0))
         valid = int(active.get("valid_count") or 0)
         actual_hz = valid / elapsed if elapsed > 0.5 else 0.0
-        live = {
-            "recording_id": active.get("id"), "flight_id": active.get("flight_id"),
-            "started_utc": active.get("started_utc"), "sample_count": samples_now,
-            "elapsed_seconds": round(elapsed, 2), "actual_hz": round(actual_hz, 1),
-            "phase": phase, "provider": active.get("last_source") or "WAITING",
-            "data_quality": round(100.0 * valid / attempts, 1),
-            "data_health": "GOOD" if valid / attempts >= .95 else ("DEGRADED" if valid / attempts >= .75 else "CHECK DATA"),
+    stale_seconds = max(0.0, time.monotonic() - float(active.get("last_valid_mono") or active.get("started_mono") or time.monotonic()))
+    stale = bool(attempts > 0 and stale_seconds > 5.0)
+    live = {
+        "recording_id": active.get("id"), "flight_id": active.get("flight_id"),
+        "started_utc": active.get("started_utc"), "sample_count": samples_now,
+        "elapsed_seconds": round(elapsed, 2), "actual_hz": round(actual_hz, 1),
+        "phase": phase, "provider": active.get("last_source") or "WAITING",
+        "data_quality": round(100.0 * valid / attempts, 1),
+        "stale": stale, "stale_seconds": round(stale_seconds, 1),
+        "data_health": "STALE" if stale else ("GOOD" if valid / attempts >= .95 else ("DEGRADED" if valid / attempts >= .75 else "CHECK DATA")),
             "buffer_samples": len(active.get("buffer") or []), "ring_samples": len(_RING),
             "capabilities": sorted(active.get("capabilities") or []),
             "provider_categories": dict(active.get("provider_categories") or {}), "aircraft_adapter": active.get("aircraft_adapter"),

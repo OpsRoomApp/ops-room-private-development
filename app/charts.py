@@ -771,7 +771,7 @@ def chartfox_debug(chart_id: str = "", airport: str = "") -> dict:
             "Example: /api/charts/chartfox/debug?chart_id=6872384f-a9d3-4513-a1e5-d2e99e2b9dfb"
         ) if not api_inspection else None,
         "recent_errors": [c for c in runtime.get("recent_calls", []) if not c.get("ok")][-10:] if runtime.get("recent_calls") else [],
-        "version": "v0.25.63",
+        "version": "v0.25.65",
         "build": "public-release",
         "uptime_seconds": round(time.monotonic(), 1),
     }
@@ -1344,16 +1344,38 @@ def chartfox_chart_file_proxy(chart_id: str, use_cache: bool = True) -> dict:
                 _LOGGER.warning("[CHARTFOX PROXY] auth_missing for chartfox URL cid=%s", cid)
                 return None
             headers["Authorization"] = f"Bearer {access_token}"
-        try:
-            resp = requests.get(url, headers=headers, timeout=30, stream=False)
-            resp.raise_for_status()
-        except requests.exceptions.Timeout:
-            _LOGGER.warning("[CHARTFOX PROXY] download_timeout cid=%s url=%s", cid, url[:80])
-            return None
-        except requests.RequestException as exc:
-            _LOGGER.warning("[CHARTFOX PROXY] download_failed cid=%s url=%s error=%s",
-                            cid, url[:80], exc)
-            return None
+        # v0.25.72 (#11): some AIP suppliers (e.g. SloveniaControl
+        # aim.sloveniacontrol.si) present a TLS chain that the default CA
+        # bundle rejects. Retry that one download with verification disabled
+        # — supplier chart files are public AIP documents and the ChartFox
+        # API metadata was already authenticated. ChartFox auth URLs are never
+        # retried this way.
+        resp = None
+        for attempt in (1, 2):
+            try:
+                if attempt == 2:
+                    import warnings as _warnings
+                    with _warnings.catch_warnings():
+                        _warnings.simplefilter("ignore")
+                        resp = requests.get(url, headers=headers, timeout=30, stream=False, verify=False)
+                else:
+                    resp = requests.get(url, headers=headers, timeout=30, stream=False)
+                resp.raise_for_status()
+                break
+            except requests.exceptions.Timeout:
+                _LOGGER.warning("[CHARTFOX PROXY] download_timeout cid=%s url=%s", cid, url[:80])
+                return None
+            except requests.exceptions.SSLError as exc:
+                if attempt == 1 and "chartfox" not in url.lower():
+                    _LOGGER.warning("[CHARTFOX PROXY] ssl_retry_without_verify cid=%s url=%s error=%s", cid, url[:80], exc)
+                    continue
+                _LOGGER.warning("[CHARTFOX PROXY] download_failed cid=%s url=%s error=%s",
+                                cid, url[:80], exc)
+                return None
+            except requests.RequestException as exc:
+                _LOGGER.warning("[CHARTFOX PROXY] download_failed cid=%s url=%s error=%s",
+                                cid, url[:80], exc)
+                return None
         # v0.25.60 (round 2): the previous additive gate (reject if claimed
         # PDF but bytes weren't) is replaced with a sniff-and-set gate that
         # makes the BYTES the source of truth for ext/content_type. ChartFox

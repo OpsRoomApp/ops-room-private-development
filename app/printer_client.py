@@ -219,6 +219,170 @@ def format_cpdlc_receipt(msg: dict[str, Any], width: int = 48) -> list[str]:
     return lines
 
 
+def format_ofp_receipt(payload: dict[str, Any], width: int = 48) -> list[str]:
+    """Format a live-OFP comparison payload as 80mm receipt lines.
+
+    Mirrors the frontend "COPY FULL COMPARISON" layout so the printed
+    receipt matches what the pilot sees on screen. Missing values become
+    "—", never zero.
+    """
+    unit = str((payload.get("units") or {}).get("display") or "KG").upper()
+    op = str((payload.get("operation") or {}).get("resolved") or "AUTO").upper()
+    live = payload.get("live") or {}
+    state = str(payload.get("state") or "—").upper()
+    phase = str(live.get("phase") or "—").upper()
+    source = str(live.get("telemetry_source") or "—").upper()
+    times = payload.get("times") or {}
+    weights = payload.get("weights") or {}
+    fuel = payload.get("fuel") or {}
+
+    def _t(iso: Any) -> str:
+        if not iso:
+            return "—"
+        try:
+            d = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        except Exception:
+            return "—"
+        return f"{d.hour:02d}{d.minute:02d}Z"
+
+    def _dur(seconds: Any) -> str:
+        if seconds in (None, ""):
+            return "—"
+        try:
+            s = int(float(seconds))
+        except (TypeError, ValueError):
+            return "—"
+        if s < 0:
+            return "—"
+        return f"{s // 3600:02d}{s % 3600 // 60:02d}"
+
+    def _delta(seconds: Any) -> str:
+        if seconds in (None, ""):
+            return "—"
+        try:
+            s = int(float(seconds))
+        except (TypeError, ValueError):
+            return "—"
+        if s == 0:
+            return "ON TIME"
+        # v0.25.72 (#13): whole-minute deltas match the minute-precision times.
+        sign = "+" if s > 0 else "-"
+        minutes = round(abs(s) / 60.0)
+        if minutes <= 0:
+            return "ON TIME"
+        h, m = minutes // 60, minutes % 60
+        return f"{sign}{h}{m:02d}" if h else f"{sign}{m}"
+
+    def _w(value: Any, digits: int = 0) -> str:
+        if value in (None, ""):
+            return "—"
+        try:
+            n = float(value)
+        except (TypeError, ValueError):
+            return "—"
+        return f"{n:.1f}" if digits else f"{round(n):,}"
+
+    lines: list[str] = []
+    lines.append(f"LIVE OFP COMPLETION · {op}")
+    lines.append(f"STATE {state} · PHASE {phase}")
+    lines.append(f"SOURCE {source} · UNITS {unit}")
+    lines.append("")
+    lines.append("TIMES        SCHED   ACTUAL  DELTA")
+    for label, key in (("OUT", "out"), ("OFF", "off"), ("ON", "on"), ("IN", "in")):
+        row = times.get(key) or {}
+        lines.append(
+            f"{label:<13}{_t(row.get('scheduled_utc'))}   {_t(row.get('actual_utc'))}   {_delta(row.get('delta_seconds'))}"
+        )
+    block = times.get("block") or {}
+    lines.append(
+        f"{'BLOCK':<13}{_dur(block.get('planned_seconds'))}   {_dur(block.get('actual_seconds'))}   {_delta(block.get('delta_seconds'))}"
+    )
+    lines.append("")
+    lines.append(f"WEIGHTS ({unit})  PLANNED    MAX      ACTUAL    DELTA")
+    for label, key in (
+        ("PAX", "passengers"),
+        ("BAG/CARGO", "bags_cargo"),
+        ("COMM FREIGHT", "commercial_freight"),
+        ("PAYLOAD", "payload"),
+        ("ZFW", "zfw"),
+        ("TOW", "tow"),
+        ("LDW", "ldw"),
+    ):
+        w = weights.get(key) or {}
+        planned = w.get("planned_display") if w.get("planned_display") is not None else w.get("planned")
+        actual = w.get("actual_display") if w.get("actual_display") is not None else w.get("actual")
+        maxv = w.get("max_display") if w.get("max_display") is not None else w.get("max")
+        delta = w.get("delta_display") if w.get("delta_display") is not None else w.get("delta")
+        lines.append(
+            f"{label:<19}{_w(planned):>8} {_w(maxv):>7} {_w(actual):>8} {_w(delta, 1):>8}"
+        )
+    lines.append("")
+    lines.append(f"FUEL ({unit})     PLANNED    ACTUAL    DELTA")
+    for label, key in (
+        ("RAMP/OUT", "ramp_out"),
+        ("TAKEOFF/OFF", "takeoff_off"),
+        ("TRIP", "trip"),
+        ("LANDING/ON", "landing_on"),
+        ("BLOCK IN", "block_in"),
+        ("EXTRA/SURPLUS", "extra_surplus"),
+    ):
+        f = fuel.get(key) or {}
+        planned = f.get("planned_display") if f.get("planned_display") is not None else f.get("planned")
+        actual = f.get("actual_display") if f.get("actual_display") is not None else f.get("actual")
+        delta = f.get("delta_display") if f.get("delta_display") is not None else f.get("delta")
+        lines.append(
+            f"{label:<19}{_w(planned):>8} {_w(actual):>8} {_w(delta, 1):>8}"
+        )
+    lines.append("")
+    return lines
+
+
+def format_gsx_receipt(item: dict[str, Any], width: int = 42) -> list[str]:
+    """Format a parsed GSX receipt (gsx_receipts.parse_receipt item) as receipt lines."""
+    category = str(item.get("category") or item.get("service") or "GSX").upper()
+    operator = str(item.get("operator") or "GSX").upper()
+    airport = str(item.get("airport") or "----").upper()
+    tail = str(item.get("tail") or "").upper()
+    callsign = str(item.get("callsign") or "").upper()
+    title = str(item.get("title") or f"{category} receipt")
+    issued = str(item.get("issued_utc") or "")[:16].replace("T", " ") or _utc()
+    amount = item.get("amount")
+    currency = str(item.get("currency") or "")
+    subtotal = item.get("subtotal")
+    taxes = item.get("taxes") if isinstance(item.get("taxes"), list) else []
+    line_items = item.get("line_items") if isinstance(item.get("line_items"), list) else []
+
+    lines: list[str] = [title.upper()]
+    if operator:
+        lines.append(f"OPERATOR: {operator}")
+    ident = " / ".join(part for part in (airport, tail, callsign) if part and part != "----")
+    if ident:
+        lines.append(f"FLIGHT:   {ident}")
+    lines.append(f"ISSUED:   {issued}")
+    lines.append("-" * width)
+    for row in line_items:
+        item_name = str(row.get("item") or "Service")
+        item_amount = row.get("display_amount") or (f"{row.get('currency') or currency} {row.get('amount'):,.2f}" if row.get("amount") is not None else "")
+        for chunk in [item_name[i:i + width] for i in range(0, len(item_name), width)] or [item_name]:
+            lines.append(chunk)
+        if item_amount:
+            lines.append(f"  {item_amount}")
+    if not line_items:
+        lines.append("(no line items in receipt)")
+    if subtotal is not None:
+        lines.append("-" * width)
+        lines.append(f"SUBTOTAL  {currency} {subtotal:,.2f}")
+    for tax in taxes:
+        tax_label = str(tax.get("label") or "Tax")
+        tax_amount = tax.get("amount")
+        if tax_amount is not None:
+            lines.append(f"{tax_label:<22}{tax.get('currency') or currency} {tax_amount:,.2f}")
+    if amount is not None:
+        lines.append("=" * width)
+        lines.append(f"TOTAL     {currency} {amount:,.2f}")
+    return lines
+
+
 def test_print(printer_name: str) -> dict[str, Any]:
     """Print a test receipt to verify printer connectivity."""
     lines = [

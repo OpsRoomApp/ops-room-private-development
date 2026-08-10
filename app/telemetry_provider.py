@@ -177,6 +177,22 @@ def _num(value: Any) -> float | None:
         return None
 
 
+def _finite_weight_lb(value: Any) -> float | None:
+    """Return a sane aircraft weight in pounds, or None when absent/absurd.
+
+    FSUIPC 0x30C0/0x30C8 are FLOAT64 pounds; advanced aircraft may leave them
+    unset, and sim code has returned bogus doubles in the past. Bounds mirror
+    the SimConnect full-stream guard (0..2,000,000 lb) so the two providers
+    cannot disagree on what is plausible.
+    """
+    n = _num(value)
+    if n is None or n != n or abs(n) == float("inf"):
+        return None
+    if n <= 0.0 or n > 2000000.0:
+        return None
+    return round(n, 1)
+
+
 def _fsuipc_ground_decision(*, raw_on_ground: bool, radio_altitude_ft: float | None, ground_speed_kts: float | None, indicated_speed_kts: float | None, parking_brake: bool | None = None) -> tuple[bool, bool, bool, list[str]]:
     """Return (on_ground, ground_safe, confirmed_airborne, warnings).
 
@@ -401,6 +417,8 @@ def _read_fsuipc_unlocked() -> dict[str, Any]:
             (0x057C, "d"),  # bank, signed 4-byte angle
             (0x11BA, "h"),  # normal acceleration, approximately value / 625
             (0x126C, "u"),  # total fuel quantity weight, pounds
+            (0x30C0, "F"),  # TOTAL WEIGHT, FLOAT64 pounds (FSUIPC7 status doc 0.7.1)
+            (0x30C8, "F"),  # MAX GROSS WEIGHT, FLOAT64 pounds (FSUIPC7 status doc 0.7.1)
             (0x0E90, "H"),  # ambient wind speed, knots
             (0x0E92, "H"),  # ambient wind direction * 360 / 65536
             (0x0366, "H"),  # sim on ground, 0 airborne / 1 ground
@@ -467,7 +485,7 @@ def _read_fsuipc_unlocked() -> dict[str, Any]:
         (
             lat_raw, lon_raw, plane_alt_raw, indicated_alt_raw, altitude_unit_raw, gps_altitude_m,
             radio_alt_raw, gs_raw, ias_raw, tas_raw, mach_raw, vs_raw,
-            hdg_raw, pitch_raw, bank_raw, g_raw, fuel_lb_raw, wind_speed_raw,
+            hdg_raw, pitch_raw, bank_raw, g_raw, fuel_lb_raw, gross_weight_raw, max_gross_weight_raw, wind_speed_raw,
             wind_dir_raw, ground_raw, rate_raw, pause_raw, slew_raw,
             sim_elapsed_raw, position_update_raw, loading_raw, menu_raw, parking_raw,
             eng1_raw, eng2_raw, ap_master_raw, ap_nav_raw, ap_hdg_lock_raw,
@@ -496,6 +514,8 @@ def _read_fsuipc_unlocked() -> dict[str, Any]:
             "0x02B8_tas_raw": tas_raw,
             "0x11C6_mach_raw": mach_raw,
             "0x02C8_vertical_speed_raw": vs_raw,
+            "0x30C0_gross_weight_lb_raw": gross_weight_raw,
+            "0x30C8_max_gross_weight_lb_raw": max_gross_weight_raw,
             "0x0580_heading_raw": hdg_raw,
             "0x0578_pitch_raw": pitch_raw,
             "0x057C_bank_raw": bank_raw,
@@ -643,19 +663,21 @@ def _read_fsuipc_unlocked() -> dict[str, Any]:
         ap_selected_mach = (float(ap_mach_raw) / 65536.0) if ap_mach_raw is not None else None
         ap_selected_vs_fpm = float(ap_vs_raw) if ap_vs_raw is not None else None
         # Standard FSUIPC AP/FCU offsets are not complete for every complex
-        # aircraft. Never present default zeroes as confirmed selected targets
-        # while airborne, because that made Flight Watch look broken in Fenix.
-        if airborne_like:
-            if ap_selected_alt_ft is not None and ap_selected_alt_ft <= 100.0:
-                ap_selected_alt_ft = None
-            if not int(ap_hdg_lock_raw or 0) and ap_selected_heading_deg is not None and abs(ap_selected_heading_deg) < 0.01:
-                ap_selected_heading_deg = None
-            if not int(ap_spd_lock_raw or 0) and ap_selected_speed_kts is not None and ap_selected_speed_kts <= 1.0:
-                ap_selected_speed_kts = None
-            if not int(ap_mach_lock_raw or 0) and ap_selected_mach is not None and ap_selected_mach <= 0.001:
-                ap_selected_mach = None
-            if not int(ap_vs_lock_raw or 0) and ap_selected_vs_fpm is not None and abs(ap_selected_vs_fpm) < 1.0:
-                ap_selected_vs_fpm = None
+        # aircraft. Never present default zeroes as confirmed selected targets:
+        # a raw 0 on an unset FCU field (or while the FSUIPC/SimConnect sources
+        # alternate) made Flight Watch show 0/flapping values (v0.25.72, #15).
+        # A value is kept only when the AP lock bit proves it is a real target
+        # or when it is non-zero.
+        if ap_selected_alt_ft is not None and ap_selected_alt_ft <= 100.0:
+            ap_selected_alt_ft = None
+        if not int(ap_hdg_lock_raw or 0) and ap_selected_heading_deg is not None and abs(ap_selected_heading_deg) < 0.01:
+            ap_selected_heading_deg = None
+        if not int(ap_spd_lock_raw or 0) and ap_selected_speed_kts is not None and ap_selected_speed_kts <= 1.0:
+            ap_selected_speed_kts = None
+        if not int(ap_mach_lock_raw or 0) and ap_selected_mach is not None and ap_selected_mach <= 0.001:
+            ap_selected_mach = None
+        if not int(ap_vs_lock_raw or 0) and ap_selected_vs_fpm is not None and abs(ap_selected_vs_fpm) < 1.0:
+            ap_selected_vs_fpm = None
         result = {
             "ok": -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0,
             "lat": lat,
@@ -680,6 +702,8 @@ def _read_fsuipc_unlocked() -> dict[str, Any]:
             "bank_deg": -float(bank_raw) * 360.0 / (65536.0 ** 2),
             "g_force": float(g_raw) / 625.0,
             "fuel_total_lb": max(0.0, float(fuel_lb_raw)),
+            "gross_weight_lb": _finite_weight_lb(gross_weight_raw),
+            "max_gross_weight_lb": _finite_weight_lb(max_gross_weight_raw),
             "engine_count": engine_count,
             "fuel_flow_pph": sum(v for v in (engine_1_ff, engine_2_ff, engine_3_ff, engine_4_ff)[:engine_count] if v is not None) if any(v is not None for v in (engine_1_ff, engine_2_ff, engine_3_ff, engine_4_ff)[:engine_count]) else None,
             "engine_n1_percent": max([v for v in (engine_1_n1, engine_2_n1, engine_3_n1, engine_4_n1)[:engine_count] if v is not None], default=None),
@@ -1237,6 +1261,16 @@ def start_telemetry_engine() -> None:
 def shutdown_telemetry_engine() -> None:
     _RECOVERY_STOP.set()
     _RECOVERY_WAKE.set()
+    # v0.25.68: close the shared SimConnect session so its dispatch thread
+    # stops polling during app teardown. Without this the wrapper floods
+    # ``OS error: WinError 0xc00000b0`` and uvicorn cannot exit cleanly,
+    # forcing the launcher's 5 s force-kill on every reload.
+    try:
+        from .simconnect_position import close_session
+
+        close_session()
+    except Exception:
+        pass
 
 def reselect_telemetry(reason: str = "manual telemetry reselection") -> dict[str, Any]:
     """Re-test FSUIPC first without blocking normal module telemetry reads."""

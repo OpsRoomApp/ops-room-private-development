@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModelInfo version="1.1" guid="{0D7EA17E-DB0E-57A8-8DE3-90D08DCBC1C2}">
+	<LODS>
+		<LOD MinSize="30" ModelFile="X_MARKER_TAXIWAY_LOD00.gltf"/>
+	</LODS>
+</ModelInfo>
+

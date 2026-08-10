@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModelInfo version="1.1" guid="{1D4F0550-077F-51A2-8083-FCDB57BD5630}">
+	<LODS>
+		<LOD MinSize="30" ModelFile="BARRIER_LOW_ORANGE_LOD00.gltf"/>
+	</LODS>
+</ModelInfo>
+

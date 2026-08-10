@@ -158,6 +158,67 @@ def runway_by_name(airport_ident: str | None, runway_name: str | None) -> dict[s
     return None
 
 
+def runway_full(airport_ident: str | None, runway_name: str | None) -> dict[str, Any] | None:
+    """Return the full runway record (both ends + centerline) for a closed runway.
+
+    Matches on either end name (``09L`` or ``27R`` for ``09L/27R``) and returns
+    a dict with ``runway`` (canonical ``09L/27R``), ``length_ft``, ``width_ft``
+    and both ends under ``primary`` / ``secondary`` (each with ``name``,
+    ``lat``, ``lon``, ``heading_deg``, ``elevation_ft``) across both the
+    legacy and current packaged navdata schemas. ``None`` when the runway is
+    not in navdata.
+    """
+    target = str(runway_name or "").upper().replace("RW", "").strip()
+    if not target:
+        return None
+    for row in runway_candidates(airport_ident):
+        if "name_a" in row or "name_b" in row:
+            primary_name = str(row.get("name_a") or "").upper()
+            secondary_name = str(row.get("name_b") or "").upper()
+        else:
+            primary_name = str(row.get("primary_end_name") or "").upper()
+            secondary_name = str(row.get("secondary_end_name") or "").upper()
+        if target not in (primary_name, secondary_name):
+            continue
+        length = _num(row.get("length_ft"))
+        width = _num(row.get("width_ft"))
+        if "name_a" in row or "name_b" in row:
+            primary = {
+                "name": primary_name, "lat": row.get("lat_a"), "lon": row.get("lon_a"),
+                "heading_deg": _num(row.get("heading_true")),
+                "elevation_ft": row.get("elev_a_ft"),
+            }
+            hdg_b = _num(row.get("heading_true"))
+            secondary = {
+                "name": secondary_name, "lat": row.get("lat_b"), "lon": row.get("lon_b"),
+                "heading_deg": ((hdg_b + 180.0) % 360.0) if hdg_b is not None else None,
+                "elevation_ft": row.get("elev_b_ft"),
+            }
+        else:
+            primary = {
+                "name": primary_name, "lat": row.get("primary_lat"), "lon": row.get("primary_lon"),
+                "heading_deg": _num(row.get("primary_heading_deg") or row.get("heading_deg")),
+                "elevation_ft": row.get("altitude_ft"),
+            }
+            hdg_b = _num(row.get("secondary_heading_deg"))
+            if hdg_b is None and row.get("heading_deg") is not None:
+                hdg_b = (float(row.get("heading_deg") or 0.0) + 180.0) % 360.0
+            secondary = {
+                "name": secondary_name, "lat": row.get("secondary_lat"), "lon": row.get("secondary_lon"),
+                "heading_deg": hdg_b,
+                "elevation_ft": row.get("altitude_ft"),
+            }
+        if primary.get("lat") is None or primary.get("lon") is None or secondary.get("lat") is None or secondary.get("lon") is None:
+            return None
+        return {
+            "runway": f"{primary_name}/{secondary_name}" if primary_name and secondary_name else target,
+            "airport_ident": str(airport_ident or "").upper(),
+            "length_ft": length, "width_ft": width,
+            "primary": primary, "secondary": secondary,
+        }
+    return None
+
+
 def nearest_runway_end(lat: float, lon: float, airport_ident: str | None = None, track_deg: float | None = None, max_nm: float = 15.0) -> dict[str, Any] | None:
     con = _connect()
     if con is None:

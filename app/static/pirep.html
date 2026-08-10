@@ -7,7 +7,7 @@
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="/static/favicon-32.png" sizes="32x32" />
   <title>OPS ROOM PIREP</title>
-  <link rel="stylesheet" href="/static/pirep.css?v=0-25-63">
+  <link rel="stylesheet" href="/static/pirep.css?v=0-25-73">
 </head>
 <body>
   <header class="topbar">
@@ -32,6 +32,7 @@
     <a href="#approach">APPROACH</a>
     <a href="#landing">LANDING</a>
     <a href="#finance">FINANCE</a>
+    <a href="#ofpCompletion">OFP COMPLETION</a>
     <a href="#events">EVENTS</a>
   </nav>
 
@@ -130,6 +131,11 @@
         <div id="financeReport" class="metric-grid finance-report"><div class="empty">No finance statement was stored for this PIREP.</div></div>
       </section>
 
+      <section id="ofpCompletion" class="panel">
+        <div class="section-head"><div><span class="eyebrow">PLANNED VERSUS ACTUAL COMPARISON</span><h2>OFP COMPLETION</h2></div></div>
+        <div id="ofpCompletionReport" class="ofp-completion-report"><div class="empty">Loading the OFP completion comparison…</div></div>
+      </section>
+
       <section id="events" class="panel">
         <div class="section-head"><div><span class="eyebrow">EVENTS, FLAGS AND NOTES</span><h2>FLIGHT REVIEW</h2></div></div>
         <div class="review-grid">
@@ -140,7 +146,7 @@
       </section>
 
       <footer class="report-footer">
-        <span>OPS ROOM 0.25.63</span>
+        <span>OPS ROOM 0.25.73</span>
         <span id="reportGenerated">OPS ROOM PIREP</span>
         <span>OPS ROOM</span>
       </footer>
@@ -150,6 +156,6 @@
     <form method="dialog"><h2 style="margin-top:0">OPS ROOM SCORING RULES</h2><p>OPS ROOM scores the recorded flight only; raw telemetry is retained for scoring.</p><ul><li>Departure: takeoff roll, runway centreline, liftoff attitude and initial climb.</li><li>Enroute: recorded deviations, simulation integrity and fuel/distance consistency.</li><li>Approach: 1000 ft/500 ft stability gates, lateral deviation and glidepath deviation.</li><li>Landing: touchdown rate, touchdown zone, centreline deviation and rollout.</li><li>Bounces: minor ?2, moderate ?5, severe/multiple ?8, capped at ?12. Small 1-2 ft radio-altimeter noise is ignored.</li></ul><button class="button" value="close">CLOSE</button></form>
   </dialog>
   <style>dialog::backdrop{background:rgba(0,0,0,.68)}dialog li{margin:.6em 0;color:#c7cdd1}dialog p{color:#b4bcc1;line-height:1.5}</style>
-  <script src="/static/pirep.js?v=0-25-63"></script>
+  <script src="/static/pirep.js?v=0-25-73"></script>
 </body>
 </html>

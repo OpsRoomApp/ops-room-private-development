@@ -7,8 +7,8 @@ from statistics import median
 from typing import Any
 
 from . import navdata
-from . import notam_client  # v0.25.63: PIREP NOTAM conditions footnote
-from . import notam_translate  # v0.25.63: plain-English expansion
+from . import notam_client  # v0.25.65: PIREP NOTAM conditions footnote
+from . import notam_translate  # v0.25.65: plain-English expansion
 
 _LOG = logging.getLogger("opsroom.pirep")
 
@@ -17,8 +17,14 @@ _LOG = logging.getLogger("opsroom.pirep")
 # one-off stall blip surrounded by clean data. Such short runs are bridged
 # (kept) so PIREP phases do not lose contiguous data; only runs long enough to
 # represent a real outage are discarded.
-_GAP_BRIDGE_MAX_SAMPLES = 3
-_GAP_BRIDGE_MAX_SECONDS = 5.0
+# v0.25.72 (#21): bridge short sample gaps. A degraded SimConnect session
+# (#9) made the recorder drop most samples, leaving ~1 sample per 20 s for
+# long stretches — the 5 s / 3-sample bridge then split every approach into
+# fragments and produced "insufficient telemetry". 60 s / 6 samples tolerates
+# that damage while the physical-plausibility filters still reject absurd
+# values.
+_GAP_BRIDGE_MAX_SAMPLES = 6
+_GAP_BRIDGE_MAX_SECONDS = 60.0
 
 
 def _is_gap_sample(row: dict[str, Any]) -> bool:
@@ -247,7 +253,7 @@ def _sample_time(row: dict[str, Any]) -> float | None:
 
 def _pirep_notam_footnote(dep_airport: str, arr_airport: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Active-window NOTAMs for departure/arrival, persisted with the PIREP
-    record as a small 'conditions' section (v0.25.63).
+    record as a small 'conditions' section (v0.25.65).
 
     Uses the flight's actual recorded time window so a NOTAM cancelled after
     the flight is still included (history), and one that expired before the
@@ -424,7 +430,10 @@ def _last_continuous_final(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 reset = True
             if row_time is not None and previous_time is not None:
                 dt = row_time - previous_time
-                if dt <= 0.0 or dt > 15.0:
+                # v0.25.72 (#21): tolerate recorder gaps up to 60 s (the #9
+                # SimConnect flood dropped samples), so a damaged stream still
+                # yields a continuous-enough final approach.
+                if dt <= 0.0 or dt > 60.0:
                     reset = True
         if reset and current:
             segments.append(current)
@@ -663,7 +672,7 @@ def analyse_pirep(meta: dict[str, Any], samples: list[dict[str, Any]]) -> dict[s
     arr_airport = str(flight_meta.get("destination") or ((meta.get("airports") or {}).get("landing") or {}).get("icao") or "").upper()
     dep_rwy_name = str(flight_meta.get("departure_runway") or "").upper()
     arr_rwy_name = str(flight_meta.get("arrival_runway") or "").upper()
-    # v0.25.63: NOTAM conditions footnote for the PIREP record (dep/arr only).
+    # v0.25.65: NOTAM conditions footnote for the PIREP record (dep/arr only).
     notam_footnote = _pirep_notam_footnote(dep_airport, arr_airport, rows)
     liftoff = rows[takeoff_idx]
     dep_nav, dep_geometry_source = _select_runway_end(dep_airport, dep_rwy_name, liftoff, departure_heading, max_nm=8.0)
