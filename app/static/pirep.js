@@ -427,7 +427,7 @@ function setupInteractiveCharts(){
     if(card.dataset.interactiveReady)return;
     const wrap=card.querySelector('.canvas-wrap'),canvas=card.querySelector('canvas');if(!wrap||!canvas||!canvas._opsChartRows)return;
     card.dataset.interactiveReady='1';let drag=null;
-    const tools=document.createElement('div');tools.className='chart-tools';tools.innerHTML='<button type="button" data-zoom="in">ZOOM +</button><button type="button" data-zoom="out">ZOOM ?</button><button type="button" data-zoom="reset">RESET</button>';card.appendChild(tools);
+    const tools=document.createElement('div');tools.className='chart-tools';tools.innerHTML='<button type="button" data-zoom="in">ZOOM +</button><button type="button" data-zoom="out">ZOOM −</button><button type="button" data-zoom="reset">RESET</button>';card.appendChild(tools);
     tools.addEventListener('click',event=>{const button=event.target.closest('button');if(!button)return;if(button.dataset.zoom==='reset')resetChartZoom(canvas);else setChartZoomDomain(canvas,.5,button.dataset.zoom==='in',.5)});
     wrap.addEventListener('wheel',event=>{event.preventDefault();const rect=wrap.getBoundingClientRect(),pctX=(event.clientX-rect.left)/Math.max(1,rect.width),pctY=(event.clientY-rect.top)/Math.max(1,rect.height);setChartZoomDomain(canvas,pctX,event.deltaY<0,pctY)},{passive:false});
     wrap.addEventListener('pointerdown',event=>{const data=canvas._opsChartRows,state=chartZoomState[canvas.id];if(!data||!state)return;drag={x:event.clientX,y:event.clientY,domain:{...state},full:data.fullXExt,fullY:data.fullYExt,route2d:!!data.route2d};wrap.setPointerCapture?.(event.pointerId)});

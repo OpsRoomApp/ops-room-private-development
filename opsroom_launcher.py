@@ -186,8 +186,12 @@ class ServerThread(threading.Thread):
                 # (timeout_graceful_shutdown defaults to None), the launcher
                 # force-kills after 5 s, and the whole app dies mid-session
                 # ("did not exit cleanly" + stale browser tabs stuck on
-                # SYN_SENT). 3 s is safely under the 5 s launcher ceiling.
-                timeout_graceful_shutdown=3.0,
+                # SYN_SENT). 1.0 s is enough for in-flight UI polls (they just
+                # reconnect after restart) and leaves the full remaining 4 s
+                # of the 5 s launcher ceiling for the app's own shutdown
+                # handler (telemetry writer, recorder, announcements), so a
+                # clean exit no longer races the force-kill.
+                timeout_graceful_shutdown=1.0,
             )
             self.server = uvicorn.Server(config)
             self.server.run()
@@ -361,7 +365,7 @@ def main() -> int:
     url = f"http://{LOCAL_HOST}:{port}"
 
     print("\n" + "=" * 72)
-    print(f"Starting OPS ROOM 0.25.73 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Starting OPS ROOM 0.25.75 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Log file: {log_path}")
     print(f"Server bind: {'0.0.0.0' if lan_access else 'localhost'}:{port}")
 

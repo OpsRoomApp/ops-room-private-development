@@ -72,7 +72,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "black_box_enabled": True,
         "black_box_auto_record": True,
         "black_box_max_hz": 30,
-        "black_box_simconnect_max_hz": 10,
+        "black_box_simconnect_max_hz": 30,
         "black_box_replay_fps": 30,
         "aip_charts_enabled": True,
         "openaip_map_enabled": True,
@@ -98,7 +98,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "marker_altitude_gate_ft": 15000.0,
     },
     "server": {
-        "lan_access": False,
+        "lan_access": True,
         "port": 8080,
         "device_security_enabled": False,
         "pairing_code": "",
@@ -175,6 +175,32 @@ def _merge(default: Any, incoming: Any) -> Any:
     return incoming if incoming is not None else deepcopy(default)
 
 
+def _migrate_lan_access(normalized: dict[str, Any]) -> bool:
+    """#39: LAN / tablet access defaults ON, including first-time setup.
+
+    Flips an old stored ``False`` to ``True`` unless the user has explicitly
+    chosen OFF through the host setup UI (recorded as ``lan_access_user_off``).
+    Returns True when flipped.
+
+    The earlier ``lan_access_migrated`` marker was flawed: it was set in memory
+    during ``load_settings`` and could then be persisted alongside a ``False``
+    value, permanently disabling the flip (verified live — settings.json held
+    ``lan_access: False`` with ``lan_access_migrated: True`` and the checkbox
+    stayed disabled forever). The marker is now written only together with the
+    flipped ``True`` value, and a ``False`` value is always re-flipped unless
+    the user explicitly saved OFF.
+    """
+    server = normalized.setdefault("server", {})
+    if server.get("lan_access_user_off") is True:
+        server.pop("lan_access_migrated", None)
+        return False
+    if server.get("lan_access") is False:
+        server["lan_access"] = True
+        server["lan_access_migrated"] = True
+        return True
+    return False
+
+
 def load_settings() -> dict[str, Any]:
     global _SETTINGS_CACHE, _SETTINGS_CACHE_TIME
     now = time.monotonic()
@@ -189,6 +215,28 @@ def load_settings() -> dict[str, Any]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         result = _merge(DEFAULT_SETTINGS, raw)
+        # #39: LAN / tablet access defaults ON. Apply the migration on every
+        # load and persist the flipped value immediately, so a stale file that
+        # already holds the old marker can never lock the checkbox off again.
+        # (Verified live: settings.json had lan_access False + migrated True.)
+        if _migrate_lan_access(result):
+            try:
+                target = app_data_dir() / SETTINGS_FILE
+                target.parent.mkdir(parents=True, exist_ok=True)
+                fd, temp_name = tempfile.mkstemp(prefix="settings-", suffix=".tmp", dir=str(target.parent))
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                        json.dump(result, handle, indent=2, ensure_ascii=False)
+                        handle.write("\n")
+                    os.replace(temp_name, target)
+                finally:
+                    try:
+                        if os.path.exists(temp_name):
+                            os.unlink(temp_name)
+                    except OSError:
+                        pass
+            except Exception:
+                pass
         _SETTINGS_CACHE = result
         _SETTINGS_CACHE_TIME = now
         return result
@@ -207,7 +255,17 @@ def save_settings(settings: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         port = 8080
     normalized["server"]["port"] = max(1024, min(port, 65535))
-    normalized["server"]["lan_access"] = bool(normalized["server"].get("lan_access", False))
+    # #39: LAN / tablet access defaults ON, including first-time setup. A save
+    # from the host setup UI is the only way an explicit OFF is recorded
+    # (lan_access_user_off) — everything else keeps the ON default. This also
+    # heals the old poisoned state (lan_access False + migrated marker) so the
+    # checkbox can never be permanently locked off again.
+    if isinstance(settings.get("server"), dict) and "lan_access" in settings["server"]:
+        # The UI sends the checkbox state on every save; a deliberate OFF is
+        # when the caller explicitly passed lan_access False.
+        normalized["server"]["lan_access_user_off"] = not bool(settings["server"].get("lan_access"))
+    normalized["server"]["lan_access"] = bool(normalized["server"].get("lan_access", True))
+    _migrate_lan_access(normalized)
     normalized["server"]["device_security_enabled"] = bool(normalized["server"].get("device_security_enabled", False))
     pairing = "".join(ch for ch in str(normalized["server"].get("pairing_code", "") or "") if ch.isdigit())[:6]
     normalized["server"]["pairing_code"] = pairing

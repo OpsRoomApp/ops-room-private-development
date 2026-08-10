@@ -144,8 +144,8 @@ _A320_FAMILY_ICAOS = {"A20N", "A318", "A319", "A320", "A320CEO", "A321", "A21N"}
 # Aircraft that use the komed3 B738 tables (B738 exact; the rest of the 737
 # family scales its weight into the table range).
 _B738_FAMILY_ICAOS = {"B738", "B736", "B737", "BBJ1", "BBJ2", "B739"}
-# Aircraft that use the iniBuilds A350 FCOM-derived tables (A359 exact with
-# the -900 flex correction; A35X is the -1000; both share the same tables).
+# Aircraft that use the A350 FCOM-derived tables (A359 exact with the -900
+# flex correction; A35X is the -1000; both share the same tables).
 _A350_FAMILY_ICAOS = {"A359", "A35X", "A350"}
 
 _FLAP_CONF = {"1+F": 1, "2": 2, "3": 3}
@@ -460,7 +460,7 @@ def _takeoff_tier1_a350(profile: dict[str, Any], weight: float, runway_length_m:
         "mtow": round(min(result.get("mtow") or 0, mtow)),
         "flex": result.get("flex"),
         "limiting": None,
-        "source": "A350 FCOM-derived tables (iniBuilds)",
+        "source": "A350 FCOM-derived tables",
     }
 
 

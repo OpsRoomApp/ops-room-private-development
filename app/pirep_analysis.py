@@ -908,7 +908,7 @@ def analyse_pirep(meta: dict[str, Any], samples: list[dict[str, Any]]) -> dict[s
     overall = max(0, min(100, sum(breakdown.values())))
     grade = "EXCELLENT" if overall >= 92 else "VERY GOOD" if overall >= 84 else "GOOD" if overall >= 74 else "ACCEPTABLE" if overall >= 62 else "REVIEW REQUIRED"
 
-    return {
+    result = {
         "ok": True,
         "version": ANALYSIS_VERSION,
         "geometry_source": geometry_source,
@@ -995,15 +995,15 @@ def analyse_pirep(meta: dict[str, Any], samples: list[dict[str, Any]]) -> dict[s
         },
         "data_quality": data_quality,
         "score": {"overall": overall, "grade": grade, "breakdown": breakdown, "bounce_penalty": bounce_penalty, "model": "OPS ROOM PIREP PRO V1"},
-        # v0.25.9: passenger satisfaction hook runs INSIDE analyse_pirep so
-        # `meta`, `result`, `samples`, and the v0259 module-level context all
-        # resolve correctly. Weights resolve in this precedence:
-        #   1. meta["passenger_satisfaction_weights"] (per-flight override)
-        #   2. load_settings()["integrations"]["passenger_satisfaction"] (Settings Store)
-        #   3. passenger_satisfaction.DEFAULT_WEIGHTS
-        # Idempotent and tolerant of missing telemetry fields.
-        "passenger_satisfaction": _opsroom_pirep_compute_satisfaction(meta, result),
     }
+    # v0.25.9: passenger satisfaction hook runs INSIDE analyse_pirep so
+    # `meta`, `result`, `samples`, and the v0259 module-level context all
+    # resolve correctly. Weights resolve in this precedence:
+    #   1. meta["passenger_satisfaction_weights"] (per-flight override)
+    #   2. load_settings()["integrations"]["passenger_satisfaction"] (Settings Store)
+    #   3. passenger_satisfaction.DEFAULT_WEIGHTS
+    # Idempotent and tolerant of missing telemetry fields.
+    result["passenger_satisfaction"] = _opsroom_pirep_compute_satisfaction(meta, result)
     return result
 
 

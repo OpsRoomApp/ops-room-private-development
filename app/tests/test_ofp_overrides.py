@@ -401,7 +401,7 @@ def test_exports_attach_manual_overrides() -> None:
     store.set_overrides("FLT-EXPORT-1", {"times:out": "1017", "weights:zfw": 108.7})
 
     from app.briefing_data import _app_version as _bd_version
-    _expected_version = str(_bd_version() or "0.25.73")
+    _expected_version = str(_bd_version() or "0.25.75")
     payload = json.loads(logbook.export_json())
     check("export_json stamps real app version", str(payload.get("version")) == _expected_version, str(payload.get("version")))
     entry = next((e for e in payload["entries"] if e.get("id") == "FLT-EXPORT-1"), None)

@@ -1,8 +1,85 @@
-# OPS ROOM 0.25.72
+# OPS ROOM 0.25.75
 
-OPS ROOM 0.25.72 is a pre-release hardening pass over the closure-marker,
-live-NOTAM and shutdown paths, with the full release identity synced to
-0.25.72 across the app, the MSFS Community package and the build chain.
+## 0.25.75: PIREP analysis fixed, telemetry cadence hardened, and the pending fix list closed
+
+- **Every full PIREP analysis was crashing — now fixed.** A passenger-satisfaction hook referenced a variable that was never assigned, so the analysis died on the final line of every flight and the report showed "insufficient telemetry" for departure, approach and landing even when the recording was complete. The analysis now completes: runway profiles, stability gates, touchdown metrics, score breakdown and passenger satisfaction all render, and live-verified against a completed flight.
+- **The writer now sustains the promised cadence.** Fenix L:Var enrichment ran inside the telemetry writer tick, and each ~13-LVar SimConnect batch read took 1.5-2.5 s — collapsing takeoff recording to ~3 Hz with an 8-second hole at rotation. A dedicated low-frequency enricher thread now owns the blocking SimConnect reads; the writer only merges cached values, restoring steady 30/20/10 Hz by phase.
+- **Weights fill on Fenix flights.** The FSUIPC weight offsets read garbage on some add-ons and were rejected, leaving Live-OFP and logbook TOW/LDW blank. When the FSUIPC weight is missing, the writer now merges SimConnect TOTAL_WEIGHT (kept fresh by the same enricher thread).
+- **Pushback is no longer mislabeled as taxi-out.** Movement before off-blocks is now classified as pushback regardless of which pushback detector is available (Fenix exposes no body velocity and mirrors heading into track), off-blocks still records at first movement, and taxi-out only begins after genuine forward taxi is proven. Mirrored in Flight Watch.
+- **Flights can no longer hang in "Arrival services pending".** If GSX arrival latches are lost (e.g. an app restart mid-arrival) or arrival services never run, the flight now auto-finalizes five minutes after parking with engines off and the parking brake set.
+- **Printer settings persist again.** The printer panel called a save helper that was never defined, so every toggle threw an error and nothing was saved; the debounced helper now writes the printing settings.
+- **Printer list works in the packaged build.** The frozen app could not load winspool.drv for enumeration; it now retries an explicit DLL load and falls back to PowerShell Get-Printer.
+- **Charts from every AIP supplier load.** Chart files were downloaded with no browser user-agent, so UA-blocking CAA servers (e.g. Jordan's carc.gov.jo) refused with HTTP 451 and the app mislabeled it 404. Downloads now send a browser user-agent.
+- **GSX operator selection never gives up needlessly.** The priority is now airline match, then [GSX choice], then any available operator — instead of leaving the menu for the pilot whenever no GSX-choice label exists.
+- **LAN / tablet access is on by default.** "Allow LAN / Tablet Access" now defaults to enabled for fresh installs and migrates once for existing installs, so the tablet/QR path works without a manual toggle-and-restart.
+- **No stray question marks in the PIREP.** The route heading, chart zoom buttons, scoring-rules page and bounce-deduction text all render proper arrow, minus and greater-or-equal glyphs instead of literal "?" characters.
+
+## 0.25.74: Single-writer telemetry, performance auto-sync and fast reload
+
+- **Single-writer telemetry bus (Stage 2).** One telemetry writer reads the
+  simulator at a bounded cadence and publishes complete snapshots to a shared
+  in-memory ring; Flight Watch, Black Box, RAAS, announcements and PIREP all
+  read only that buffer. FSUIPC stays the healthy fast path (one batched read
+  per sample — no stutter), SimConnect falls back through a new batched
+  reader, and when both sources die the UI surfaces STALE / TELEMETRY LOST
+  instead of replaying old data. Black Box data now matches Flight Watch by
+  construction, and the recorder captures the full 30 Hz takeoff-roll /
+  approach cadence.
+- **Performance page auto-syncs everything except CG.** Opening the tab now
+  fills runway, weather and weight from the best live source: the SimBrief
+  plan, a live METAR for the active station (with a LIVE METAR badge and OFP
+  fallback), and the live simulator weight (gross + derived ZFW) with a note
+  when it deviates from the plan. The form is grouped into AIRCRAFT /
+  WEIGHTS, AIRPORT / RUNWAY and WEATHER sections, weights follow the Host
+  unit preference (KG or LB), and the only field left for the pilot — ZFW CG
+  % MAC — is highlighted with an accent border.
+- **No more "?" anywhere in the UI.** The remaining literal `?` route
+  separators in the logbook finance cards, the finance ledger, the flight
+  plan summary and the PDF export are now proper arrows.
+- **Printer previews work again.** The Settings preview dropdown 400'd on
+  every kind because the endpoint used an unimported helper; the real
+  formatters now run and generate CPDLC, LIVE OFP, PRINTER TEST, GSX RECEIPT
+  and custom previews byte-identical to what prints.
+- **Reloads no longer stall for five seconds.** The graceful-shutdown budget
+  was rebalanced, the SimConnect session teardown no longer joins an
+  unbounded dispatch thread, the writer stops before the session closes, and
+  the shutdown handler logs per-step timings so any future stall names its
+  cause.
+- **NOTAM layer visible on the Live Map.** Toggling NOTAMS now flips the
+  layer visible (it was only ever set once at startup), so markers render and
+  clicks work.
+
+## 0.25.73: Performance calculator, PIREP/OFP fixes and the confirm() sweep
+
+- **First-party performance calculator for the whole fleet.** The Performance
+  tab no longer depends on SimBrief TLR. A new tiered engine
+  (`app/perf_engine.py`) ports the FlyByWire A32NX limiting-factor model
+  (A320neo, exact) and the komed3 B737-800 tables (B738, exact), scales them
+  across every other A32x/737 variant, and falls back to the PERF2601 curves
+  for the rest of the dropdown — V1/VR/V2 or VLS/VREF, flap recommendation,
+  flex/assumed temp, runway-required distance, pitch trim, takeoff and
+  landing modes. SimBrief auto-fills ZFW/ZFWCG/runway/wind/temp/QNH.
+- **Full PIREP is back (critical fix).** The telemetry endpoint 500'd on
+  every flight because the analysis-cache prune rebound the module-level
+  name; it now prunes in place and the report builds.
+- **No more "?" in the UI.** Literal `?` separators in PIREP and OBS were
+  replaced with proper arrows, and PIREP/OBS/host surfaces gained
+  `Segoe UI Symbol` / `Segoe UI Emoji` font fallbacks.
+- **NOTAM layer on the Live Map.** The map now falls through an empty
+  database answer to the live FAA NMS proxy and then to a per-airport walk
+  with airport-index coordinates, so NOTAMs render and are clickable.
+- **Live OFP weights fill on every provider.** The FSUIPC read now carries
+  the standard total/max-gross weight offsets, and a TTL-guarded Fenix
+  loadsheet snapshot publishes PAX/BAG-CARGO even before GSX automation
+  engages — TOW, LDW, ZFW, PAX and cargo all populate.
+- **Receipt preview dropdown.** Settings → Thermal/POS printer lets you
+  preview every wired kind (CPDLC, LIVE OFP, PRINTER TEST, GSX RECEIPT)
+  through the real formatters, byte-identical to what prints.
+- **confirm() sweep complete.** WebView2 silently blocks native
+  `window.confirm()`; every confirm-gated action now uses an in-app
+  `<dialog>` modal (delete record, scratchpad clears, finance reset, update
+  install, black box replay, streamer-mode warnings, bug-report send,
+  ChartFox disconnect, LAN device revoke).
 
 ## 0.25.72 (Release Candidate): RC hardening
 

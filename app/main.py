@@ -94,7 +94,7 @@ from .device_security import enabled as device_security_enabled, pairing_code as
 from .bug_report import public_status as bug_report_status, report_summary as bug_report_summary, create_diagnostics_zip as bug_report_create_zip, send_report as bug_report_send_report
 from .storage_maintenance import storage_status, clear_local_logs_cache
 from .updater import check_for_update, prepare_update, launch_prepared_update
-from .printer_client import list_printers as printer_list, print_receipt as printer_receipt, test_print as printer_test, status as printer_status, format_cpdlc_receipt as printer_format_cpdlc, generate_receipt_preview as printer_generate_preview, format_ofp_receipt as printer_format_ofp, format_gsx_receipt as printer_format_gsx
+from .printer_client import list_printers as printer_list, print_receipt as printer_receipt, test_print as printer_test, status as printer_status, format_cpdlc_receipt as printer_format_cpdlc, generate_receipt_preview as printer_generate_preview, format_ofp_receipt as printer_format_ofp, format_gsx_receipt as printer_format_gsx, _utc as _printer_utc
 from .logbook import (
     status as logbook_status, start_manual as logbook_start, finalize_active as logbook_finalize,
     discard_active as logbook_discard, force_discard_active as logbook_force_discard, update_entry as logbook_update, delete_entry as logbook_delete,
@@ -107,7 +107,7 @@ from .ofp_overrides import get_overrides, set_overrides, remove_override, clear_
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="OPS ROOM", version="0.25.73")
+app = FastAPI(title="OPS ROOM", version="0.25.75")
 app.include_router(realworld_router)
 app.include_router(realworld_debug_router)
 app.add_middleware(GZipMiddleware, minimum_size=512)
@@ -226,11 +226,26 @@ def _opsroom_startup_autofetch_ofp() -> None:
 
 @app.on_event("shutdown")
 def _opsroom_shutdown() -> None:
-    """Release background services when uvicorn/tray mode exits."""
+    """Release background services when uvicorn/tray mode exits.
+
+    Every step is bounded (the launcher force-kills the process after 5 s, of
+    which uvicorn's graceful connection drain already takes 1 s), so a stuck
+    subsystem can delay but never hang the reload. Timings are logged so a
+    future slow reload identifies the exact culprit.
+    """
+    import time as _shutdown_time
+
+    _steps: list[tuple[str, float]] = []
+    _shutdown_started = _shutdown_time.monotonic()
+
+    def _step(name: str) -> None:
+        _steps.append((name, _shutdown_time.monotonic() - _shutdown_started))
+
     try:
         shutdown_telemetry_engine()
     except Exception:
         pass
+    _step("telemetry")
     # v0.25.68: close the SimConnect sessions (telemetry + closure markers)
     # so their dispatch threads stop polling during teardown -- otherwise the
     # wrapper floods ``OS error: WinError 0xc00000b0`` and uvicorn hangs until
@@ -241,6 +256,7 @@ def _opsroom_shutdown() -> None:
         _close_sc_session()
     except Exception:
         pass
+    _step("simconnect")
     # v0.25.71: closure-marker SimConnect teardown is shelved with the rest
     # of the in-sim injection backend (no session is ever opened now).
     # try:
@@ -253,38 +269,52 @@ def _opsroom_shutdown() -> None:
         black_box_replay_shutdown()
     except Exception:
         pass
+    _step("replay")
     try:
         black_box_shutdown()
     except Exception:
         pass
+    _step("blackbox")
     try:
         pmdg777_sdk_shutdown()
     except Exception:
         pass
+    _step("pmdg")
     try:
         announcement_shutdown()
     except Exception:
         pass
+    _step("announcements")
     try:
         hoppie_stop()
     except Exception:
         pass
+    _step("hoppie")
     try:
         gsx_stop_automation()
     except Exception:
         pass
+    _step("gsx")
     try:
         camera_bridge_stop()
     except Exception:
         pass
+    _step("camera")
     try:
         native_bridge_stop()
     except Exception:
         pass
+    _step("native")
     try:
         raas_stop()
     except Exception:
         pass
+    _step("raas")
+    _LOGGER.info(
+        "OPS ROOM shutdown complete in %.2fs: %s",
+        _shutdown_time.monotonic() - _shutdown_started,
+        ", ".join(f"{name}={delta:.2f}" for name, delta in _steps),
+    )
 start_announcement_engine()
 start_logbook_engine()
 try:
@@ -722,7 +752,7 @@ def printer_preview_endpoint(payload: dict | None, request: Request) -> dict:
                 "to": "EWG6107",
                 "type": "CLR",
                 "message": "EWG6107 CLEARED TO LKPR VIA TABET T180 ERZ VEMUT, CLIMB TO FL370, EXPECT RWY 25L. CONTACT 118.725 AFTER 5000FT.",
-                "time": _utc(),
+                "time": _printer_utc(),
             }
             lines = printer_format_cpdlc(sample, width=width)
             content = "\n".join(lines)
@@ -741,7 +771,7 @@ def printer_preview_endpoint(payload: dict | None, request: Request) -> dict:
                 "CPDLC messages will auto-print",
                 "when the feature is enabled.",
                 "",
-                f"Tested at: {_utc()}",
+                f"Tested at: {_printer_utc()}",
             ]
             content = "\n".join(lines)
         elif receipt_type == "gsx":
@@ -1634,7 +1664,7 @@ def blackbox_preferences_get() -> dict:
         "black_box_enabled": bool(integrations.get("black_box_enabled", True)),
         "black_box_auto_record": bool(integrations.get("black_box_auto_record", True)),
         "black_box_max_hz": int(integrations.get("black_box_max_hz") or 30),
-        "black_box_simconnect_max_hz": int(integrations.get("black_box_simconnect_max_hz") or 10),
+        "black_box_simconnect_max_hz": int(integrations.get("black_box_simconnect_max_hz") or 30),
         "black_box_replay_fps": int(integrations.get("black_box_replay_fps") or 30),
     }}
 
@@ -1874,7 +1904,7 @@ def blackbox_preferences_put(payload: dict) -> dict:
     for key in ("black_box_enabled", "black_box_auto_record"):
         if key in payload: integrations[key] = bool(payload[key])
     if "black_box_max_hz" in payload: integrations["black_box_max_hz"] = max(2, min(int(payload["black_box_max_hz"]), 30))
-    if "black_box_simconnect_max_hz" in payload: integrations["black_box_simconnect_max_hz"] = max(2, min(int(payload["black_box_simconnect_max_hz"]), 20))
+    if "black_box_simconnect_max_hz" in payload: integrations["black_box_simconnect_max_hz"] = max(2, min(int(payload["black_box_simconnect_max_hz"]), 30))
     if "black_box_replay_fps" in payload: integrations["black_box_replay_fps"] = max(10, min(int(payload["black_box_replay_fps"]), 60))
     save_settings(current)
     return blackbox_preferences_get()
@@ -2867,7 +2897,7 @@ def server_qr(request: Request) -> Response:
 def health() -> dict:
     return {
         "ok": True,
-        "version": "0.25.73",
+        "version": "0.25.75",
         "product": "OPS ROOM",
         "refresh_seconds": CACHE_SECONDS,
         "simconnect": simconnect_diagnostics(),

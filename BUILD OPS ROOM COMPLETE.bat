@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
-title Build OPS ROOM 0.25.73 Public Release Complete Package
+title Build OPS ROOM 0.25.75 Public Release Complete Package
 
 echo ================================================================
-echo OPS ROOM 0.25.73 Public Release build
+echo OPS ROOM 0.25.75 Public Release build
 echo Windows app + restored external MSFS 2024 Camera Bridge EXE
 echo Native Charts/Camera WASM system activation is disabled by default
 echo ================================================================
@@ -29,7 +29,7 @@ if errorlevel 1 goto :fail
 
 if not defined OPSROOM_DIST_DIR set "OPSROOM_DIST_DIR=%~dp0dist"
 set "DIST_DIR=%OPSROOM_DIST_DIR%"
-set "OPSROOM_VERSION=0.25.73"
+set "OPSROOM_VERSION=0.25.75"
 
 if not exist "%DIST_DIR%\OPS ROOM\camera_bridge_2024" mkdir "%DIST_DIR%\OPS ROOM\camera_bridge_2024"
 copy /y "%OPSROOM_BUILD_ROOT%\camera_bridge\OPS ROOM Camera Bridge 2024.exe" "%DIST_DIR%\OPS ROOM\camera_bridge_2024\OPS ROOM Camera Bridge 2024.exe" >nul
@@ -63,17 +63,17 @@ echo Running successor static validation gate before packaging...
 "%VENV_PY%" tools\validate_v0256_public_release.py || goto :fail
 "%VENV_PY%" tools\verify_public_package.py --static-root "app\static" || goto :fail
 
-if exist "%DIST_DIR%\OPS_ROOM_v0_25_73_Public_Windows_x64.zip" del "%DIST_DIR%\OPS_ROOM_v0_25_73_Public_Windows_x64.zip"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -LiteralPath '%DIST_DIR%\OPS ROOM' -DestinationPath '%DIST_DIR%\OPS_ROOM_v0_25_73_Public_Windows_x64.zip' -Force -ErrorAction Stop" || goto :fail
+if exist "%DIST_DIR%\OPS_ROOM_v0_25_75_Public_Windows_x64.zip" del "%DIST_DIR%\OPS_ROOM_v0_25_75_Public_Windows_x64.zip"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -LiteralPath '%DIST_DIR%\OPS ROOM' -DestinationPath '%DIST_DIR%\OPS_ROOM_v0_25_75_Public_Windows_x64.zip' -Force -ErrorAction Stop" || goto :fail
 
-"%VENV_PY%" tools\write_update_manifest.py --version 0.25.73 --channel stable --zip "%DIST_DIR%\OPS_ROOM_v0_25_73_Public_Windows_x64.zip" --out "%DIST_DIR%\update.json" || goto :fail
+"%VENV_PY%" tools\write_update_manifest.py --version 0.25.75 --channel stable --zip "%DIST_DIR%\OPS_ROOM_v0_25_75_Public_Windows_x64.zip" --out "%DIST_DIR%\update.json" || goto :fail
 "%VENV_PY%" tools\validate_v0256_public_release.py --dist "%DIST_DIR%" || goto :fail
 
 echo.
 echo COMPLETE build ready:
 echo   %DIST_DIR%\OPS ROOM\OPS ROOM.exe
 echo   %DIST_DIR%\OPS ROOM\OPS ROOM Camera Bridge 2024.exe
-echo   %DIST_DIR%\OPS_ROOM_v0_25_73_Public_Windows_x64.zip
+echo   %DIST_DIR%\OPS_ROOM_v0_25_75_Public_Windows_x64.zip
 echo.
 echo Native WASM Charts/Camera is disabled by default in this build.
 echo.
@@ -119,6 +119,6 @@ exit /b 0
 
 :fail
 echo.
-echo OPS ROOM 0.25.73 Public Release complete build failed. Review the first ERROR above.
+echo OPS ROOM 0.25.75 Public Release complete build failed. Review the first ERROR above.
 pause
 exit /b 1

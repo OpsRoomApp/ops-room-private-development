@@ -26,7 +26,6 @@ import zlib
 
 from .settings_store import app_data_dir, load_settings
 from .telemetry_provider import read_telemetry
-from .simconnect_position import read_position
 from .replay_guard import activate as replay_guard_activate, release as replay_guard_release, is_active as replay_guard_active, status as replay_guard_status
 
 _SCHEMA_VERSION = 2
@@ -419,7 +418,7 @@ def start_recording(flight_id: str, meta: dict[str, Any] | None = None) -> dict[
 
 
 def stop_recording(reason: str = "TAXI IN") -> dict[str, Any]:
-    global _ACTIVE, _THREAD
+    global _ACTIVE, _THREAD, _CLOSED_FLIGHT_IDS
     with _LOCK:
         active = _ACTIVE
         if not active:
@@ -647,50 +646,6 @@ def observe_phase(flight_id: str, phase: str, meta: dict[str, Any] | None = None
         stop_recording("TAXI IN")
 
 
-def _target_interval(snapshot: dict[str, Any] | None, phase: str) -> float:
-    settings = load_settings().get("integrations", {})
-    provider = str((snapshot or {}).get("source") or "").lower()
-    agl = _number((snapshot or {}).get("radio_altitude_ft"))
-    if agl is None:
-        agl = _number((snapshot or {}).get("agl_ft"))
-    phase_up = phase.upper()
-    # FSUIPC batch reads can sustain the high-rate runway stream. The current
-    # Python SimConnect request surface is capped at 10 Hz to avoid queue noise.
-    simconnect_max = _number(settings.get("black_box_simconnect_max_hz")) or 10.0
-    max_hz = 30.0 if "fsuipc" in provider else max(2.0, min(simconnect_max, 20.0))
-    requested = 30.0 if phase_up in {"TAKEOFF ROLL", "INITIAL CLIMB", "APPROACH", "FLARE", "LANDING ROLL"} or (agl is not None and agl <= 1000) else (20.0 if phase_up in {"TAXI OUT", "TAXI IN", "CLIMB", "DESCENT"} else 10.0)
-    configured = _number(settings.get("black_box_max_hz")) or 30.0
-    hz = max(2.0, min(requested, max_hz, configured))
-    return 1.0 / hz
-
-
-def _read_record_telemetry() -> dict[str, Any] | None:
-    """Black Box telemetry read with FSUIPC full-stream fallback (v0.25.72, #16).
-
-    The minimal SimConnect path is preferred while healthy (low subscription
-    count, no stutter), but when the SimConnect session degrades or dies the
-    recorder falls back to the FSUIPC-driven full stream — the same one Flight
-    Watch uses — so Black Box data stays identical to Flight Watch and the
-    true 30 Hz takeoff-roll/approach rate is reachable (FSUIPC is one batched
-    ``pyuipc.read`` per sample, so the high-rate fallback adds no stutter).
-    When both sources are dead the full stream reports ``stale`` and
-    ``_normalize`` rejects the row; ``status()`` then surfaces STALE instead
-    of replaying the last good row.
-    """
-    snapshot = read_telemetry(force=True, stream="minimal")
-    if isinstance(snapshot, dict) and snapshot.get("ok"):
-        return snapshot
-    fallback = read_telemetry(force=True, stream="full")
-    if isinstance(fallback, dict) and fallback.get("ok"):
-        fallback = dict(fallback)
-        fallback.setdefault("addon_event_meta", {})
-        fallback.setdefault("addon_state", {})
-        fallback.setdefault("adapter_status", {"active": False, "mode": "GENERIC FALLBACK", "reason": "minimal stream unavailable"})
-        fallback["minimal"] = True
-        return fallback
-    return snapshot if isinstance(snapshot, dict) else fallback if isinstance(fallback, dict) else None
-
-
 def _fingerprint(row: dict[str, Any]) -> tuple[Any, ...]:
     # Include the fast dynamics, controls and curated add-on state so short
     # aircraft-specific pulses are not discarded as duplicate position frames.
@@ -790,8 +745,20 @@ def _detect_events_locked(active: dict[str, Any], row: dict[str, Any]) -> None:
 
 
 def _record_loop() -> None:
-    next_run = time.monotonic()
-    last_snapshot: dict[str, Any] | None = None
+    """Black Box record loop — Stage 2 single-writer consumer (v0.25.75).
+
+    The recorder no longer touches the simulator. It drains complete-shape
+    snapshots from the telemetry writer's shared ring buffer (published by the
+    OpsRoom-TelemetryWriter thread at up to 30 Hz on FSUIPC), normalizes and
+    writes them, and keeps the writer's phase/cadence in sync. When no
+    recording is active the same daemon thread acts as a low-overhead
+    watchdog: it watches the ring's latest sample once a second and starts a
+    recording as soon as any engine transitions off -> on, regardless of which
+    phase the logbook is in. This is the v0.25.7 "engine-on starts recording"
+    behaviour documented on ``observe_phase``.
+    """
+    from .telemetry_provider import writer_ring_since, writer_latest, set_writer_phase
+    cursor = 0.0
     last_engines_running = False
     engine_on_streak = 0
     while not _STOP.is_set():
@@ -799,23 +766,25 @@ def _record_loop() -> None:
             active = _ACTIVE
             phase = str(_PHASE_CONTEXT.get("phase") or "")
             ctx_flight_id = str(_PHASE_CONTEXT.get("flight_id") or "")
-        now = time.monotonic()
-        # When no recording is active we keep the same daemon thread alive as
-        # a low-overhead watchdog: pulls the SlimSet once a second via the
-        # ``stream="minimal"`` telemetry route and starts a recording as soon
-        # as any engine transitions off -> on, regardless of which phase the
-        # logbook is in.  This is the v0.25.7 "engine-on starts recording"
-        # behaviour documented on ``observe_phase``.
+        try:
+            set_writer_phase(phase, recording=bool(active))
+        except Exception:
+            pass
+        try:
+            items = writer_ring_since(cursor)
+        except Exception:
+            items = []
+        if items:
+            cursor = items[-1][0]
         if not active:
-            if now < next_run:
-                _STOP.wait(min(0.5, next_run - now))
-                continue
-            snapshot: dict[str, Any] | None = None
-            try:
-                snapshot = _read_record_telemetry()
-            except Exception:
-                snapshot = None
-            engines_now = bool(isinstance(snapshot, dict) and snapshot.get("engines_running"))
+            latest = items[-1][1] if items else None
+            if latest is None:
+                try:
+                    _latest = writer_latest()
+                    latest = _latest[1] if _latest else None
+                except Exception:
+                    latest = None
+            engines_now = bool(isinstance(latest, dict) and latest.get("engines_running"))
             # v0.25.72 (#20): debounce — a single telemetry flap (dead
             # SimConnect dispatch thread returning None) must never look like
             # "engine just started". The streak needs _ENGINE_ON_DEBOUNCE
@@ -836,48 +805,49 @@ def _record_loop() -> None:
                 except Exception:
                     pass
             last_engines_running = engines_now
-            next_run = now + 1.0
+            _STOP.wait(1.0)
             continue
-        if now < next_run:
-            _STOP.wait(min(0.05, next_run - now))
-            continue
-        snapshot: dict[str, Any] | None = None
-        try:
-            snapshot = _read_record_telemetry()
-        except Exception:
-            snapshot = None
         with _LOCK:
             active = _ACTIVE
             if not active:
-                return
-            active["attempt_count"] = int(active.get("attempt_count") or 0) + 1
-            if isinstance((snapshot or {}).get("addon_event_meta"), dict):
-                active["addon_event_meta"] = dict(snapshot["addon_event_meta"])
-            elapsed = time.monotonic() - float(active["started_mono"])
-            row = _normalize(snapshot or {}, elapsed, phase)
-            if row is not None:
-                fp = _fingerprint(row)
-                # Preserve time-based control/systems changes but skip exact
-                # duplicate provider snapshots caused by a slower simulator frame.
-                if fp != active.get("last_fingerprint") or elapsed - float(active.get("last_written_elapsed") or -99) >= 0.25:
-                    _detect_events_locked(active, row)
-                    active["buffer"].append(row)
-                    active["last_fingerprint"] = fp
-                    active["last_written_elapsed"] = elapsed
-                    active["valid_count"] = int(active.get("valid_count") or 0) + 1
-                    active["last_valid_mono"] = time.monotonic()
-                    active["last_source"] = row.get("source")
-                    active["last_sample_utc"] = row.get("utc")
-                    if isinstance(row.get("provider_categories"), dict): active["provider_categories"] = dict(row["provider_categories"])
-                    if row.get("aircraft_adapter") is not None: active["aircraft_adapter"] = row.get("aircraft_adapter")
-                    caps = active.setdefault("capabilities", set())
-                    caps.update(key for key, value in row.items() if key not in {"elapsed", "utc"} and value is not None)
-                    _RING.append(dict(row))
-                last_snapshot = snapshot
-            if len(active.get("buffer") or []) >= 60 or time.monotonic() - float(active.get("last_flush") or 0) >= 2.0:
-                _flush_locked(active)
-        interval = _target_interval(snapshot or last_snapshot, phase)
-        next_run = max(next_run + interval, time.monotonic())
+                _STOP.wait(0.05)
+                continue
+            started_mono = float(active["started_mono"])
+        for ts, snapshot in items:
+            if ts < started_mono - 1e-6:
+                continue
+            with _LOCK:
+                active = _ACTIVE
+                if not active:
+                    break
+                active["attempt_count"] = int(active.get("attempt_count") or 0) + 1
+                if isinstance((snapshot or {}).get("addon_event_meta"), dict):
+                    active["addon_event_meta"] = dict(snapshot["addon_event_meta"])
+                elapsed = max(0.0, ts - started_mono)
+                row = _normalize(snapshot or {}, elapsed, phase)
+                if row is not None:
+                    fp = _fingerprint(row)
+                    # Preserve time-based control/systems changes but skip exact
+                    # duplicate provider snapshots caused by a slower simulator frame.
+                    if fp != active.get("last_fingerprint") or elapsed - float(active.get("last_written_elapsed") or -99) >= 0.25:
+                        _detect_events_locked(active, row)
+                        active["buffer"].append(row)
+                        active["last_fingerprint"] = fp
+                        active["last_written_elapsed"] = elapsed
+                        active["valid_count"] = int(active.get("valid_count") or 0) + 1
+                        active["last_valid_mono"] = time.monotonic()
+                        active["last_source"] = row.get("source")
+                        active["last_sample_utc"] = row.get("utc")
+                        if isinstance(row.get("provider_categories"), dict):
+                            active["provider_categories"] = dict(row["provider_categories"])
+                        if row.get("aircraft_adapter") is not None:
+                            active["aircraft_adapter"] = row.get("aircraft_adapter")
+                        caps = active.setdefault("capabilities", set())
+                        caps.update(key for key, value in row.items() if key not in {"elapsed", "utc"} and value is not None)
+                        _RING.append(dict(row))
+                if len(active.get("buffer") or []) >= 60 or time.monotonic() - float(active.get("last_flush") or 0) >= 2.0:
+                    _flush_locked(active)
+        _STOP.wait(0.05)
     with _LOCK:
         if _ACTIVE:
             _flush_locked(_ACTIVE)
@@ -907,16 +877,16 @@ def status() -> dict[str, Any]:
         attempts = max(1, int(active.get("attempt_count") or 0))
         valid = int(active.get("valid_count") or 0)
         actual_hz = valid / elapsed if elapsed > 0.5 else 0.0
-    stale_seconds = max(0.0, time.monotonic() - float(active.get("last_valid_mono") or active.get("started_mono") or time.monotonic()))
-    stale = bool(attempts > 0 and stale_seconds > 5.0)
-    live = {
-        "recording_id": active.get("id"), "flight_id": active.get("flight_id"),
-        "started_utc": active.get("started_utc"), "sample_count": samples_now,
-        "elapsed_seconds": round(elapsed, 2), "actual_hz": round(actual_hz, 1),
-        "phase": phase, "provider": active.get("last_source") or "WAITING",
-        "data_quality": round(100.0 * valid / attempts, 1),
-        "stale": stale, "stale_seconds": round(stale_seconds, 1),
-        "data_health": "STALE" if stale else ("GOOD" if valid / attempts >= .95 else ("DEGRADED" if valid / attempts >= .75 else "CHECK DATA")),
+        stale_seconds = max(0.0, time.monotonic() - float(active.get("last_valid_mono") or active.get("started_mono") or time.monotonic()))
+        stale = bool(attempts > 0 and stale_seconds > 5.0)
+        live = {
+            "recording_id": active.get("id"), "flight_id": active.get("flight_id"),
+            "started_utc": active.get("started_utc"), "sample_count": samples_now,
+            "elapsed_seconds": round(elapsed, 2), "actual_hz": round(actual_hz, 1),
+            "phase": phase, "provider": active.get("last_source") or "WAITING",
+            "data_quality": round(100.0 * valid / attempts, 1),
+            "stale": stale, "stale_seconds": round(stale_seconds, 1),
+            "data_health": "STALE" if stale else ("GOOD" if valid / attempts >= .95 else ("DEGRADED" if valid / attempts >= .75 else "CHECK DATA")),
             "buffer_samples": len(active.get("buffer") or []), "ring_samples": len(_RING),
             "capabilities": sorted(active.get("capabilities") or []),
             "provider_categories": dict(active.get("provider_categories") or {}), "aircraft_adapter": active.get("aircraft_adapter"),

@@ -11,57 +11,57 @@
 <body>
   <header>
     <div><h1>OPS ROOM SCORING RULES</h1><p>This page documents the actual PIREP PRO V1 calculation used by the current analysis engine. The final score is out of 100 and is the sum of five category scores after deductions.</p></div>
-    <div class="model">PIREP PRO V1 · 0.25.73</div>
+    <div class="model">PIREP PRO V1 · 0.25.75</div>
   </header>
 
   <main class="grid">
     <section class="card full">
       <h2>Score Formula</h2>
-      <div class="formula">Overall = Departure + Enroute + Approach + Landing + Integrity<br>Maximum = 15 + 20 + 25 + 25 + 15 = 100<br>Grade bands: Excellent ?92 · Very Good ?84 · Good ?74 · Acceptable ?62 · Review Required &lt;62</div>
+      <div class="formula">Overall = Departure + Enroute + Approach + Landing + Integrity<br>Maximum = 15 + 20 + 25 + 25 + 15 = 100<br>Grade bands: Excellent ≥92 · Very Good ≥84 · Good ≥74 · Acceptable ≥62 · Review Required &lt;62</div>
       <p class="note">If advanced analysis cannot validate a metric, OPS ROOM should mark that metric unavailable instead of publishing fake zeroes or impossible values. Older fallback debrief scoring may still be used only when the advanced analysis result is unavailable.</p>
     </section>
 
     <section class="card">
       <h2>Departure · 15 max</h2>
       <div class="row"><div><b>Runway tracking</b><small>Departure runway path is analysed where runway geometry is valid.</small></div><span>15</span></div>
-      <div class="row"><div><b>Centreline deviation</b><small>Maximum departure runway deviation &gt; 50 ft.</small></div><span class="bad">?3</span></div>
-      <div class="row"><div><b>Liftoff bank</b><small>Bank angle at liftoff &gt; 5°.</small></div><span class="bad">?2</span></div>
-      <div class="row"><div><b>Long takeoff roll</b><small>Takeoff roll exceeds 80% of runway length estimate.</small></div><span class="bad">?2</span></div>
+      <div class="row"><div><b>Centreline deviation</b><small>Maximum departure runway deviation &gt; 50 ft.</small></div><span class="bad">−3</span></div>
+      <div class="row"><div><b>Liftoff bank</b><small>Bank angle at liftoff &gt; 5°.</small></div><span class="bad">−2</span></div>
+      <div class="row"><div><b>Long takeoff roll</b><small>Takeoff roll exceeds 80% of runway length estimate.</small></div><span class="bad">−2</span></div>
     </section>
 
     <section class="card">
       <h2>Enroute · 20 max</h2>
       <div class="row"><div><b>Clean enroute record</b><small>No major airborne speed or aircraft-state violations.</small></div><span>20</span></div>
-      <div class="row"><div><b>Overspeed</b><small>Simulator overspeed warning recorded.</small></div><span class="bad">?4</span></div>
-      <div class="row"><div><b>Stall warning</b><small>Simulator stall warning recorded.</small></div><span class="bad">?4</span></div>
-      <div class="row"><div><b>Speed below 10,000 ft</b><small>IAS above 255 kt when valid altitude/AGL data confirms the gate.</small></div><span class="bad">?4</span></div>
+      <div class="row"><div><b>Overspeed</b><small>Simulator overspeed warning recorded.</small></div><span class="bad">−4</span></div>
+      <div class="row"><div><b>Stall warning</b><small>Simulator stall warning recorded.</small></div><span class="bad">−4</span></div>
+      <div class="row"><div><b>Speed below 10,000 ft</b><small>IAS above 255 kt when valid altitude/AGL data confirms the gate.</small></div><span class="bad">−4</span></div>
     </section>
 
     <section class="card">
       <h2>Approach · 25 max</h2>
-      <div class="row"><div><b>Stable 1000 ft gate</b><small>Vertical speed, IAS, pitch/bank and configuration checks.</small></div><span class="bad">?8</span></div>
-      <div class="row"><div><b>Stable 500 ft gate</b><small>Landing configuration locked; no late gear/flap instability.</small></div><span class="bad">?10</span></div>
-      <div class="row"><div><b>Lateral path</b><small>Maximum lateral deviation on final approach &gt; 600 ft.</small></div><span class="bad">?3</span></div>
+      <div class="row"><div><b>Stable 1000 ft gate</b><small>Vertical speed, IAS, pitch/bank and configuration checks.</small></div><span class="bad">−8</span></div>
+      <div class="row"><div><b>Stable 500 ft gate</b><small>Landing configuration locked; no late gear/flap instability.</small></div><span class="bad">−10</span></div>
+      <div class="row"><div><b>Lateral path</b><small>Maximum lateral deviation on final approach &gt; 600 ft.</small></div><span class="bad">−3</span></div>
       <div class="row"><div><b>Required data</b><small>Valid continuous final segment and AGL/radio-altitude crossings.</small></div><span>guard</span></div>
     </section>
 
     <section class="card wide">
       <h2>Landing · 25 max</h2>
-      <div class="row"><div><b>Touchdown rate</b><small>0 to ?200 fpm.</small></div><span class="good">?0</span></div>
-      <div class="row"><div><b>Firm touchdown</b><small>?201 to ?350 fpm.</small></div><span class="warn">?3</span></div>
-      <div class="row"><div><b>Hard touchdown</b><small>?351 to ?500 fpm.</small></div><span class="warn">?7</span></div>
-      <div class="row"><div><b>Very hard touchdown</b><small>Below ?500 fpm.</small></div><span class="bad">?14</span></div>
-      <div class="row"><div><b>Bounce penalty</b><small>Minor/moderate/severe bounce deductions are capped at ?12.</small></div><span class="bad">up to ?12</span></div>
-      <div class="row"><div><b>Long touchdown</b><small>Touchdown point &gt; 3000 ft when landing geometry validates.</small></div><span class="bad">?3</span></div>
-      <div class="row"><div><b>Centreline at touchdown</b><small>Absolute touchdown cross-track deviation &gt; 40 ft when valid.</small></div><span class="bad">?2</span></div>
+      <div class="row"><div><b>Touchdown rate</b><small>0 to −200 fpm.</small></div><span class="good">0</span></div>
+      <div class="row"><div><b>Firm touchdown</b><small>−201 to −350 fpm.</small></div><span class="warn">−3</span></div>
+      <div class="row"><div><b>Hard touchdown</b><small>−351 to −500 fpm.</small></div><span class="warn">−7</span></div>
+      <div class="row"><div><b>Very hard touchdown</b><small>Below −500 fpm.</small></div><span class="bad">−14</span></div>
+      <div class="row"><div><b>Bounce penalty</b><small>Minor/moderate/severe bounce deductions are capped at −12.</small></div><span class="bad">up to −12</span></div>
+      <div class="row"><div><b>Long touchdown</b><small>Touchdown point &gt; 3000 ft when landing geometry validates.</small></div><span class="bad">−3</span></div>
+      <div class="row"><div><b>Centreline at touchdown</b><small>Absolute touchdown cross-track deviation &gt; 40 ft when valid.</small></div><span class="bad">−2</span></div>
     </section>
 
     <section class="card">
       <h2>Integrity · 15 max</h2>
-      <div class="row"><div><b>Slew mode</b><small>Slew was used during the recording.</small></div><span class="bad">?10</span></div>
-      <div class="row"><div><b>Simulation rate</b><small>Sim rate differed significantly from 1.0x.</small></div><span class="bad">?4</span></div>
-      <div class="row"><div><b>In-flight refuelling</b><small>Usable fuel increased while airborne.</small></div><span class="bad">?8</span></div>
-      <div class="row"><div><b>Paused/frozen sim</b><small>Pause or position freeze detected.</small></div><span class="bad">?1</span></div>
+      <div class="row"><div><b>Slew mode</b><small>Slew was used during the recording.</small></div><span class="bad">−10</span></div>
+      <div class="row"><div><b>Simulation rate</b><small>Sim rate differed significantly from 1.0x.</small></div><span class="bad">−4</span></div>
+      <div class="row"><div><b>In-flight refuelling</b><small>Usable fuel increased while airborne.</small></div><span class="bad">−8</span></div>
+      <div class="row"><div><b>Paused/frozen sim</b><small>Pause or position freeze detected.</small></div><span class="bad">−1</span></div>
     </section>
 
     <section class="card full">

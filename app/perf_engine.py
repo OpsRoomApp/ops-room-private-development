@@ -1,5 +1,5 @@
 """
-OPS ROOM -- takeoff/landing performance engine (v0.25.73).
+OPS ROOM -- takeoff/landing performance engine (v0.25.75).
 
 Three-tier calculation:
 
@@ -16,7 +16,7 @@ Three-tier calculation:
     - B738: port of the komed3 B737-800 takeoff-speed calculator (MIT,
       github.com/komed3/top-737-800) -- V1/VR/V2 tables indexed by
       pressure-altitude/temperature preference, flap 1/5/15 and weight.
-    - A350 (A359/A35X): port of the iniBuilds A350 EFB takeoff calculator
+    - A350 (A359/A35X): port of the A350 EFB takeoff calculator
       (TOPerfHelper, bundled with the MSFS A350 package) -- the full
       FCOM-derived takeoff database: runway-limited max TOW plus V1/VR/V2 at
       that limit per runway length (2000-4100 m) x pressure altitude
@@ -24,7 +24,7 @@ Three-tier calculation:
       wet; FLEX temp is the highest OAT row whose limit still covers the
       TOW (minus anti-ice / packs / A350-900 corrections); TOGA when the
       flex temp falls below OAT or the flex floor; weights and speeds come
-      straight from the iniBuilds tables.
+      straight from the aircraft's own takeoff tables.
 
 * Tier 2 (family calibration): the remaining A32x family is run through the
   A320neo engine scaled by its own OEW/MTOW (the limiting-factor framework is
@@ -40,7 +40,7 @@ All tier-1/2 outputs carry their source so the UI can label them; nothing
 here talks to the sim, and everything degrades gracefully (never raises).
 
 Data files: app/data/perf_a320neo_tables.json (A32NX source, A320-251N) and
-app/data/perf_a350_tables.json (iniBuilds A350 EFB bundle, TrentXWB-97 /
+app/data/perf_a350_tables.json (A350 EFB takeoff bundle, TrentXWB-97 /
 XWB-84).
 """
 
@@ -1190,7 +1190,7 @@ class B738Takeoff:
 
 
 # ---------------------------------------------------------------------------
-# A350 takeoff engine (port of the iniBuilds A350 EFB TOPerfHelper)
+# A350 takeoff engine (port of the A350 EFB TOPerfHelper)
 # ---------------------------------------------------------------------------
 
 
@@ -1203,7 +1203,7 @@ def _a350_tables() -> dict[str, Any]:
 
 
 class A350Takeoff:
-    """iniBuilds A350 EFB takeoff calculator (TOPerfHelper).
+    """A350 EFB takeoff calculator (TOPerfHelper).
 
     The bundle ships the full FCOM-derived takeoff database: for each
     runway length (2000-4100 m), pressure altitude (0-8500 ft), OAT

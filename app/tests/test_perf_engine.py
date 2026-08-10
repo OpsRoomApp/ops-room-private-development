@@ -1,7 +1,7 @@
 """Validation tests for the performance calculator.
 
 The engine is a port of the FlyByWire A32NX takeoff-performance model
-(A320neo), the komed3 B737-800 V-speed tables (B738) and the iniBuilds A350
+(A320neo), the komed3 B737-800 V-speed tables (B738) and the A350
 EFB takeoff tables (A359/A35X), with the PERF2601-derived profiles as the
 generic fallback for every other aircraft.
 
@@ -80,7 +80,7 @@ class B738Reference(unittest.TestCase):
 
 
 class A350Reference(unittest.TestCase):
-    """iniBuilds A350 EFB takeoff-table port (TOPerfHelper).
+    """A350 EFB takeoff-table port (TOPerfHelper).
 
     The reference numbers below were computed by walking the EFB algorithm
     over the raw bundle (see the extraction notes in perf_engine.py): the

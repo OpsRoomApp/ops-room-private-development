@@ -7,7 +7,7 @@
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="/static/favicon-32.png" sizes="32x32" />
   <title>OPS ROOM PIREP</title>
-  <link rel="stylesheet" href="/static/pirep.css?v=0-25-73">
+  <link rel="stylesheet" href="/static/pirep.css?v=0-25-75">
 </head>
 <body>
   <header class="topbar">
@@ -15,7 +15,7 @@
     <div id="airlineLogoTop" class="pirep-airline-top"></div>
     <div class="flight-title">
       <strong id="flightCallsign">LOADING</strong>
-      <span id="flightRoute">---- ? ----</span>
+      <span id="flightRoute">---- → ----</span>
     </div>
     <div class="top-actions">
       <a class="button ghost" href="/#logbook">BACK TO LOGBOOK</a>
@@ -53,7 +53,7 @@
         <div class="hero-main">
           <div id="airlineHero" class="pirep-airline-hero"></div>
           <div class="eyebrow">POST-FLIGHT ANALYSIS</div>
-          <h1><span id="originIcao">----</span><i>?</i><span id="destinationIcao">----</span></h1>
+          <h1><span id="originIcao">----</span><i>→</i><span id="destinationIcao">----</span></h1>
           <p id="aircraftLine">AIRCRAFT NOT REPORTED</p>
           <div id="flagStrip" class="flag-strip"></div>
         </div>
@@ -146,16 +146,16 @@
       </section>
 
       <footer class="report-footer">
-        <span>OPS ROOM 0.25.73</span>
+        <span>OPS ROOM 0.25.75</span>
         <span id="reportGenerated">OPS ROOM PIREP</span>
         <span>OPS ROOM</span>
       </footer>
     </div>
   </main>
   <dialog id="scoringRulesDialog" style="max-width:620px;background:#0d0f11;color:#f3f1ea;border:1px solid #465059;border-radius:10px;padding:24px">
-    <form method="dialog"><h2 style="margin-top:0">OPS ROOM SCORING RULES</h2><p>OPS ROOM scores the recorded flight only; raw telemetry is retained for scoring.</p><ul><li>Departure: takeoff roll, runway centreline, liftoff attitude and initial climb.</li><li>Enroute: recorded deviations, simulation integrity and fuel/distance consistency.</li><li>Approach: 1000 ft/500 ft stability gates, lateral deviation and glidepath deviation.</li><li>Landing: touchdown rate, touchdown zone, centreline deviation and rollout.</li><li>Bounces: minor ?2, moderate ?5, severe/multiple ?8, capped at ?12. Small 1-2 ft radio-altimeter noise is ignored.</li></ul><button class="button" value="close">CLOSE</button></form>
+    <form method="dialog"><h2 style="margin-top:0">OPS ROOM SCORING RULES</h2><p>OPS ROOM scores the recorded flight only; raw telemetry is retained for scoring.</p><ul><li>Departure: takeoff roll, runway centreline, liftoff attitude and initial climb.</li><li>Enroute: recorded deviations, simulation integrity and fuel/distance consistency.</li><li>Approach: 1000 ft/500 ft stability gates, lateral deviation and glidepath deviation.</li><li>Landing: touchdown rate, touchdown zone, centreline deviation and rollout.</li><li>Bounces: minor −2, moderate −5, severe/multiple −8, capped at −12. Small 1-2 ft radio-altimeter noise is ignored.</li></ul><button class="button" value="close">CLOSE</button></form>
   </dialog>
   <style>dialog::backdrop{background:rgba(0,0,0,.68)}dialog li{margin:.6em 0;color:#c7cdd1}dialog p{color:#b4bcc1;line-height:1.5}</style>
-  <script src="/static/pirep.js?v=0-25-73"></script>
+  <script src="/static/pirep.js?v=0-25-75"></script>
 </body>
 </html>

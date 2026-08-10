@@ -293,7 +293,7 @@ def _add_advanced_lights() -> None:
         k = i % FIXTURES_PER_ARM
         # v0.25.73 (user: "lights are blinding, someone will go blind from
         # 5 miles"): the amber LED street lights were 5000 cd - dropped to
-        # 100 cd. v0.25.74 (user: "increase the brightness (little) and
+        # 100 cd. v0.25.75 (user: "increase the brightness (little) and
         # draw distance of the lighted X"): 100 -> 200 cd - a visible lamp
         # with more range, still nowhere near the old blinding 5000 cd.
         # v0.25.75 (user: "increase the lighted X brightness more"):
@@ -313,7 +313,7 @@ def _add_advanced_lights() -> None:
     if beacon is not None:
         mins, maxs = _mesh_bounds(beacon)
         # v0.25.73: red hub beacon was 25000 cd (blinding) - dropped to
-        # 250 cd. v0.25.74 (user: "increase the brightness (little) and
+        # 250 cd. v0.25.75 (user: "increase the brightness (little) and
         # draw distance of the lighted X"): 250 -> 500 cd for far-range
         # visibility (still 1/50th of the original blinding value).
         # v0.25.75 (user: "increase the lighted X brightness more"):

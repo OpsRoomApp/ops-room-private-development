@@ -624,6 +624,12 @@ def _forward_motion_evidence(sample: dict[str, Any]) -> bool | None:
     if heading is None or track is None:
         return None
     delta = abs(((track - heading) + 180.0) % 360.0 - 180.0)
+    if delta < 2.0 and body_vx is None:
+        # #42: Fenix/FSUIPC exposes no independent ground track (track exactly
+        # mirrors heading) and no body velocity — direction is UNKNOWN, not
+        # forward. Treating it as forward let a fast pushback spike (10-12 kt
+        # while the tug turns the aircraft) clear a latched pushback.
+        return None
     return delta < 90.0
 
 
@@ -759,6 +765,11 @@ def _phase(sample: dict[str, Any], meta: dict[str, Any]) -> str:
             return "PARKED"
         if times.get("landing") or airborne_seen:
             return "LANDING ROLL" if gs >= 40 else "TAXI IN"
+        # #42: phase-ordering invariant — TAXI OUT must never precede BLOCK OUT.
+        # Any pre-off-blocks ground movement is a pushback, regardless of whether
+        # the dedicated GSX/body-vx/track signals can see it (Fenix cannot).
+        if not times.get("block_out") and not state.get("pushback_forward_taxi_proven"):
+            return "PUSHBACK"
         if gs < 40:
             return "TAXI OUT"
         return "TAKEOFF ROLL"
@@ -928,6 +939,20 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
         state["pushback_completed"] = True
         state["pushback_completed_at"] = now
 
+    # #42: phase-ordering invariant — the aircraft cannot taxi out before off
+    # blocks. Any ground movement out of PARKED before block-out is a pushback.
+    # Fenix is blind to the dedicated signals (no body-vx, track == heading),
+    # so this fallback is deliberately signal-independent.
+    if (not pushback_latched and not state.get("pushback_forward_taxi_proven")
+            and not times.get("block_out")
+            and current.get("on_ground") is not False
+            and (gs or 0.0) >= 1.5
+            and (previous_phase == "PARKED" or previous_phase is None)):
+        pushback_latched = True
+        state["pushback_positive_latch"] = True
+        state["pushback_active"] = True
+        state["pushback_seen"] = True
+
     # Independent TAXI OUT proof is evaluated even if GSX still reports a stale
     # pushback row. Forward movement at normal taxi speed with the brake released
     # and real displacement is stronger physical evidence than a cached service
@@ -947,7 +972,12 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
     # demote a latched pushback).
     forward_motion = _forward_motion_evidence(current)
     gs_counter = int(state.get("taxi_out_gs_counter") or 0)
-    if grounded and brake_released and taxi_speed > 10.0 and forward_motion is not False:
+    # #42: the fast override needs EXPLICIT forward proof (forward_motion is
+    # True), not just "not known backward". On the Fenix the direction is
+    # unknown (track mirrors heading, no body-vx), so only the sustained-motion
+    # override (>=5 s + real displacement) may end a latched pushback — a
+    # 10-12 kt pushback spike can never clear it.
+    if grounded and brake_released and taxi_speed > 10.0 and forward_motion is True:
         gs_counter += 1
         state["taxi_out_gs_counter"] = gs_counter
         if gs_counter >= 1 and pushback_latched:
@@ -990,6 +1020,16 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
             state["pushback_active"] = False
     elif taxi_speed < 1.2 or current.get("parking_brake") is True:
         state.pop("taxi_motion_candidate", None)
+        if pushback_latched and current.get("parking_brake") is True:
+            # #42: movement -> full stop -> parking brakes set = pushback
+            # complete (the pilot always parks the aircraft after the tug
+            # releases). Next ground movement is genuine taxi.
+            state["pushback_completed"] = True
+            state["pushback_completed_at"] = now
+            state["pushback_forward_taxi_proven"] = True
+            pushback_latched = False
+            state["pushback_positive_latch"] = False
+            state["pushback_active"] = False
 
     current["pushback_active"] = bool(pushback_latched)
     if _sample_ground_safe(current) and not _airborne_candidate(current):
@@ -1071,13 +1111,11 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
             metrics["average_cross_track_nm"] = round(state["cross_track_sum"] / state["cross_track_count"], 2)
 
     systems_moving = current.get("engines_running") or current.get("parking_brake") is False
-    # While GSX is physically pushing the aircraft, tug-driven ground movement is
-    # PUSHBACK, not BLOCK OUT. state["pushback_active"] (mirrored onto the sample)
-    # is cleared by the stale-override taxi proof above the moment the aircraft
-    # begins its own forward taxi, so BLOCK OUT still fires normally once the tug
-    # is clear. The confirmed_airborne branch is intentionally never gated here.
-    tug_pushback_active = bool(current.get("pushback_active"))
-    if not times.get("block_out") and ((current.get("confirmed_airborne") and not _gsx_predeparture_active()) or (current.get("on_ground") is True and gs >= 1.5 and systems_moving and not tug_pushback_active)):
+    # #42: BLOCK OUT stays at FIRST movement — including the start of a pushback.
+    # The user confirmed off-blocks firing at pushback start (14:36Z) is correct,
+    # and the phase-ordering invariant guarantees "taxi out" can never precede
+    # it. The confirmed_airborne branch is intentionally never gated here.
+    if not times.get("block_out") and ((current.get("confirmed_airborne") and not _gsx_predeparture_active()) or (current.get("on_ground") is True and gs >= 1.5 and systems_moving)):
         times["block_out"] = now; _out_snapshots = meta.setdefault("operational_snapshots", {}); _out_snapshots.setdefault("out", _op_snapshot(current, now)); _event(meta, "BLOCK OUT", f"Movement began near {(airport or {}).get('icao','unknown station')}", now)
     previous_ground = previous.get("on_ground") if previous else None
     previous_airborne = bool(previous and previous.get("confirmed_airborne"))
@@ -1440,6 +1478,18 @@ def _finalize(meta: dict[str, Any], reason: str, t: dict[str, Any] | None = None
     meta["debrief"] = {"score": _score(meta), "landing_grade": _grade((meta.get("metrics") or {}).get("landing_rate_fpm")), "scoring_model": "OPS ROOM PIREP PRO V1"}
     _event(meta, "COMPLETED", f"Flight record closed ({reason})", now)
     meta.pop("_state", None); _save_flight(meta, meta["state"])
+    # Replay-blocking fix: closing the logbook flight must also close the Black
+    # Box recorder for the same flight. Previously the recorder only stopped via
+    # the 120s on-blocks autostop, so a manual completion (or an app restart
+    # that stalled the engine loop) left it recording for hours — and every
+    # in-sim replay attempt returned 409 "Stop the active Black Box recording".
+    try:
+        from .black_box import status as _bb_status, stop_recording as _bb_stop
+        bb = _bb_status()
+        if bb.get("recording") and str((bb.get("active") or {}).get("flight_id") or "") == str(meta.get("id") or ""):
+            _bb_stop("FLIGHT FINALIZED")
+    except Exception:
+        pass
     try:
         analysis = analyse_pirep(meta, _raw_samples(meta["id"]))
         if analysis.get("ok"):
@@ -1532,6 +1582,29 @@ def _hold_for_post_arrival_services(meta: dict[str, Any], t: dict[str, Any] | No
         state["post_arrival_pending"] = True
         state["post_arrival_pending_since"] = _utc_now()
         _event(meta, "POST ARRIVAL PENDING", "Parked at gate; waiting for arrival services, sim exit, or manual completion", _utc_now(), "info")
+
+    # #44: fallback timer — the flight must never hang RECORDING forever. GSX
+    # arrival latches live in memory and die on an app restart (verified live:
+    # RJA403 stuck 47 minutes until manual completion), and arrival services may
+    # never run at all. Once the aircraft has been PARKED with every engine off
+    # and the parking brake set for 5 minutes, release the hold so the engine
+    # finalizes without arrival-service receipts. The GSX-complete fast path
+    # above still wins whenever the latches are healthy.
+    phase_up = str(state.get("phase") or "").upper()
+    engines_off = bool(t and t.get("engines_running") is False)
+    parking_brake = bool(t and t.get("parking_brake"))
+    settled = phase_up == "PARKED" and engines_off and parking_brake
+    if settled:
+        since_epoch = state.get("post_arrival_settled_since_epoch")
+        if since_epoch is None:
+            state["post_arrival_settled_since_epoch"] = _epoch(_utc_now()) or time.time()
+        elif (time.time() - float(since_epoch)) >= 300.0:  # 5 minutes on blocks
+            if not state.get("post_arrival_timeout_fired"):
+                state["post_arrival_timeout_fired"] = True
+                _event(meta, "POST ARRIVAL COMPLETE", "Parked 5 minutes with engines off and parking brake set; finalizing without arrival-service receipts", _utc_now())
+            return False
+    else:
+        state.pop("post_arrival_settled_since_epoch", None)
     return True
 
 

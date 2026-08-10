@@ -150,6 +150,15 @@ fetched. Recording file format/schema version must stay backward compatible (bum
 only if you truly change the stored row shape, and if you do, follow the existing append-only pattern
 already used for the v1→v2 schema bump, visible in the comments around the `FIELDS` list).
 
+**RESOLVED (2026-08-10) — superseded by Stage 2 (single-writer telemetry bus, see `BUG_FIX_TASKS.md`
+#34 / "Implementation Plan — Stage 2"):** the Black Box record loop (`_record_loop`) no longer touches
+the simulator at all. One `OpsRoom-TelemetryWriter` thread reads the sim and publishes to an in-memory
+ring; the recorder is a pure ring consumer. FSUIPC (healthy) is one batched read per sample at 30/20/10 Hz
+by phase; the SimConnect fallback uses a single batched `RequestDataOnSimObject` covering all 117 numeric
+SimVars (one request per sample, ~27 Hz live-verified, no stutter) instead of ~40 sequential `aq.get`
+calls. The per-variable `_time`/subscription mechanics described above no longer apply to the recorder
+path. The `.opsbb` schema (`FIELDS`) is unchanged.
+
 ---
 
 ### A2. Briefing → Charts: pen/annotation drawing offset from cursor

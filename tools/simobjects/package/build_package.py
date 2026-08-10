@@ -58,7 +58,7 @@ import msfs_native
 
 PACKAGE_NAME = "closure-markers"
 PACKAGE_TITLE = "OPS ROOM NOTAM Closure Markers"
-PACKAGE_VERSION = "0.25.72.0"
+PACKAGE_VERSION = "0.25.75.0"
 
 #: Per-target manifest settings. The Community-folder package format is
 #: byte-identical between MSFS 2020 and 2024 (content_type MISC, same

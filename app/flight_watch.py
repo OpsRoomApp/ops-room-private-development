@@ -12,6 +12,13 @@ from .telemetry_provider import read_telemetry
 _LAST_LIVE: dict[str, Any] | None = None
 _LAST_LIVE_TIME = 0.0
 
+# #42: display-only pushback latch. Mirrors the logbook phase-ordering
+# invariant: the aircraft cannot taxi before off blocks, so ground movement out
+# of PARKED is shown as PUSHBACK until genuine taxi proof (sustained >10 kt)
+# or parking brakes set. Fenix exposes no body-vx and mirrors heading into
+# track, so the dedicated GSX/backward-motion signals stay blind.
+_FW_PHASE_STATE: dict[str, Any] = {"phase": None, "pushback": False}
+
 
 def _number(value: Any) -> float | None:
     try:
@@ -87,21 +94,55 @@ def _phase(telemetry: dict[str, Any], plan: dict[str, Any] | None) -> str:
     agl = _number(telemetry.get("agl_ft"))
     altitude = (_number(telemetry.get("indicated_altitude_ft")) or _number(telemetry.get("altitude_ft")) or 0.0) if _altitude_reliable(telemetry) else 0.0
     cruise = _number((plan or {}).get("cruise_altitude_ft")) or 0.0
+    prev_phase = _FW_PHASE_STATE.get("phase")
 
     if on_ground:
-        # v0.25.72 (#12): consult GSX pushback evidence BEFORE the speed branch.
-        # MSFS ground speed routinely reads 6-10 kt while a tug is pushing, so a
-        # latched pushback is only demoted by genuine taxi (>10 kt) — never by a
-        # transient pushback sample above the old 5 kt gate.
-        if _gsx_pushback_active() and gs <= 10.0:
+        # #42: the display mirror of the logbook phase-ordering invariant.
+        gsx_push = _gsx_pushback_active() and gs <= 10.0
+        if gsx_push:
+            _FW_PHASE_STATE["pushback"] = True
+        latched = bool(_FW_PHASE_STATE.get("pushback"))
+        if latched:
+            # Genuine taxi proof: sustained >10 kt (a tug stays below the
+            # envelope; the RJA403 recording shows 10-12 kt spikes while the tug
+            # turns, so a single spike never clears the latch).
+            if gs > 10.0:
+                _FW_PHASE_STATE["high_gs_polls"] = int(_FW_PHASE_STATE.get("high_gs_polls") or 0) + 1
+                if _FW_PHASE_STATE["high_gs_polls"] >= 4:
+                    latched = False
+                    _FW_PHASE_STATE["pushback"] = False
+                    _FW_PHASE_STATE["high_gs_polls"] = 0
+            else:
+                _FW_PHASE_STATE["high_gs_polls"] = 0
+            if latched and telemetry.get("parking_brake") is True:
+                # Movement -> stop -> brakes set = pushback complete.
+                latched = False
+                _FW_PHASE_STATE["pushback"] = False
+                _FW_PHASE_STATE["high_gs_polls"] = 0
+        if latched:
+            _FW_PHASE_STATE["phase"] = "PUSHBACK"
+            return "PUSHBACK"
+        # Movement out of PARKED before taxi proof is pushback (ordering
+        # invariant — Fenix blind spot: no body-vx, track == heading).
+        if gs >= 1.0 and (prev_phase == "PARKED" or prev_phase is None):
+            _FW_PHASE_STATE["pushback"] = True
+            _FW_PHASE_STATE["phase"] = "PUSHBACK"
             return "PUSHBACK"
         if gs > 5.0:
-            return "TAXI" if gs < 35 else "TAKEOFF ROLL"
+            phase = "TAXI" if gs < 35 else "TAKEOFF ROLL"
+            _FW_PHASE_STATE["phase"] = phase
+            return phase
         if gs < 2:
+            _FW_PHASE_STATE["phase"] = "PARKED"
             return "PARKED"
         if gs < 35:
+            _FW_PHASE_STATE["phase"] = "TAXI"
             return "TAXI"
+        _FW_PHASE_STATE["phase"] = "TAKEOFF ROLL"
         return "TAKEOFF ROLL"
+    # Airborne: the departure latch must not leak into arrival taxi-in.
+    _FW_PHASE_STATE["pushback"] = False
+    _FW_PHASE_STATE["high_gs_polls"] = 0
     if agl is not None and agl < 1500 and vs > 150:
         return "INITIAL CLIMB"
     if agl is not None and agl < 2500 and vs < -150:

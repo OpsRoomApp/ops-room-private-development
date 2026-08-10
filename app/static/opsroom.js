@@ -457,7 +457,7 @@ async function safeJsonResponse(response){
 
 function reportFrontendError(source, detail){
   try{
-    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.73', ts:new Date().toISOString()};
+    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.75', ts:new Date().toISOString()};
     lastFrontendError = payload.detail;
     navigator.sendBeacon?.('/api/frontend/log', new Blob([JSON.stringify(payload)], {type:'application/json'})) || fetch('/api/frontend/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true}).catch(()=>{});
   }catch(_){ }
@@ -4059,6 +4059,25 @@ async function testPrinter(){
   }finally{if(btn)btn.textContent='TEST PRINT';}
 }
 
+// #45: debounced save for the printer-settings panel. The change handler
+// always called saveSettingsWithDebounce() but it was never defined, so every
+// toggle threw ReferenceError and settings.printing never persisted.
+let _printerSaveTimer = null;
+function saveSettingsWithDebounce(){
+  if(_printerSaveTimer) clearTimeout(_printerSaveTimer);
+  _printerSaveTimer = setTimeout(async ()=>{
+    _printerSaveTimer = null;
+    try{
+      const payload = { printing: settings.printing || {} };
+      const res = await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const data = await safeJsonResponse(res);
+      settings = data.settings || settings;
+    }catch(error){
+      showToast('PRINTER','SETTINGS NOT SAVED',friendlyError(error.message),'critical');
+    }
+  }, 500);
+}
+
 function initPrinterSettings(){
   const enabled=$('printerEnabled');
   const cpdlc=$('printerCpdlcAuto');
@@ -4400,6 +4419,7 @@ async function loadNotamLayer(){
   if(!olMap||!olNotamLayer)return;
   const src=olNotamLayer.getSource();if(!src)return;
   const on=mapLayerChecked('mapLayerNotams',false);
+  olNotamLayer.setVisible(on);
   if(!on){src.clear();if($('mapNotamFilters'))$('mapNotamFilters').hidden=true;return}
   if($('mapNotamFilters'))$('mapNotamFilters').hidden=false;
   const requestId=++mapNotamRequestSeq;
@@ -5225,7 +5245,7 @@ function renderLogbookActive(active){
 function renderLogbookEntries(entries){
   entries=entries||[];$('logbookEntries').innerHTML=entries.length?entries.map(entry=>{const f=entry.flight||{},m=entry.metrics||{},d=entry.debrief||{},dur=entry.durations||{};return `<button type="button" class="logbook-entry ${entry.id===selectedLogbookId?'active':''}" data-logbook-entry="${escapeHtml(entry.id)}"><span class="logbook-entry-date">${logbookDate(entry.started_utc)}</span>${airlineBrandHtml(f,'small',false)}<strong>${escapeHtml(f.callsign||'NO CALLSIGN')}</strong><b>${escapeHtml(logbookRoute(entry))}</b><span>${escapeHtml(logbookAircraft(entry))}</span><span>${duration(dur.block_seconds)}</span><span class="landing-grade">${escapeHtml(d.landing_grade||'NO LANDING')}</span><em>${d.score??0}</em></button>`}).join(''):'<div class="network-empty">NO COMPLETED FLIGHTS</div>';
 }
-function financeMiniHtml(entry){const fin=entry?.finance;if(!fin||!fin.ok)return '';const sym=fin.symbol||'';const air=fin.airline||{},pilot=fin.pilot||{},open=fin.opening_balance||{},close=fin.closing_balance||{};return `<div class="debrief-finance"><h3>FINANCE</h3><div><span>AIRLINE</span><b>${money(open.airline,sym)} ? ${money(close.airline,sym)}</b><small>${money(air.profit,sym)} flight result</small></div><div><span>PILOT</span><b>${money(open.pilot,sym)} ? ${money(close.pilot,sym)}</b><small>${money(pilot.pay,sym)} flight pay</small></div><div><span>REVENUE</span><b>${money(air.revenue?.total,sym)}</b><small>Pax + cargo</small></div><div><span>COSTS</span><b>${money(air.costs?.total,sym)}</b><small>Fuel, services, fees</small></div></div>`}
+function financeMiniHtml(entry){const fin=entry?.finance;if(!fin||!fin.ok)return '';const sym=fin.symbol||'';const air=fin.airline||{},pilot=fin.pilot||{},open=fin.opening_balance||{},close=fin.closing_balance||{};return `<div class="debrief-finance"><h3>FINANCE</h3><div><span>AIRLINE</span><b>${money(open.airline,sym)} → ${money(close.airline,sym)}</b><small>${money(air.profit,sym)} flight result</small></div><div><span>PILOT</span><b>${money(open.pilot,sym)} → ${money(close.pilot,sym)}</b><small>${money(pilot.pay,sym)} flight pay</small></div><div><span>REVENUE</span><b>${money(air.revenue?.total,sym)}</b><small>Pax + cargo</small></div><div><span>COSTS</span><b>${money(air.costs?.total,sym)}</b><small>Fuel, services, fees</small></div></div>`}
 function renderLogbookDetail(entry){
   if(!entry){$('logbookDetailTitle').textContent='SELECT A RECORD';$('logbookDetail').innerHTML='<div class="network-empty">Select a flight to inspect its timings, fuel, touchdown and event timeline.</div>';$('logbookEditor').hidden=true;return}
   const f=entry.flight||{},t=entry.times||{},dur=entry.durations||{},m=entry.metrics||{},fuel=entry.fuel||{},d=entry.debrief||{},events=entry.events||[];
@@ -5365,7 +5385,7 @@ function bbHumanLabel(key){const labels={battery:'BATTERY',battery_1:'BATTERY 1'
 function bbHumanValue(key,value){if(value==null)return 'N/A';if(typeof value==='boolean')return value?'ON':'OFF';const enums={engine_mode:{0:'CRANK',1:'NORM',2:'IGN/START'},apu_selector:{0:'OFF',1:'ON',2:'START'},seatbelt_selector:{0:'OFF',1:'AUTO',2:'ON'},seatbelt_sign:{0:'OFF',1:'ON'},gear_handle:{0:'UP',1:'DOWN'},flap_handle:{0:'UP',1:'1',2:'2 / 5',3:'3 / 15',4:'FULL / 20',5:'25',6:'30'},irs_1:{0:'OFF',1:'NAV',2:'ATT'},irs_2:{0:'OFF',1:'NAV',2:'ATT'},irs_3:{0:'OFF',1:'NAV',2:'ATT'},autobrake:{0:'RTO',1:'OFF',2:'DISARM',3:'1',4:'2',5:'3',6:'4',7:'MAX AUTO'}};const n=Number(value);if(Number.isFinite(n)&&enums[key]?.[Math.round(n)]!=null)return enums[key][Math.round(n)];if(Number.isFinite(n)){if(key.includes('pressure'))return `${Math.round(n).toLocaleString()} PSI`;if(key.includes('percent')||key.includes('handle'))return `${Math.round(n)}%`;return Math.abs(n)>=10?Math.round(n).toLocaleString():n.toFixed(1)}return String(value)}
 
 function blackBoxTime(seconds){seconds=Math.max(0,Number(seconds)||0);const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=Math.floor(seconds%60);return h?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
-function blackBoxFlightLabel(row){const f=row?.flight||{},route=[f.origin,f.destination].filter(Boolean).join(' ? ');return `${f.callsign||'FLIGHT'}${route?' · '+route:''}`}
+function blackBoxFlightLabel(row){const f=row?.flight||{},route=[f.origin,f.destination].filter(Boolean).join(' → ');return `${f.callsign||'FLIGHT'}${route?' · '+route:''}`}
 function blackBoxTechnicalDetails(detail,id){const file=detail?.file||'---',schema=detail?.schema??'---',categories=detail?.provider_categories||detail?.capability_manifest?.providers||{},sourceParts=[categories.core?'Flight path':null,categories.controls?'Controls':null,categories.engines?'Engines':null].filter(Boolean);const source=sourceParts.length?sourceParts.join(', '):(detail?.last_provider?'Recorded':'Saving');return `<details class="blackbox-technical"><summary>More details</summary><div><span>Saved file</span><code>${escapeHtml(file)}</code></div><div><span>Recording tag</span><code title="${escapeHtml(id||'')}">${escapeHtml(id||'---')}</code></div><div><span>What was captured</span><code>${escapeHtml(source)} · ${escapeHtml(String(schema))}</code></div></details>`}
 function blackBoxHealthLabel(value){const v=String(value||'').toUpperCase();return v==='OK'||v==='GOOD'?'Good':v==='WAITING'?'Starting up':v==='PARTIAL'||v==='PARTIAL_RECORDING'?'Partial':v==='STALLED'||v==='TIMEOUT'||v==='STALE'?'Telemetry lost':'Recording'}
 function blackBoxSourceLabel(providers){const cats=providers||{};const parts=[cats.core?'Flight path':null,cats.controls?'Controls':null,cats.engines?'Engines':null].filter(Boolean);return parts.length?parts.join(', '):'Connecting to simulator'}
@@ -6091,7 +6111,7 @@ function renderFinanceEstimate(d){
   const opLabel=String(d.operation?.resolved||'auto').toUpperCase();
   const freightHtml=(d.commercial_freight_weight!==null&&d.commercial_freight_weight!==undefined)?`<article><span>Commercial freight</span><b>${numberOr(d.commercial_freight_weight)} ${escapeHtml(unitPrefs().weight.toUpperCase())}</b><small>${d.commercial_freight_weight>0?`Freight revenue ${money(d.commercial_freight_revenue,d.symbol)}`:'No revenue-generating freight'}</small></article>`:'';
   const paxHtml=pax.total!==undefined&&pax.total!==null?`<b>${pax.total}</b><small>Economy ${pax.economy||0} · Business ${pax.business||0} · First ${pax.first||0}</small>`:`<b>—</b><small>No passenger load for this operation</small>`;
-  $('financeEstimate').innerHTML=`<div class="finance-statement-grid"><article><span>Flight plan</span><b>${escapeHtml(route.origin||'----')} ? ${escapeHtml(route.destination||'----')}</b><small>${Number(route.distance_nm||0).toFixed(0)} NM planned distance</small></article><article><span>Operation</span><b>${escapeHtml(opLabel)}</b><small>${escapeHtml(d.operation?.reason||'Automatic classification')}</small></article><article><span>Passenger plan</span>${paxHtml}</article>${freightHtml}<article><span>Automatic fare plan</span><b>${money(fares.economy,sym)} / ${money(fares.business,sym)} / ${money(fares.first,sym)}</b><small>Economy · Business · First</small></article><article><span>Expected revenue</span><b>${money(air.revenue?.total,sym)}</b><small>Passengers ${money(air.revenue?.passenger,sym)} · Cargo ${money(air.revenue?.cargo,sym)}</small></article><article><span>Expected operating cost</span><b>${money(costs.total,sym)}</b><small>Fuel ${money(costs.fuel,sym)} · Services ${money(costs.ground_services,sym)}</small></article><article><span>Expected flight result</span><b class="${Number(air.profit)>=0?'profit-positive':'profit-negative'}">${money(air.profit,sym)}</b><small>Estimate before the flight is posted</small></article><article><span>Estimated pilot pay</span><b>${money(pilot.pay,sym)}</b><small>${escapeHtml(pilot.rank?.label||'Pilot')} · current pay model</small></article><article><span>Ground-service basis</span><b>${money(costs.ground_services,sym)}</b><small>Departure ${money(costs.ground_services_departure,sym)} · ${escapeHtml(depSource)}<br>Arrival ${money(costs.ground_services_arrival,sym)} · ${escapeHtml(arrSource)}</small></article></div>`
+  $('financeEstimate').innerHTML=`<div class="finance-statement-grid"><article><span>Flight plan</span><b>${escapeHtml(route.origin||'----')} → ${escapeHtml(route.destination||'----')}</b><small>${Number(route.distance_nm||0).toFixed(0)} NM planned distance</small></article><article><span>Operation</span><b>${escapeHtml(opLabel)}</b><small>${escapeHtml(d.operation?.reason||'Automatic classification')}</small></article><article><span>Passenger plan</span>${paxHtml}</article>${freightHtml}<article><span>Automatic fare plan</span><b>${money(fares.economy,sym)} / ${money(fares.business,sym)} / ${money(fares.first,sym)}</b><small>Economy · Business · First</small></article><article><span>Expected revenue</span><b>${money(air.revenue?.total,sym)}</b><small>Passengers ${money(air.revenue?.passenger,sym)} · Cargo ${money(air.revenue?.cargo,sym)}</small></article><article><span>Expected operating cost</span><b>${money(costs.total,sym)}</b><small>Fuel ${money(costs.fuel,sym)} · Services ${money(costs.ground_services,sym)}</small></article><article><span>Expected flight result</span><b class="${Number(air.profit)>=0?'profit-positive':'profit-negative'}">${money(air.profit,sym)}</b><small>Estimate before the flight is posted</small></article><article><span>Estimated pilot pay</span><b>${money(pilot.pay,sym)}</b><small>${escapeHtml(pilot.rank?.label||'Pilot')} · current pay model</small></article><article><span>Ground-service basis</span><b>${money(costs.ground_services,sym)}</b><small>Departure ${money(costs.ground_services_departure,sym)} · ${escapeHtml(depSource)}<br>Arrival ${money(costs.ground_services_arrival,sym)} · ${escapeHtml(arrSource)}</small></article></div>`
 }
 
 function renderFinances(data){
@@ -6117,7 +6137,7 @@ function renderFinances(data){
   if($('financeSummary'))$('financeSummary').innerHTML=`<div class="finance-dual-ledger">${latestHtml}<section><h3>Career</h3><div class="finance-kpi-row"><article><span>Airline balance</span><b>${money(data.airline_balance,sym)}</b></article><article><span>Pilot wallet</span><b>${money(data.pilot_balance,sym)}</b></article><article><span>Lifetime revenue</span><b>${money(tot.airline_revenue,sym)}</b></article><article><span>Lifetime operating cost</span><b>${money(tot.airline_costs,sym)}</b></article>${lifetimeSatisHtml}</div></section></div>`;
   if($('financeRank'))$('financeRank').innerHTML=`<div class="rank-current"><span>Current position</span><b>${escapeHtml(cur.label||'Cadet')}</b><small>${progress.pireps||0} completed flights · ${Number(progress.block_hours||0).toFixed(1)} block hours</small></div><div class="rank-progress"><span>Next position</span><b>${rankStr(next)}</b><small>${progress.pireps||0}/${progress.next_pireps||0} flights · ${Number(progress.block_hours||0).toFixed(1)}/${progress.next_block_hours||0} block hours</small><i style="width:${Math.max(0,Math.min(100,Number(progress.percent)||0))}%"></i></div>`;
   if($('financeRanks')){try{const ladder=[...(rank.ladder||[])].reverse();$('financeRanks').innerHTML=ladder.map(r=>`<article class="${r.key===cur.key?'active':''}"><span>${rankInsignia(r.key)}</span><b>${escapeHtml(r.label)}</b><small>${r.pireps} completed flights · ${r.block_hours} block hours${r.key===cur.key?' · Current position':''}</small></article>`).join('')}catch(e){$('financeRanks').innerHTML='<div class="network-empty">Rank history is temporarily unavailable.</div>'}}
-  if($('financeLedger'))$('financeLedger').innerHTML=(data.ledger||[]).length?(data.ledger||[]).slice(0,16).map(item=>{const row=item.statement||{},rowAir=row.airline||{},rowPilot=row.pilot||{},rowRoute=row.route||{};return `<div><time>${messageTime(item.time)}Z</time><b>${escapeHtml(item.callsign||'Flight')} · ${escapeHtml(rowRoute.origin||'----')} ? ${escapeHtml(rowRoute.destination||'----')}</b><span>Result ${money(rowAir.profit,sym)} · Pilot pay ${money(rowPilot.pay,sym)}</span></div>`}).join(''):'<div class="network-empty">No completed flight statements yet.</div>';
+  if($('financeLedger'))$('financeLedger').innerHTML=(data.ledger||[]).length?(data.ledger||[]).slice(0,16).map(item=>{const row=item.statement||{},rowAir=row.airline||{},rowPilot=row.pilot||{},rowRoute=row.route||{};return `<div><time>${messageTime(item.time)}Z</time><b>${escapeHtml(item.callsign||'Flight')} · ${escapeHtml(rowRoute.origin||'----')} → ${escapeHtml(rowRoute.destination||'----')}</b><span>Result ${money(rowAir.profit,sym)} · Pilot pay ${money(rowPilot.pay,sym)}</span></div>`}).join(''):'<div class="network-empty">No completed flight statements yet.</div>';
   if($('financeSetupCurrency'))$('financeSetupCurrency').value=data.currency||'EUR';
   if($('financeSetupPace'))$('financeSetupPace').value=career.progression_pace||'standard';
   if($('financeFareAuto'))$('financeFareAuto').checked=fare.auto!==false;
@@ -6426,7 +6446,7 @@ function updatePerformanceFlaps(){
   if(select) select.innerHTML = flaps.length ? flaps.map(f=>`<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('') : '<option value="">AUTO</option>';
   if(profile && $('perfWeight')){
     const w = mode === 'landing' ? profile.weights?.max_lw_kg : profile.weights?.max_tow_kg;
-    if(w && (!$('perfWeight').value || Number($('perfWeight').value) <= 1)) $('perfWeight').value = Math.round(Number(w)*0.9);
+    if(w && (!$('perfWeight').value || Number($('perfWeight').value) <= 1)) $('perfWeight').value = perfKgToDisplay(Number(w)*0.9);
   }
 }
 
@@ -6465,19 +6485,86 @@ function renderPerformanceTlr(){
   box.innerHTML=`<strong>SIMBRIEF TLR DETAILS</strong><span>${escapeHtml(tlr.detailText)}</span><span>OPS ROOM calculator is primary; TLR shown as cross-check.</span>`;
   box.hidden=false;
 }
+// Performance-tab weight units follow the Host unit preference (KG default / LB);
+// the engine always receives kg — conversion happens only at the payload boundary.
+function perfWeightCfg(){
+  return {unit: (settings?.interface?.units?.weight || 'kg') === 'lb' ? 'lb' : 'kg', factor: (settings?.interface?.units?.weight || 'kg') === 'lb' ? 2.2046226218 : 1};
+}
+function perfKgToDisplay(kg){return Math.round(Number(kg||0)*perfWeightCfg().factor)}
+function perfDisplayToKg(value){const n=Number(value);if(!Number.isFinite(n))return 0;return perfWeightCfg().unit==='lb'?n*0.45359237:n}
+function perfSetWeightLabel(){
+  const unitEl=$('perfWeightUnit');
+  if(unitEl) unitEl.textContent = perfWeightCfg().unit.toUpperCase();
+  const field=$('perfWeight');
+  if(field && perfWeightCfg().unit==='lb' && field.value==='65000') field.value='143300'; // kg default -> lb default
+}
+function perfCgHighlight(){
+  const cg=$('perfCg')?.value;
+  const note=$('perfCgNote');
+  if(note) note.hidden = (cg!=='' && cg!=null && Number(cg)>0);
+}
+function perfActiveStation(){
+  const mode=$('perfMode')?.value||'takeoff';
+  const plan=flightPlan||{};
+  return mode==='landing'?(plan.destination||{}):(plan.origin||{});
+}
+async function fillPerformanceWeatherLive(){
+  const badge=$('perfWeatherSource');
+  const station=perfActiveStation();
+  const icao=String(station?.icao||station?.code||'').trim().toUpperCase();
+  if(!icao){if(badge){badge.textContent='SIMBRIEF OFP';badge.classList.remove('live')}return 'SIMBRIEF OFP'}
+  try{
+    const data=await fetch(`/api/weather/${encodeURIComponent(icao)}`,{cache:'no-store'}).then(r=>r.json());
+    const m=data?.metar||{};
+    if(m?.ok){
+      const d=m.decoded||{};
+      if(d.wind_direction_deg!=null&&$('perfWindDir'))$('perfWindDir').value=Math.round(Number(d.wind_direction_deg));
+      if(d.wind_speed_kts!=null&&$('perfWindSpeed'))$('perfWindSpeed').value=Math.round(Number(d.wind_speed_kts));
+      if(d.temperature_c!=null&&$('perfOat'))$('perfOat').value=Math.round(Number(d.temperature_c));
+      if(d.qnh_hpa!=null&&$('perfQnh'))$('perfQnh').value=Math.round(Number(d.qnh_hpa));
+      if(badge){badge.textContent=`LIVE METAR · ${icao}`;badge.classList.add('live')}
+      return 'LIVE METAR';
+    }
+  }catch{/* live fetch failed — keep the OFP weather */}
+  if(badge){badge.textContent='SIMBRIEF OFP';badge.classList.remove('live')}
+  return 'SIMBRIEF OFP';
+}
+async function fillPerformanceLiveWeight(){
+  const hint=$('perfLiveWeightHint');
+  try{
+    const data=await fetch('/api/flight-watch?force_refresh=false',{cache:'no-store'}).then(r=>r.json());
+    const t=data?.telemetry||{};
+    const grossLb=Number(t.gross_weight_lb);
+    if(!(data?.ok&&Number.isFinite(grossLb)&&grossLb>0)){if(hint)hint.hidden=true;return}
+    const grossKg=grossLb*0.45359237;
+    const field=$('perfWeight');
+    if(field) field.value=perfKgToDisplay(grossKg);
+    const fuelLb=Number(t.fuel_weight_lb ?? t.fuel_total_lb);
+    const zfwKg=Number.isFinite(fuelLb)&&fuelLb>0?grossKg-fuelLb*0.45359237:grossKg;
+    const planKg=Number(flightPlan?.weights?.takeoff_kg||flightPlan?.weights?.tow_kg||0);
+    const unit=perfWeightCfg().unit.toUpperCase();
+    const parts=[`LIVE SIM ${perfKgToDisplay(grossKg).toLocaleString()} ${unit}`];
+    if(Number.isFinite(zfwKg)&&zfwKg>0&&Math.abs(zfwKg-grossKg)>50)parts.push(`ZFW ${perfKgToDisplay(zfwKg).toLocaleString()} ${unit}`);
+    if(planKg>0&&Math.abs(grossKg-planKg)>500)parts.push(`PLAN ${perfKgToDisplay(planKg).toLocaleString()} ${unit}`);
+    if(hint){hint.textContent=parts.join(' · ');hint.hidden=false}
+  }catch{if(hint)hint.hidden=true}
+}
 function fillPerformanceFromSimbrief(){
   if(!flightPlan?.ok) return;
+  perfSetWeightLabel();
   const weights = flightPlan.weights || flightPlan.weight || {};
   const mode = $('perfMode')?.value || 'takeoff';
   const tow = Number(weights.takeoff_kg || weights.tow_kg || flightPlan.takeoff_weight_kg || 0);
   const lw = Number(weights.landing_kg || weights.lw_kg || flightPlan.landing_weight_kg || 0);
   const zfw = Number(weights.zfw_kg || weights.zfw || 0);
-  if($('perfWeight')) $('perfWeight').value = Math.round((mode === 'landing' ? lw : tow) || tow || lw || Number($('perfWeight').value) || 0);renderPerformanceTlr();
+  const planKg = (mode === 'landing' ? lw : tow) || tow || lw || 0;
+  if($('perfWeight') && planKg > 0) $('perfWeight').value = perfKgToDisplay(planKg);
   // ZFW / CG from SimBrief weights (CG is % MAC — the V-speed + trim model needs it).
   if($('perfCg')){
     const cg = Number(weights.zfwcg ?? weights.zfw_cg ?? 0);
     if(cg > 0) $('perfCg').value = cg;
   }
+  perfCgHighlight();
   if(flightPlan.origin?.elevation_ft && mode !== 'landing') $('perfElevation').value = Math.round(Number(flightPlan.origin.elevation_ft)||0);
   if(flightPlan.destination?.elevation_ft && mode === 'landing') $('perfElevation').value = Math.round(Number(flightPlan.destination.elevation_ft)||0);
   // Runway + weather from the departure/destination station: the OFP/METAR
@@ -6499,7 +6586,7 @@ async function calculatePerformance(){
   const payload = {
     mode: $('perfMode')?.value || 'takeoff',
     aircraft: $('perfAircraft')?.value,
-    weight_kg: numberInput('perfWeight', 0),
+    weight_kg: perfDisplayToKg(numberInput('perfWeight', 0)),
     runway_length_m: numberInput('perfRunwayLength', 0),
     runway_heading: numberInput('perfRunwayHeading', 0),
     wind_dir: numberInput('perfWindDir', 0),
@@ -6539,6 +6626,10 @@ async function calculatePerformance(){
 
 async function startPerformance(){
   await loadPerformanceProfiles();
+  perfSetWeightLabel();
+  fillPerformanceFromSimbrief();
+  await fillPerformanceWeatherLive();
+  await fillPerformanceLiveWeight();
   renderPerformanceTlr();
 }
 
@@ -7067,9 +7158,9 @@ function setup(){
   $('deviceScale').addEventListener('change',event=>applyDeviceScale(event.target.value));
   $('terminalHomeStyle')?.addEventListener('change',event=>setTerminalHomeStyle(event.target.value));
   $('perfAircraft')?.addEventListener('change',updatePerformanceFlaps);
-  $('perfMode')?.addEventListener('change',()=>{updatePerformanceFlaps();fillPerformanceFromSimbrief();renderPerformanceTlr();});
+  $('perfMode')?.addEventListener('change',()=>{updatePerformanceFlaps();fillPerformanceFromSimbrief();fillPerformanceWeatherLive();fillPerformanceLiveWeight();renderPerformanceTlr();});
   $('perfCalculate')?.addEventListener('click',calculatePerformance);
-  $('perfFromSimbrief')?.addEventListener('click',()=>{fillPerformanceFromSimbrief();calculatePerformance()});
+  $('perfFromSimbrief')?.addEventListener('click',async ()=>{fillPerformanceFromSimbrief();await fillPerformanceWeatherLive();await fillPerformanceLiveWeight();calculatePerformance()});
   $('openFidsLink')?.addEventListener('click',event=>{event.preventDefault(); const w=window.open('/vatsim-fids','opsroom-fids'); if(w) w.focus();});
   $('efbClassicMode')?.addEventListener('click',()=>{setTerminalHomeStyle('classic');showPage('home')});
   $('efbFullscreen')?.addEventListener('click',toggleFullscreen);

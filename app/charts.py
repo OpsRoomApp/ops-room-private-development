@@ -1336,7 +1336,11 @@ def chartfox_chart_file_proxy(chart_id: str, use_cache: bool = True) -> dict:
     def _download_and_cache(url: str, is_pdf: bool) -> dict | None:
         token = _chartfox_load_token()
         access_token = token.get("access_token")
-        headers = {}
+        # #41: supplier AIP URLs are public browser documents; several CAA
+        # publishers (e.g. carc.gov.jo for OJAI) refuse bot user-agents with
+        # HTTP 451. Send a browser-like UA on every file download — harmless
+        # for ChartFox mirrors, which keep their Bearer auth below.
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"}
         # Only send Bearer auth for chartfox.org URLs (files[] mirrors).
         # Supplier URLs like NATS AIP are public and don't need auth.
         if "chartfox.org" in url.lower() or "chartfox" in url.lower():

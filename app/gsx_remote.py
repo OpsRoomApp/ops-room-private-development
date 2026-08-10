@@ -1896,6 +1896,24 @@ def _operator_observer_choice(menu: dict[str, Any], live_simbrief: Any = None) -
                 }
         return None
 
+    def first_company_choice() -> dict[str, Any] | None:
+        # #40 tier 3 (user-defined priority: airline match -> GSX choice -> any
+        # operator): when the menu has no airline match and no [GSX choice]
+        # label, select the first enabled company option instead of giving up
+        # ("pilot selection required"). Returns None only when there are no
+        # enabled company options at all, keeping the pilot-selection safety net.
+        for raw_index in company_indices:
+            if raw_index >= len(options) or disabled[raw_index]:
+                continue
+            return {
+                "index": raw_index,
+                "label": str(options[raw_index]),
+                "candidate": "first available operator",
+                "score": 0,
+                "fallback": True,
+            }
+        return None
+
     candidates = _operator_observer_candidates(live_simbrief)
 
     # Authoritative brand contains-match shortcut. The early-resolved operating
@@ -1938,7 +1956,7 @@ def _operator_observer_choice(menu: dict[str, Any], live_simbrief: Any = None) -
             }
 
     if not candidates:
-        return gsx_choice()
+        return gsx_choice() or first_company_choice()
     ranked: list[tuple[int, int, int, str]] = []
     for raw_index in company_indices:
         if raw_index >= len(options) or disabled[raw_index]:
@@ -1955,15 +1973,15 @@ def _operator_observer_choice(menu: dict[str, Any], live_simbrief: Any = None) -
             # Prefer the shorter plain brand when scores are otherwise equal.
             ranked.append((best_score, -len(_operator_core_words(label)), -raw_index, best_candidate))
     if not ranked:
-        return gsx_choice()
+        return gsx_choice() or first_company_choice()
     ranked.sort(reverse=True)
     best_score, _shortness, negative_index, matched_candidate = ranked[0]
     raw_index = -negative_index
     second_score = ranked[1][0] if len(ranked) > 1 else 0
     if best_score < 620:
-        return gsx_choice()
+        return gsx_choice() or first_company_choice()
     if best_score < 1050 and second_score and best_score - second_score < 35:
-        return gsx_choice()
+        return gsx_choice() or first_company_choice()
     brand = candidates[0] if candidates else matched_candidate
     _automation_record(
         "OPERATOR",

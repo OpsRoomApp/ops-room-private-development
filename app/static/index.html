@@ -16,9 +16,9 @@
   <link rel="icon" href="/static/icons/opsroom-192.png" />
   <link rel="apple-touch-icon" href="/static/icons/opsroom-192.png" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.9.0/ol.css" />
-  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-73" />
-  <script src="/static/pdf.min.js?v=0-25-73"></script>
-  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js?v=0-25-73';</script>
+  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-75" />
+  <script src="/static/pdf.min.js?v=0-25-75"></script>
+  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js?v=0-25-75';</script>
 </head>
 <body>
   <div id="raasGlobalAlert" class="raas-global-alert" aria-live="assertive" hidden></div>
@@ -117,7 +117,7 @@
         <button class="nav-item" data-page="system" aria-label="SYSTEM">SYSTEM</button>
       </nav>
       <div class="rail-footer">
-        <span>OPS ROOM 0.25.73 PUBLIC RELEASE</span>
+        <span>OPS ROOM 0.25.75 PUBLIC RELEASE</span>
         <span>LAN CONSOLE</span>
         <span>SIMULATION USE ONLY</span>
       </div>
@@ -247,23 +247,39 @@
         </div>
         <section class="panel performance-panel">
           <header><span>TAKEOFF / LANDING</span><span>EXPERIMENTAL · SIM-ONLY</span></header>
-          <div class="performance-grid">
-            <label>MODE<select id="perfMode"><option value="takeoff">TAKEOFF</option><option value="landing">LANDING</option></select></label>
-            <label>AIRCRAFT<select id="perfAircraft"></select></label>
-            <label>WEIGHT KG<input id="perfWeight" type="number" value="65000" min="1" step="100" /></label>
-            <label>CG % MAC<input id="perfCg" type="number" value="" min="0" max="45" step="0.1" placeholder="AUTO" /></label>
-            <label>RUNWAY LENGTH M<input id="perfRunwayLength" type="number" value="3000" min="1" step="10" /></label>
-            <label>RUNWAY HDG<input id="perfRunwayHeading" type="number" value="250" min="0" max="360" step="1" /></label>
-            <label>WIND DIR<input id="perfWindDir" type="number" value="250" min="0" max="360" step="1" /></label>
-            <label>WIND KT<input id="perfWindSpeed" type="number" value="5" min="0" step="1" /></label>
-            <label>OAT °C<input id="perfOat" type="number" value="15" step="1" /></label>
-            <label>QNH HPA<input id="perfQnh" type="number" value="1013" step="1" /></label>
-            <label>ELEV FT<input id="perfElevation" type="number" value="0" step="10" /></label>
-            <label>SLOPE %<input id="perfSlope" type="number" value="0" step="0.1" /></label>
-            <label>RUNWAY STATE<select id="perfCondition"><option value="dry">DRY</option><option value="wet">WET</option><option value="contaminated">CONTAMINATED</option></select></label>
-            <label>FLAP<select id="perfFlap"></select></label>
-            <label>ANTI-ICE<select id="perfAntiIce"><option value="false">OFF</option><option value="true">ON</option></select></label>
-            <label>PACKS<select id="perfPacks"><option value="true">ON</option><option value="false">OFF</option></select></label>
+          <div class="performance-sections">
+            <section class="perf-section">
+              <header class="perf-section-title">AIRCRAFT / WEIGHTS</header>
+              <div class="performance-grid">
+                <label>MODE<select id="perfMode"><option value="takeoff">TAKEOFF</option><option value="landing">LANDING</option></select></label>
+                <label>AIRCRAFT<select id="perfAircraft"></select></label>
+                <label><span>WEIGHT <b id="perfWeightUnit">KG</b></span><input id="perfWeight" type="number" value="65000" min="1" step="100" /></label>
+                <label class="perf-cg-field"><span>ZFW CG % MAC</span><input id="perfCg" type="number" value="" min="0" max="45" step="0.1" placeholder="AUTO" /><small id="perfCgNote">ENTER MANUALLY — everything else auto-fills</small></label>
+                <label>FLAP<select id="perfFlap"></select></label>
+                <label>ANTI-ICE<select id="perfAntiIce"><option value="false">OFF</option><option value="true">ON</option></select></label>
+                <label>PACKS<select id="perfPacks"><option value="true">ON</option><option value="false">OFF</option></select></label>
+              </div>
+              <div id="perfLiveWeightHint" class="perf-live-hint" hidden></div>
+            </section>
+            <section class="perf-section">
+              <header class="perf-section-title">AIRPORT / RUNWAY</header>
+              <div class="performance-grid">
+                <label>RUNWAY LENGTH M<input id="perfRunwayLength" type="number" value="3000" min="1" step="10" /></label>
+                <label>RUNWAY HDG<input id="perfRunwayHeading" type="number" value="250" min="0" max="360" step="1" /></label>
+                <label>ELEV FT<input id="perfElevation" type="number" value="0" step="10" /></label>
+                <label>SLOPE %<input id="perfSlope" type="number" value="0" step="0.1" /></label>
+                <label>RUNWAY STATE<select id="perfCondition"><option value="dry">DRY</option><option value="wet">WET</option><option value="contaminated">CONTAMINATED</option></select></label>
+              </div>
+            </section>
+            <section class="perf-section">
+              <header class="perf-section-title">WEATHER <span id="perfWeatherSource" class="perf-weather-source">SIMBRIEF OFP</span></header>
+              <div class="performance-grid">
+                <label>WIND DIR<input id="perfWindDir" type="number" value="250" min="0" max="360" step="1" /></label>
+                <label>WIND KT<input id="perfWindSpeed" type="number" value="5" min="0" step="1" /></label>
+                <label>OAT °C<input id="perfOat" type="number" value="15" step="1" /></label>
+                <label>QNH HPA<input id="perfQnh" type="number" value="1013" step="1" /></label>
+              </div>
+            </section>
           </div>
           <div class="heading-actions performance-actions"><button id="perfCalculate" class="control-button primary" type="button">CALCULATE</button><button id="perfFromSimbrief" class="control-button" type="button">AUTO-FILL FROM SIMBRIEF</button></div>
           <div id="performanceResult" class="performance-result"><div><span>STATUS</span><b>WAITING</b></div><div><span>REQUIRED</span><b>---</b></div><div><span>MARGIN</span><b>---</b></div><div><span>SPEEDS</span><b>---</b></div></div><div id="performanceTlr" class="performance-tlr" hidden></div>
@@ -994,6 +1010,6 @@
   <!-- v0.25.60: Thermal receipt preview modal -->
   <div id="printerPreviewModal"><div class="printer-preview-dialog"><div class="printer-preview-header"><span>80MM RECEIPT PREVIEW</span><button id="printerPreviewClose" type="button" aria-label="Close preview">&times;</button></div><div class="printer-preview-body" id="printerPreviewBody"></div><div class="printer-preview-footer"><button id="printerPreviewCopyBtn" class="printer-preview-btn-copy" type="button">COPY RAW TEXT</button><button id="printerPreviewCloseBtn" class="printer-preview-btn-close" type="button">CLOSE</button></div></div></div>
   <script src="https://cdn.jsdelivr.net/npm/ol@10.9.0/dist/ol.js"></script>
-  <script src="/static/opsroom.js?v=0-25-73"></script>
+  <script src="/static/opsroom.js?v=0-25-75"></script>
 </body>
 </html>

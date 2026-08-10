@@ -394,10 +394,23 @@ def start(recording_id: str, *, speed: float = 1.0, loop: bool = False, start_el
         pass
     if status().get("active"):
         stop()
-    if black_box.status().get("recording"):
-        return {"ok": False, "detail": "Stop the active Black Box recording before replay."}
     if _normal_recording_active() and not force:
         return {"ok": False, "detail": "A live OPS ROOM flight recording is active. Complete it first before in-simulator replay."}
+    if black_box.status().get("recording"):
+        # No live logbook flight is being recorded (checked above), so any
+        # active Black Box recording belongs to a flight that has already been
+        # completed. Finalize normally closes it, but the post-arrival hold,
+        # an app restart or a second recording for the same flight can leave a
+        # stale recorder running (live evidence: RJA403 replayed while its own
+        # Black Box recorder was still active, every attempt returned 409).
+        # SkyDolly-style: replay takes over the user aircraft, so close the
+        # stale recorder (clean stop: WAL checkpoint + .opsbb rename) and
+        # proceed instead of hard-failing.
+        try:
+            stopped = black_box.stop_recording("REPLAY TAKEOVER")
+            _LOG.info("black_box_replay start: closed stale Black Box recording %s before replay", stopped.get("recording_id"))
+        except Exception as exc:
+            return {"ok": False, "detail": f"Could not stop the active Black Box recording: {type(exc).__name__}: {exc}"}
     rows = list(black_box.iter_samples(recording_id))
     if len(rows) < 2:
         return {"ok": False, "detail": "The selected Black Box recording has insufficient samples."}

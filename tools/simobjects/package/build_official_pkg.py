@@ -22,7 +22,7 @@ Emits the *official* 2024 project layout, matching the SDK's Windsock sample
 
 Input: official Blender 4.2 + MSFS addon exports (per-model folders).
 
-Lights (X_LIGHTED_TRAILER + both BARRICADE_T3_*): v0.25.74 - all objects
+Lights (X_LIGHTED_TRAILER + both BARRICADE_T3_*): v0.25.75 - all objects
 (light markers included) now ship as Misc/StaticObject, the category of the
 plain X markers that NEVER moved. The earlier GroundVehicle experiment
 (rounds 10-13) made the fx emitters tick (round 7/8/9 had shown Misc/StaticObject
@@ -112,7 +112,7 @@ OBJECTS: list[tuple[str, str]] = [
 
 OBJECTS_WITH_LIGHTS = {"X_LIGHTED_TRAILER", "BARRICADE_T3_ORANGE", "BARRICADE_T3_WHITE"}
 
-#: v0.25.74: ALL objects ship as Misc/StaticObject. The GroundVehicle
+#: v0.25.75: ALL objects ship as Misc/StaticObject. The GroundVehicle
 #: experiment (rounds 10-13) gave the fx emitters a ticking vehicle sim, but
 #: SimConnect-spawned AI ground vehicles in MSFS 2024 keep DRIVING no matter
 #: what (SIM DISABLED every 3 s + max_speed 0.1 + no [WAYPOINT] all failed
@@ -339,7 +339,7 @@ def _project_xml() -> str:
 
 
 def _object_subfolder(folder: str) -> str:
-    # v0.25.74: every object (including the light markers) ships under
+    # v0.25.75: every object (including the light markers) ships under
     # SimObjects/Misc as StaticObject - the category that stays parked.
     return "Misc"
 
@@ -462,7 +462,7 @@ def stage(models_dir: Path, stage_root: Path) -> Path:
         model_dir.mkdir(parents=True, exist_ok=True)
         texture_dir.mkdir(parents=True, exist_ok=True)
 
-        # v0.25.74: all objects use the StaticObject sim.cfg (Misc category)
+        # v0.25.75: all objects use the StaticObject sim.cfg (Misc category)
         # - the category that never moves, exactly like the plain X markers.
         _write_lf(obj_dir / "sim.cfg", SIM_CFG_TEMPLATE.format(title=title))
         _write_lf(model_dir / "model.cfg", MODEL_CFG_TEMPLATE.format(name=folder))
@@ -514,7 +514,7 @@ def stage(models_dir: Path, stage_root: Path) -> Path:
             # Round 10/11: systems.cfg [LIGHTS] + per-node fx emitters. The
             # model.xml ships WITHOUT a <Behaviors> block (see header) - the
             # chase/siren animation comes entirely from these fx emitters.
-            # v0.25.74: kept for the light objects even though they now live
+            # v0.25.75: kept for the light objects even though they now live
             # under Misc/StaticObject - static-object fx emitters may not
             # tick, but the glTF street-light nodes + emissive lenses are the
             # primary lights; the fx files are a harmless bonus (and they

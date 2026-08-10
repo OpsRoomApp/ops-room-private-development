@@ -17,7 +17,7 @@ spawned is exactly what the app would deploy:
     taxiway (width / sin(entry angle)), pushed out to >= 6 m lateral so no
     barricade straddles the runway, edge-to-edge 3.7 m spacing, nearest
     -first ordering.
-  - v0.25.74: all objects (barricades + lighted X included) are now
+  - v0.25.75: all objects (barricades + lighted X included) are now
     Misc/StaticObject in the package, the category of the plain X markers
     that NEVER move - so no SIM DISABLED writes are needed (the old
     GroundVehicle category drove the AI vehicles away no matter what; the
@@ -44,7 +44,7 @@ _UNUSED = 0xFFFFFFFF
 # Client-side data definition ID for SIM DISABLED (outside lib ranges).
 _SIM_DISABLED_DEF = 0x00007FF1
 
-# v0.25.74: all objects are Misc/StaticObject now (the parked category), so
+# v0.25.75: all objects are Misc/StaticObject now (the parked category), so
 # SIM DISABLED is a no-op - kept empty so the keep-alive loop does nothing.
 _GROUND_VEHICLE_TITLES: set[str] = set()
 

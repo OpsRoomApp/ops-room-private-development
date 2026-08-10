@@ -706,7 +706,7 @@ def _barrier_line(line: dict[str, Any], altitude_ft: float, geometry_source: str
     ALONG a shallow taxiway barely clears the edge, which is how the row
     ended up on the runway).
 
-    v0.25.74 (user: "going out of the taxiway onto the ground - the length
+    v0.25.75 (user: "going out of the taxiway onto the ground - the length
     was too long, or the position misplaced"): the v0.25.71-v0.25.73 rows
     ran PARALLEL to the runway and were sized ``width / sin(entry angle)``.
     For a diagonal taxiway that puts the whole row BESIDE the taxiway on
@@ -720,7 +720,7 @@ def _barrier_line(line: dict[str, Any], altitude_ft: float, geometry_source: str
         is walked ALONG the taxiway by backoff / sin(entry angle)), and
       - spans exactly the taxiway width (``width_m``), so the ends stay on
         the pavement.
-    The barricade heading is the ROW direction (v0.25.74: the X-marker
+    The barricade heading is the ROW direction (v0.25.75: the X-marker
     ground truth the user confirmed shows MSFS heading = the model's glTF
     +X axis bearing - the runway X at heading 32.6 = bearing 77.6 - 45 has
     arms along the model X axis at 45 deg to the runway). The T3's long
@@ -743,7 +743,7 @@ def _barrier_line(line: dict[str, Any], altitude_ft: float, geometry_source: str
         rwy_heading: float | None = None
         if rwy is not None and rwy.get("primary", {}).get("heading_deg") is not None:
             rwy_heading = float(rwy["primary"]["heading_deg"])
-        # v0.25.74: row centre on the TAXIWAY centreline, at the point where
+        # v0.25.75: row centre on the TAXIWAY centreline, at the point where
         # the taxiway is HOLD_SHORT_BACKOFF_M off the runway edge (measured
         # perpendicular to the runway). Walking the backoff ALONG the taxiway
         # by backoff / sin(entry angle) keeps a diagonal row on the pavement
@@ -768,7 +768,7 @@ def _barrier_line(line: dict[str, Any], altitude_ft: float, geometry_source: str
         away_proj = None
         if rwy is not None and line.get("away_lat") is not None:
             away_proj = _project_onto_runway(float(line["away_lat"]), float(line["away_lon"]), rwy)
-        # v0.25.74: the taxiway bearing must point INTO the airport (away
+        # v0.25.75: the taxiway bearing must point INTO the airport (away
         # from the runway). A segment that CROSSES the runway has its far end
         # on the OPPOSITE edge, so the edge-endpoint bearing points ACROSS the
         # runway and walking it pulls the row toward the centreline (seen
@@ -777,7 +777,7 @@ def _barrier_line(line: dict[str, Any], altitude_ft: float, geometry_source: str
         if away_proj is not None and e_proj is not None and abs(away_proj[1]) <= abs(e_proj[1]):
             heading = (heading + 180.0) % 360.0
         base_lat, base_lon = _line_offset_point(e_lat, e_lon, heading, backoff_along, lat_m=True)
-        # v0.25.74: when the segment extends away from the runway, keep the
+        # v0.25.75: when the segment extends away from the runway, keep the
         # row INSIDE it - clamp the walk to the segment length so a short
         # stub never places the row past the pavement.
         if away_proj is not None and e_proj is not None and abs(away_proj[1]) > abs(e_proj[1]):
@@ -786,13 +786,13 @@ def _barrier_line(line: dict[str, Any], altitude_ft: float, geometry_source: str
                 base_lat, base_lon = _line_offset_point(
                     e_lat, e_lon, heading, max(seg_len - 8.0, 12.0), lat_m=True
                 )
-        # v0.25.74: row spans exactly the taxiway width (perpendicular to
+        # v0.25.75: row spans exactly the taxiway width (perpendicular to
         # the taxiway), so the ends stay on the pavement - NOT the old
         # width / sin(angle) length that stretched 3-4x wide on shallow
         # entries and dumped the ends on the grass.
         row_len = width_m
         count = max(1, min(int(math.ceil(row_len / BARRIER_SPACING_M)), MAX_HOLD_SHORT_ROW_COUNT))
-        # v0.25.74: row direction = PERPENDICULAR to the taxiway (across the
+        # v0.25.75: row direction = PERPENDICULAR to the taxiway (across the
         # pavement, like the painted hold-short bar).
         row_heading = (heading + 90.0) % 360.0
         # v0.25.76: MSFS heading orients the model's glTF +Z axis (the

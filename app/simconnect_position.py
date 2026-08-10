@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
-from ctypes import Structure, byref, c_double, c_int32, sizeof
+from ctypes import POINTER, Structure, byref, c_double, c_int32, cast, sizeof
 import os
 import sys
 import threading
@@ -91,6 +91,86 @@ _REPLAY_FRAME_LAST_MONO = 0.0
 _LOW_RATE_CACHE: dict[str, Any] = {}
 _LOW_RATE_CACHE_TIME: float = 0.0
 _LOW_RATE_INTERVAL: float = 0.5  # refresh low-rate vars every 500 ms (2 Hz)
+
+# ── Batched minimal reader (Stage 2 SimConnect fast path) ────────────────────
+# The per-SimVar ``aq.get`` path costs one request/response round trip per
+# SimVar (~1 sim frame each). A minimal sample reads ~45 numeric SimVars that
+# way, and because the read takes longer than the wrapper's 125 ms per-var
+# value cache, every read re-fetches everything (measured ~1 Hz fresh). The
+# batched path defines every numeric minimal-path SimVar as one data
+# definition and requests them in a single SimConnect call - one frame of
+# latency per sample, which is what makes 30 Hz SimConnect reads possible
+# without stutter. String SimVars (aircraft title/model/type) stay on a 2 Hz
+# per-var refresh because they cannot share a FLOAT64 batch.
+_BATCH_STATE: dict[str, Any] = {
+    "sm_id": None,
+    "def_id": None,
+    "request_id": None,
+    "names": [],
+    "result": None,
+    "done": None,
+    "backoff_until": 0.0,
+}
+_BATCH_NAMES: list[str] = [
+    # High-rate tier (position / attitude / speeds) - read every sample.
+    "PLANE_LATITUDE", "PLANE_LONGITUDE", "PLANE_ALTITUDE",
+    "INDICATED_ALTITUDE", "INDICATED_ALTITUDE_CALIBRATED", "PRESSURE_ALTITUDE",
+    "AIRSPEED_INDICATED", "GROUND_VELOCITY", "AIRSPEED_TRUE", "AIRSPEED_MACH",
+    "PLANE_HEADING_DEGREES_MAGNETIC", "PLANE_HEADING_DEGREES_GYRO",
+    "GPS_GROUND_MAGNETIC_TRACK", "VERTICAL_SPEED",
+    "PLANE_ALT_ABOVE_GROUND", "RADIO_HEIGHT", "PLANE_PITCH_DEGREES",
+    "PLANE_BANK_DEGREES", "G_FORCE",
+    # Low-rate tier (numeric) - engine flags, surfaces, wind, sim rate.
+    "SIM_ON_GROUND", "FLAPS_HANDLE_INDEX", "GEAR_TOTAL_PCT_EXTENDED",
+    "SPOILERS_HANDLE_POSITION", "FLAPS_HANDLE_PERCENT",
+    "AMBIENT_WIND_VELOCITY", "AMBIENT_WIND_DIRECTION", "SIMULATION_RATE",
+    "IS_LATITUDE_LONGITUDE_FREEZE_ON", "IS_SLEW_ACTIVE", "STALL_WARNING",
+    "OVERSPEED_WARNING", "BRAKE_PARKING_POSITION",
+    "VELOCITY_BODY_X", "VELOCITY_BODY_Y", "VELOCITY_BODY_Z",
+    # Indexed engine / reverser SimVars.
+    "GENERAL_ENG_COMBUSTION:1", "GENERAL_ENG_COMBUSTION:2",
+    "GENERAL_ENG_COMBUSTION:3", "GENERAL_ENG_COMBUSTION:4",
+    "TURB_ENG_REVERSE_NOZZLE_PERCENT:1", "TURB_ENG_REVERSE_NOZZLE_PERCENT:2",
+    # Flight-model weights (slugs -> lb).
+    "TOTAL_WEIGHT", "EMPTY_WEIGHT", "MAX_GROSS_WEIGHT",
+    # Full-stream numeric SimVars (controls / autopilot / radios / engines /
+    # systems / fuel) - one definition covers the whole stream so the full
+    # read costs one frame instead of ~75 per-SimVar round trips.
+    "AILERON_LEFT_DEFLECTION_PCT", "AILERON_RIGHT_DEFLECTION_PCT",
+    "AILERON_POSITION", "ELEVATOR_DEFLECTION_PCT", "ELEVATOR_POSITION",
+    "RUDDER_DEFLECTION_PCT", "RUDDER_PEDAL_POSITION", "RUDDER_POSITION",
+    "YOKE_X_POSITION", "YOKE_Y_POSITION", "BRAKE_LEFT_POSITION",
+    "BRAKE_RIGHT_POSITION", "SPOILERS_LEFT_POSITION", "SPOILERS_RIGHT_POSITION",
+    "TRAILING_EDGE_FLAPS_LEFT_PERCENT",
+    "AUTOPILOT_AIRSPEED_HOLD", "AUTOPILOT_AIRSPEED_HOLD_VAR",
+    "AUTOPILOT_ALTITUDE_LOCK", "AUTOPILOT_ALTITUDE_LOCK_VAR",
+    "AUTOPILOT_APPROACH_HOLD", "AUTOPILOT_DISENGAGED",
+    "AUTOPILOT_FLIGHT_DIRECTOR_ACTIVE", "AUTOPILOT_FLIGHT_DIRECTOR_ACTIVE:1",
+    "AUTOPILOT_FLIGHT_DIRECTOR_ACTIVE:2", "AUTOPILOT_FLIGHT_LEVEL_CHANGE",
+    "AUTOPILOT_HEADING_LOCK", "AUTOPILOT_HEADING_LOCK_DIR",
+    "AUTOPILOT_MACH_HOLD", "AUTOPILOT_MACH_HOLD_VAR",
+    "AUTOPILOT_MANAGED_SPEED_IN_MACH", "AUTOPILOT_MANAGED_THROTTLE_ACTIVE",
+    "AUTOPILOT_MASTER", "AUTOPILOT_NAV1_LOCK", "AUTOPILOT_THROTTLE_ARM",
+    "AUTOPILOT_VERTICAL_HOLD", "AUTOPILOT_VERTICAL_HOLD_VAR",
+    "COM_ACTIVE_FREQUENCY:1", "COM_ACTIVE_FREQUENCY:2",
+    "COM_STANDBY_FREQUENCY:1", "COM_STANDBY_FREQUENCY:2",
+    "COM_TRANSMIT:1", "COM_TRANSMIT:2", "NAV_CDI:1", "NAV_GSI:1",
+    "ENG_FUEL_FLOW_PPH:1", "ENG_FUEL_FLOW_PPH:2", "ENG_FUEL_FLOW_PPH:3", "ENG_FUEL_FLOW_PPH:4",
+    "GENERAL_ENG_EXHAUST_GAS_TEMPERATURE:1", "GENERAL_ENG_EXHAUST_GAS_TEMPERATURE:2",
+    "GENERAL_ENG_EXHAUST_GAS_TEMPERATURE:3", "GENERAL_ENG_EXHAUST_GAS_TEMPERATURE:4",
+    "GENERAL_ENG_THROTTLE_LEVER_POSITION:1", "GENERAL_ENG_THROTTLE_LEVER_POSITION:2",
+    "GENERAL_ENG_THROTTLE_LEVER_POSITION:3", "GENERAL_ENG_THROTTLE_LEVER_POSITION:4",
+    "TURB_ENG_FUEL_FLOW_PPH:1", "TURB_ENG_FUEL_FLOW_PPH:2",
+    "TURB_ENG_FUEL_FLOW_PPH:3", "TURB_ENG_FUEL_FLOW_PPH:4",
+    "TURB_ENG_N1:1", "TURB_ENG_N1:2", "TURB_ENG_N1:3", "TURB_ENG_N1:4",
+    "TURB_ENG_N2:1", "TURB_ENG_N2:2", "TURB_ENG_N2:3", "TURB_ENG_N2:4",
+    "NUMBER_OF_ENGINES", "APU_GENERATOR_SWITCH", "APU_PCT_RPM", "APU_SWITCH",
+    "ELECTRICAL_AVIONICS_BUS_VOLTAGE", "ELECTRICAL_MASTER_BATTERY",
+    "EXTERNAL_POWER_ON", "LIGHT_BEACON", "LIGHT_LOGO", "CABIN_SEATBELTS_ALERT_SWITCH",
+    "FUEL_TOTAL_QUANTITY", "FUEL_TOTAL_QUANTITY_WEIGHT", "FUEL_WEIGHT_PER_GALLON",
+]
+_BATCH_STRING_CACHE: dict[str, Any] = {"t": 0.0, "title": "", "model": "", "type": ""}
+_BATCH_STRING_INTERVAL: float = 0.5
 
 
 class _ReplayPose(Structure):
@@ -308,7 +388,25 @@ def _close_session() -> None:
     global _SESSION_SM, _SESSION_AQ, _SESSION_STARTED, _SESSION_CONSECUTIVE_FAILURES, _SESSION_DISPATCH_DEAD
     if _SESSION_SM is not None:
         try:
-            _SESSION_SM.exit()
+            sm = _SESSION_SM
+            # The wrapper's ``exit()`` does an UNBOUNDED ``timerThread.join()``;
+            # if the dispatch thread is blocked inside CallDispatch (sim not
+            # delivering frames), that join hangs and the launcher force-kills
+            # the app after 5 s (the slow-reload symptom). Set the quit flag
+            # ourselves, join with a hard cap, then close the DLL handle.
+            try:
+                sm.quit = 1
+            except Exception:
+                pass
+            try:
+                if sm.timerThread is not None and sm.timerThread.is_alive():
+                    sm.timerThread.join(timeout=0.5)
+            except Exception:
+                pass
+            try:
+                sm.dll.Close(sm.hSimConnect)
+            except Exception:
+                pass
         except Exception:
             pass
     _SESSION_SM = None
@@ -612,7 +710,18 @@ def _read_position_uncached() -> dict[str, Any]:
     try:
         _sm, aq = _ensure_session(diagnostics)
 
+        # Stage 2 batched fast path: one request serves every numeric SimVar
+        # in the full stream (~100 SimVars), so a full read costs one sim
+        # frame instead of ~75 per-SimVar round trips (~3.5 s at cruise fps).
+        # Strings and dynamic indexed vars (e.g. PAYLOAD_STATION_WEIGHT:n)
+        # fall back to per-SimVar reads below.
+        _batch_values = None
+        if _batch_ensure(_sm, aq):
+            _batch_values = _batch_read(_sm)
+
         def read_value(name: str) -> Any:
+            if _batch_values is not None and name in _batch_values:
+                return _batch_values[name]
             try:
                 return aq.get(name)
             except Exception:
@@ -768,14 +877,23 @@ def _read_position_uncached() -> dict[str, Any]:
             fuel_total_lb = None
 
         # v0.25.65 supplemental weight telemetry (optional; never fabricated).
-        # Standard SDK flight-model weights are in slugs (1 slug = 32.17405 lb);
-        # the direct fuel weight SimVar is in pounds. All fields stay None when
-        # the aircraft does not expose them, and a failed payload-station read
-        # never rejects the whole telemetry sample.
+        # v0.25.75 (#32): the wrapper requests TOTAL_WEIGHT in the units it
+        # declares (measured live: Pounds - an A330-300 reports ~315k lb). The
+        # old code unconditionally multiplied by 32.17405 (slugs -> lb), which
+        # double-converted pounds and the sanitizer rejected the inflated
+        # result, so SimConnect weights always read None. Convert only when
+        # the wrapper actually declares slugs; pass pounds straight through.
         _SLUG_TO_LB = 32.17405
-        total_weight_slugs = _finite_number(read_value("TOTAL_WEIGHT"))
-        empty_weight_slugs = _finite_number(read_value("EMPTY_WEIGHT"))
-        max_gross_weight_slugs = _finite_number(read_value("MAX_GROSS_WEIGHT"))
+        try:
+            _weight_req = aq.find("TOTAL_WEIGHT")
+            _weight_units = _weight_req.definitions[0][1].lower() if (_weight_req is not None and getattr(_weight_req, "definitions", None)) else b"pounds"
+            _slug_weights = b"slug" in _weight_units
+        except Exception:
+            _slug_weights = False
+        _weight_scale = _SLUG_TO_LB if _slug_weights else 1.0
+        total_weight_raw = _finite_number(read_value("TOTAL_WEIGHT"))
+        empty_weight_raw = _finite_number(read_value("EMPTY_WEIGHT"))
+        max_gross_weight_raw = _finite_number(read_value("MAX_GROSS_WEIGHT"))
         fuel_weight_lb = _finite_number(read_value("FUEL_TOTAL_QUANTITY_WEIGHT"))
         station_count = _finite_number(read_value("PAYLOAD_STATION_COUNT"))
         payload_station_lb = None
@@ -789,10 +907,10 @@ def _read_position_uncached() -> dict[str, Any]:
                     break
                 payload_station_total += float(station_weight)
             if payload_station_ok and payload_station_total > 0.0:
-                payload_station_lb = round(payload_station_total * _SLUG_TO_LB, 1)
-        gross_weight_lb = round(total_weight_slugs * _SLUG_TO_LB, 1) if total_weight_slugs is not None else None
-        empty_weight_lb = round(empty_weight_slugs * _SLUG_TO_LB, 1) if empty_weight_slugs is not None else None
-        max_gross_weight_lb = round(max_gross_weight_slugs * _SLUG_TO_LB, 1) if max_gross_weight_slugs is not None else None
+                payload_station_lb = round(payload_station_total * _weight_scale, 1)
+        gross_weight_lb = round(total_weight_raw * _weight_scale, 1) if total_weight_raw is not None else None
+        empty_weight_lb = round(empty_weight_raw * _weight_scale, 1) if empty_weight_raw is not None else None
+        max_gross_weight_lb = round(max_gross_weight_raw * _weight_scale, 1) if max_gross_weight_raw is not None else None
 
         def bool_value(value: Any) -> bool | None:
             try:
@@ -1113,6 +1231,271 @@ def _read_position_uncached() -> dict[str, Any]:
         return {"ok": False, "reason": f"SimConnect position read failed: {type(exc).__name__}: {exc}", "diagnostics": diagnostics}
 
 
+def _batch_ensure(sm: Any, aq: Any) -> bool:
+    """Define the one data definition that covers every numeric minimal SimVar.
+
+    Units are copied from the wrapper's own request table (via ``aq.find``) so
+    the batched values need exactly the same conversions as the per-var path.
+    Rebuilds automatically after a session tear-down / rebuild.
+    """
+    if _BATCH_STATE.get("sm_id") == id(sm) and _BATCH_STATE.get("def_id") is not None:
+        return True
+    _BATCH_STATE.update({"sm_id": None, "def_id": None, "request_id": None, "result": None, "done": None})
+    try:
+        from SimConnect.Constants import SIMCONNECT_UNUSED  # type: ignore
+        from SimConnect.Enum import SIMCONNECT_DATATYPE, SIMCONNECT_SIMOBJECT_TYPE  # type: ignore
+
+        specs: list[tuple[str, bytes, bytes]] = []
+        for name in _BATCH_NAMES:
+            # Skip SimVars the wrapper's request table does not know (e.g.
+            # INDICATED_ALTITUDE_CALIBRATED); the per-var path returns None
+            # for those too, so the sample shape stays identical.
+            # For indexed SimVars, look up the ``:index`` template (no
+            # setIndex/redefine round trip) and bake the concrete index into
+            # the SimVar name bytes - keeps batch setup zero-traffic.
+            if ":" in name:
+                base, index = name.split(":", 1)
+                req = aq.find(base + ":index")
+                if req is None or not getattr(req, "definitions", None):
+                    continue
+                simvar = req.definitions[0][0].replace(b":index", (b":" + index.encode()))
+                specs.append((name, simvar, req.definitions[0][1]))
+                continue
+            req = aq.find(name)
+            if req is None or not getattr(req, "definitions", None):
+                continue
+            specs.append((name, req.definitions[0][0], req.definitions[0][1]))
+        if not specs:
+            return False
+        def_id = sm.new_def_id()
+        request_id = sm.new_request_id()
+        for _name, simvar, units in specs:
+            hr = sm.dll.AddToDataDefinition(
+                sm.hSimConnect, def_id.value, simvar, units,
+                SIMCONNECT_DATATYPE.SIMCONNECT_DATATYPE_FLOAT64, 0, SIMCONNECT_UNUSED,
+            )
+            if not sm.IsHR(hr, 0):
+                return False
+        done = threading.Event()
+        weight_units = next((units for name, _simvar, units in specs if name == "TOTAL_WEIGHT"), b"Pounds")
+        _BATCH_STATE.update({
+            "sm_id": id(sm), "def_id": def_id, "request_id": request_id,
+            "names": [spec[0] for spec in specs],
+            "weights_in_slugs": b"slug" in weight_units.lower(),
+            "result": None, "done": done,
+            "backoff_until": 0.0,
+        })
+        _install_batch_dispatch(sm)
+        return True
+    except Exception:
+        _BATCH_STATE.update({"sm_id": None, "def_id": None, "request_id": None, "done": None})
+        return False
+
+
+def _install_batch_dispatch(sm: Any) -> None:
+    """Hook the session's SimObject-data dispatch to parse batched responses.
+
+    Same pattern the app already uses for the replay Frame handler: wrap
+    ``handle_simobject_event`` and delegate anything that is not our batch
+    request to the original implementation.
+    """
+    if getattr(sm, "_ops_batch_handler_installed", False):
+        return
+    orig = getattr(sm, "handle_simobject_event", None)
+
+    def handler(pObjData: Any) -> None:
+        try:
+            request_id = _BATCH_STATE.get("request_id")
+            done = _BATCH_STATE.get("done")
+            request_id_int = getattr(request_id, "value", request_id)
+            if request_id is not None and done is not None and int(pObjData.dwRequestID) == int(request_id_int):
+                n = int(getattr(pObjData, "dwDefineCount", 0) or 0)
+                names = _BATCH_STATE.get("names") or []
+                if n == len(names):
+                    values = cast(pObjData.dwData, POINTER(c_double * n)).contents
+                    _BATCH_STATE["result"] = [float(v) for v in values]
+                    done.set()
+                return
+        except Exception:
+            pass
+        if orig is not None:
+            try:
+                orig(pObjData)
+            except Exception:
+                pass
+
+    sm.handle_simobject_event = handler
+    sm._ops_batch_handler_installed = True
+
+
+def _batch_read(sm: Any) -> dict[str, Any] | None:
+    """One-request read of every numeric minimal SimVar (one sim frame)."""
+    if _BATCH_STATE.get("sm_id") != id(sm) or _BATCH_STATE.get("def_id") is None:
+        return None
+    if time.monotonic() < float(_BATCH_STATE.get("backoff_until") or 0.0):
+        return None
+    try:
+        from SimConnect.Enum import SIMCONNECT_SIMOBJECT_TYPE  # type: ignore
+
+        done = _BATCH_STATE["done"]
+        _BATCH_STATE["result"] = None
+        done.clear()
+        hr = sm.dll.RequestDataOnSimObjectType(
+            sm.hSimConnect,
+            _BATCH_STATE["request_id"].value,
+            _BATCH_STATE["def_id"].value,
+            0,
+            SIMCONNECT_SIMOBJECT_TYPE.SIMCONNECT_SIMOBJECT_TYPE_USER,
+        )
+        if not sm.IsHR(hr, 0):
+            return None
+        if not done.wait(timeout=0.2):
+            # The request failed server-side (e.g. an aircraft lacks a batched
+            # SimVar). Back off briefly, then the per-var path takes over.
+            _BATCH_STATE["backoff_until"] = time.monotonic() + 5.0
+            return None
+        result = _BATCH_STATE.get("result")
+        _BATCH_STATE["result"] = None
+        if result is None or len(result) != len(_BATCH_STATE.get("names") or []):
+            return None
+        return dict(zip(_BATCH_STATE["names"], result))
+    except Exception:
+        return None
+
+
+def _read_position_minimal_batch(sm: Any, aq: Any, diagnostics: dict[str, Any]) -> dict[str, Any] | None:
+    """Batched one-request minimal sample; ``None`` means fall back to per-var.
+
+    Returns exactly the same sample shape as the per-var minimal path
+    (``source: "simconnect-minimal"``), so consumers cannot tell the
+    difference. String SimVars (aircraft title/model/type) are refreshed at
+    2 Hz from the per-var path because they cannot share a FLOAT64 batch.
+    """
+    try:
+        if not _batch_ensure(sm, aq):
+            return None
+        values = _batch_read(sm)
+        if values is None:
+            return None
+
+        def num(key: str) -> float | None:
+            try:
+                value = values.get(key)
+                return float(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        def bval(value: Any) -> bool | None:
+            try:
+                return bool(round(float(value))) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        lat = num("PLANE_LATITUDE")
+        lon = num("PLANE_LONGITUDE")
+        if lat is None or lon is None:
+            return {"ok": False, "reason": "MSFS is connected, but no user-aircraft position is available. Load into a flight and retry.", "diagnostics": simconnect_diagnostics()}
+
+        altitude = num("PLANE_ALTITUDE")
+        indicated_altitude = num("INDICATED_ALTITUDE")
+        if indicated_altitude is None:
+            indicated_altitude = num("INDICATED_ALTITUDE_CALIBRATED")
+        if indicated_altitude is None:
+            indicated_altitude = altitude
+        pressure_altitude = num("PRESSURE_ALTITUDE")
+        heading = num("PLANE_HEADING_DEGREES_MAGNETIC")
+        if heading is None:
+            heading = num("PLANE_HEADING_DEGREES_GYRO")
+
+        # String aircraft info at 2 Hz from the per-var path (not batchable).
+        now = time.monotonic()
+        if now - float(_BATCH_STRING_CACHE.get("t") or 0.0) >= _BATCH_STRING_INTERVAL:
+            try:
+                _BATCH_STRING_CACHE.update({
+                    "t": now,
+                    "title": str(aq.get("TITLE") or "").strip(),
+                    "model": str(aq.get("ATC_MODEL") or "").strip(),
+                    "type": str(aq.get("ATC_TYPE") or "").strip(),
+                })
+            except Exception:
+                pass
+        aircraft_info = {
+            "title": str(_BATCH_STRING_CACHE.get("title") or ""),
+            "model": str(_BATCH_STRING_CACHE.get("model") or ""),
+            "type": str(_BATCH_STRING_CACHE.get("type") or ""),
+        }
+
+        engine_flags = [num(f"GENERAL_ENG_COMBUSTION:{i}") for i in (1, 2, 3, 4)]
+        engines_running = any(bval(v) is True for v in engine_flags)
+        reverser_percent: float | None = None
+        for value in (num("TURB_ENG_REVERSE_NOZZLE_PERCENT:1"), num("TURB_ENG_REVERSE_NOZZLE_PERCENT:2")):
+            if value is not None and math.isfinite(value):
+                reverser_percent = max(reverser_percent or 0.0, value)
+
+        # The wrapper declares TOTAL_WEIGHT in pounds (measured live: an
+        # A330-300 reports ~315k lb). Some wrapper versions request slugs, so
+        # convert only when the declared unit actually is slugs - never
+        # double-convert (that made SimConnect weights always read None).
+        slug_to_lb = 32.17405
+        weight_scale = slug_to_lb if _BATCH_STATE.get("weights_in_slugs") else 1.0
+        gross_weight_lb_raw = num("TOTAL_WEIGHT")
+        empty_weight_lb_raw = num("EMPTY_WEIGHT")
+        max_gross_weight_lb_raw = num("MAX_GROSS_WEIGHT")
+
+        return {
+            "ok": True,
+            "lat": lat, "lon": lon,
+            "altitude_ft": altitude,
+            "indicated_altitude_ft": indicated_altitude,
+            "pressure_altitude_ft": (pressure_altitude * 3.280839895) if pressure_altitude is not None else None,
+            "agl_ft": num("PLANE_ALT_ABOVE_GROUND"),
+            "radio_altitude_ft": num("RADIO_HEIGHT") if num("RADIO_HEIGHT") is not None else num("PLANE_ALT_ABOVE_GROUND"),
+            "indicated_speed_kts": num("AIRSPEED_INDICATED"),
+            "true_speed_kts": num("AIRSPEED_TRUE"),
+            "ground_speed_kts": num("GROUND_VELOCITY"),
+            "mach": num("AIRSPEED_MACH"),
+            "heading_deg": heading,
+            "track_deg": num("GPS_GROUND_MAGNETIC_TRACK"),
+            "vertical_speed_fpm": num("VERTICAL_SPEED"),
+            "pitch_deg": num("PLANE_PITCH_DEGREES"),
+            "bank_deg": num("PLANE_BANK_DEGREES"),
+            "g_force": num("G_FORCE"),
+            "on_ground": bval(num("SIM_ON_GROUND")),
+            "flap_index": num("FLAPS_HANDLE_INDEX"),
+            "flap_percent": None,
+            "flap_handle_percent": num("FLAPS_HANDLE_PERCENT"),
+            "gear_percent": num("GEAR_TOTAL_PCT_EXTENDED"),
+            "spoiler_percent": num("SPOILERS_HANDLE_POSITION"),
+            "wind_speed_kts": num("AMBIENT_WIND_VELOCITY"),
+            "wind_direction_deg": num("AMBIENT_WIND_DIRECTION"),
+            "sim_rate": num("SIMULATION_RATE") if num("SIMULATION_RATE") is not None else 1.0,
+            "paused": bval(num("IS_LATITUDE_LONGITUDE_FREEZE_ON")),
+            "slew_active": bval(num("IS_SLEW_ACTIVE")),
+            "stall_warning": bval(num("STALL_WARNING")),
+            "overspeed_warning": bval(num("OVERSPEED_WARNING")),
+            "engines_running": engines_running,
+            "engine1_running": bval(engine_flags[0]), "engine2_running": bval(engine_flags[1]),
+            "engine3_running": bval(engine_flags[2]), "engine4_running": bval(engine_flags[3]),
+            "parking_brake": bval(num("BRAKE_PARKING_POSITION")),
+            "reverser_percent": reverser_percent,
+            "body_velocity_x_fps": num("VELOCITY_BODY_X"),
+            "body_velocity_y_fps": num("VELOCITY_BODY_Y"),
+            "body_velocity_z_fps": num("VELOCITY_BODY_Z"),
+            "gross_weight_lb": round(gross_weight_lb_raw * weight_scale, 1) if gross_weight_lb_raw is not None else None,
+            "empty_weight_lb": round(empty_weight_lb_raw * weight_scale, 1) if empty_weight_lb_raw is not None else None,
+            "max_gross_weight_lb": round(max_gross_weight_lb_raw * weight_scale, 1) if max_gross_weight_lb_raw is not None else None,
+            "fuel_flow_pph": None,
+            "fuel_total_lb": None,
+            "aircraft": aircraft_info,
+            "autopilot": None,
+            "aircraft_adapter": detect_adapter(aircraft_info),
+            "source": "simconnect-minimal",
+            "minimal": True,
+        }
+    except Exception:
+        return None
+
+
 def _read_low_rate_tier(aq: Any) -> dict[str, Any]:
     """Read the slow-changing SimVars (engine flags, surfaces, wind, sim rate).
 
@@ -1218,6 +1601,13 @@ def _read_position_minimal_uncached() -> dict[str, Any]:
 
     try:
         _sm, aq = _ensure_session(diagnostics)
+
+        # Stage 2 batched fast path: one request for every numeric minimal
+        # SimVar (one sim frame per sample) instead of ~45 per-SimVar round
+        # trips. Falls back to the per-var reads below on any failure.
+        batch_sample = _read_position_minimal_batch(_sm, aq, diagnostics)
+        if batch_sample is not None:
+            return batch_sample
 
         def read_value(name: str) -> Any:
             try:

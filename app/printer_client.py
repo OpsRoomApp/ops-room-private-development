@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import logging
 import os
+import subprocess
 from ctypes import wintypes, c_ubyte, c_ulong, byref, create_string_buffer
 from datetime import datetime, timezone
 from typing import Any
@@ -18,14 +20,22 @@ PRINTER_ENUM_CONNECTIONS = 0x00000004
 
 
 def _get_winspool():
-    """Lazy-load winspool.drv; returns the CDLL or None."""
+    """Lazy-load winspool.drv; returns the CDLL or None.
+
+    #46: PyInstaller-frozen builds can fail on ``ctypes.windll.winspool``
+    ("Failed to load dynlib/dll 'winspool'") even though the system DLL is
+    present in System32. Retry with an explicit WinDLL load by file name
+    before giving up — that path does not rely on ctypes' windll cache.
+    """
     global _winspool
     if _winspool is None:
-        try:
-            _winspool = ctypes.windll.winspool
-        except (AttributeError, OSError, TypeError) as exc:
-            _LOGGER.warning("winspool.drv not available: %s", exc)
-            _winspool = False  # sentinel — don't retry
+        for attempt in (lambda: ctypes.windll.winspool, lambda: ctypes.WinDLL("winspool.drv")):
+            try:
+                _winspool = attempt()
+                break
+            except (AttributeError, OSError, TypeError) as exc:
+                _LOGGER.warning("winspool.drv not available: %s", exc)
+                _winspool = False  # sentinel — don't retry
     return _winspool if _winspool is not False else None
 
 
@@ -63,12 +73,48 @@ def _utc() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _fallback_list_printers_powershell() -> list[dict[str, Any]]:
+    """#46: enumerate printers via PowerShell Get-Printer when winspool cannot
+    be loaded (frozen-build fallback). Returns the same shape as the GDI path."""
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "Get-Printer | Select-Object Name,PortName,DriverName,PrinterStatus | ConvertTo-Json -Compress"],
+            capture_output=True, text=True, timeout=20,
+        )
+        if proc.returncode != 0:
+            _LOGGER.warning("Get-Printer fallback failed: %s", (proc.stderr or "").strip()[-200:])
+            return []
+        raw = (proc.stdout or "").strip()
+        if not raw:
+            return []
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            parsed = [parsed]
+        printers: list[dict[str, Any]] = []
+        for item in parsed if isinstance(parsed, list) else []:
+            name = str(item.get("Name") or "").strip()
+            if not name:
+                continue
+            printers.append({
+                "name": name,
+                "port": str(item.get("PortName") or ""),
+                "driver": str(item.get("DriverName") or ""),
+                "status": str(item.get("PrinterStatus") or ""),
+                "jobs": 0,
+            })
+        return printers
+    except Exception as exc:
+        _LOGGER.warning("Get-Printer fallback failed: %s", exc)
+        return []
+
+
 def list_printers() -> list[dict[str, Any]]:
     """Enumerate installed Windows printers. Works without pywin32."""
     ws = _get_winspool()
     if ws is None:
-        _LOGGER.warning("winspool not available, cannot list printers")
-        return []
+        _LOGGER.warning("winspool not available, falling back to Get-Printer")
+        return _fallback_list_printers_powershell()
     try:
         needed = ctypes.c_ulong(0)
         returned = ctypes.c_ulong(0)

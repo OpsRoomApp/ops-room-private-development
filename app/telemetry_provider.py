@@ -1096,7 +1096,11 @@ def _sim_heartbeat(now: float, force: bool = False) -> dict[str, Any]:
         _SIM_HEARTBEAT["data_unchanged_seconds"] = round(max(0.0, now - (_SIM_HEARTBEAT_LAST_CHANGE or now)), 1)
     else:
         _SIM_HEARTBEAT = {}
-    _SIM_HEARTBEAT_AT = now
+    # v0.25.75 (#33): stamp the cache with the *completion* time, not the
+    # caller-supplied ``now``. The full read takes 0.8+ s (per-SimVar reads),
+    # so stamping with the start time made the cache expire the instant it
+    # was written and every heartbeat call re-read the full stream.
+    _SIM_HEARTBEAT_AT = time.monotonic()
     return dict(_SIM_HEARTBEAT)
 
 
@@ -1250,6 +1254,7 @@ def _fsuipc_recovery_loop() -> None:
 
 def start_telemetry_engine() -> None:
     global _RECOVERY_THREAD
+    start_telemetry_writer()
     with _LOCK:
         if _RECOVERY_THREAD and _RECOVERY_THREAD.is_alive():
             return
@@ -1259,6 +1264,13 @@ def start_telemetry_engine() -> None:
 
 
 def shutdown_telemetry_engine() -> None:
+    # Stop the writer FIRST: closing the SimConnect session under a live
+    # writer mid-read would tear the session out from under it (and the
+    # writer's rebuild path could even re-open one during teardown). Setting
+    # the stop flag first means the next writer tick exits before the session
+    # is closed.
+    _WRITER_STOP.set()
+    _WRITER_WAKE.set()
     _RECOVERY_STOP.set()
     _RECOVERY_WAKE.set()
     # v0.25.68: close the shared SimConnect session so its dispatch thread
@@ -1271,6 +1283,242 @@ def shutdown_telemetry_engine() -> None:
         close_session()
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Stage 2 single-writer telemetry bus (v0.25.75)
+# ---------------------------------------------------------------------------
+# One writer thread reads the simulator at a bounded cadence and publishes
+# complete-shape snapshots to an in-memory ring. Every consumer - Flight
+# Watch, the Black Box recorder, RAAS, announcements, PIREP, GSX - reads only
+# the buffer (via ``read_telemetry(force=False)`` / the ring drain API) and
+# never touches the simulator itself. That makes the #6 stutter structurally
+# impossible: the sim is asked for data by exactly one thread.
+#
+# Writer source selection (central failover lives here):
+#   - FSUIPC healthy  -> one batched ``pyuipc.read`` full-stream sample per
+#     tick. A whole flight sample costs one API call, so the 30 Hz takeoff
+#     roll / approach / landing rate adds no stutter.
+#   - SimConnect only -> the full stream is served through the 0.8 s
+#     ``_sim_heartbeat`` cache (display), and the cheap 12-SimVar minimal
+#     stream feeds the recorder ring, both at SimConnect-safe rates.
+#   - Both dead       -> error/stale samples are still published so consumers
+#     surface STALE / TELEMETRY LOST instead of replaying the last good row.
+# ---------------------------------------------------------------------------
+
+_WRITER_THREAD: threading.Thread | None = None
+_WRITER_STOP = threading.Event()
+_WRITER_WAKE = threading.Event()
+_WRITER_RING: deque[tuple[float, dict[str, Any]]] = deque(maxlen=3600)
+_WRITER_PHASE = ""
+_WRITER_RECORDING = False
+_WRITER_LAST_SAMPLE: dict[str, Any] | None = None
+_WRITER_TICK_COUNT = 0
+# Consumers fall through to a direct sim read only when the writer has not
+# published for this long (writer thread down / not yet started).
+_WRITER_CACHE_MAX_AGE = 3.0
+_WRITER_IDLE_INTERVAL = 1.0
+
+# #43: Fenix L:Var enrichment off the writer hot path. The Python SimConnect
+# wrapper costs ~1.5-2.5 s per full ~13-LVar batch read, so running it inside
+# the writer tick collapsed the Stage-2 cadence (30 Hz bursts then 1.5-2.5 s
+# stalls; an 8 s hole at rotation on the RJA403 flight). A dedicated
+# low-frequency enricher thread now owns the blocking SimConnect L:Var read and
+# publishes the values into the shared _SIMCONNECT_LVAR_CACHE_*; the writer's
+# enrich path only ever merges cached values.
+_ENRICHER_THREAD: threading.Thread | None = None
+_ENRICHER_STOP = threading.Event()
+_ENRICHER_LVAR_REQUESTS: list[tuple[str, str]] = []
+_ENRICHER_INTERVAL = 0.25
+# The writer accepts LVar cache entries up to this age. 0.5 s keeps the merged
+# addon state current at ring cadence while absorbing the enricher's slow reads.
+_ENRICHER_CACHE_MAX_AGE = 0.5
+# #26: SimConnect weight cache warmed by the enricher thread. FSUIPC weight
+# offsets (0x30C0/0x30C8) read garbage on some add-ons (live Fenix flight:
+# -1e-19 lb / 2.68e9 lb) and the sanity bound rejects them, so gross_weight_lb
+# stayed None and the Live-OFP / logbook TOW-LDW cells stayed blank. The
+# minimal SimConnect read carries a working TOTAL_WEIGHT; the enricher keeps a
+# fresh copy here for the writer to merge when the FSUIPC value is missing.
+_SIMCONNECT_WEIGHT_CACHE: dict[str, Any] = {}
+_ENRICHER_WEIGHT_MAX_AGE = 1.5
+
+
+def writer_target_interval(snapshot: dict[str, Any] | None, phase: str) -> float:
+    """Seconds between writer samples for the current phase/provider.
+
+    Mirrors the Black Box recorder's adaptive cadence: 30 Hz during the takeoff
+    roll / initial climb / approach / flare / landing roll (or below 1000 ft
+    AGL), 20 Hz while taxiing/climbing/descending, 10 Hz otherwise. FSUIPC
+    batch reads sustain the full 30 Hz; the batched SimConnect reader
+    (#34) sustains it too, capped at ``black_box_simconnect_max_hz``
+    (default 30 Hz, live-verified stutter-free on-sim).
+    """
+    settings = _telemetry_settings().get("integrations", {})
+    provider = str((snapshot or {}).get("source") or _SOURCE_LOCK or "").lower()
+    agl = _num((snapshot or {}).get("radio_altitude_ft"))
+    if agl is None:
+        agl = _num((snapshot or {}).get("agl_ft"))
+    phase_up = str(phase or "").upper()
+    simconnect_max = _num(settings.get("black_box_simconnect_max_hz")) or 30.0
+    max_hz = 30.0 if "fsuipc" in provider else max(2.0, min(simconnect_max, 30.0))
+    requested = 30.0 if phase_up in {"TAKEOFF ROLL", "INITIAL CLIMB", "APPROACH", "FLARE", "LANDING ROLL"} or (agl is not None and agl <= 1000) else (20.0 if phase_up in {"TAXI OUT", "TAXI IN", "CLIMB", "DESCENT"} else 10.0)
+    configured = _num(settings.get("black_box_max_hz")) or 30.0
+    hz = max(2.0, min(requested, max_hz, configured))
+    return 1.0 / hz
+
+
+def _writer_interval() -> float:
+    # Idle (parked / no flight session): a slow 1 Hz keep-alive feed for the
+    # display. Once the recorder is active (or a flight phase is set) the
+    # phase-driven 30/20/10 Hz cadence takes over.
+    if not _WRITER_RECORDING and not _WRITER_PHASE:
+        return _WRITER_IDLE_INTERVAL
+    return writer_target_interval(_WRITER_LAST_SAMPLE, _WRITER_PHASE)
+
+
+def set_writer_phase(phase: str, recording: bool = False) -> None:
+    """Tell the writer the logbook phase and whether the recorder is active.
+
+    Called by the Black Box record loop once per cycle; drives the writer's
+    cadence so high-rate sampling only happens when a flight is actually
+    underway.
+    """
+    global _WRITER_PHASE, _WRITER_RECORDING
+    _WRITER_PHASE = str(phase or "").upper()
+    _WRITER_RECORDING = bool(recording)
+    _WRITER_WAKE.set()
+
+
+def _writer_tick() -> None:
+    """Read one simulator sample at the current cadence and publish it.
+
+    FSUIPC healthy -> one batched full-stream read feeds both the shared cache
+    and the ring (30 Hz capable). FSUIPC down -> the SimConnect session serves
+    the full stream through the heartbeat cache (display) and the cheap minimal
+    stream to the ring (recorder), both at SimConnect-safe rates.
+    """
+    global _WRITER_LAST_SAMPLE, _WRITER_TICK_COUNT, _CACHE, _CACHE_TIME
+    if _SOURCE_LOCK == "simconnect":
+        heartbeat = _sim_heartbeat(time.monotonic(), force=False)
+        full_valid, _reason = _complete_snapshot(heartbeat, "simconnect")
+        minimal = read_telemetry(force=True, stream="minimal")
+        minimal_ok = isinstance(minimal, dict) and minimal.get("ok")
+        if full_valid:
+            full = _mark_complete(dict(heartbeat), "simconnect")
+            full["telemetry_fresh"] = True
+            full = _enrich_addon_telemetry(full)
+            with _LOCK:
+                _CACHE = dict(full)
+                _CACHE_TIME = time.monotonic()
+            sample = minimal if minimal_ok else full
+        else:
+            sample = minimal if minimal_ok else read_telemetry(force=False)
+    else:
+        # FSUIPC locked, or no lock yet (first probe): a single batched
+        # FSUIPC read when healthy; SimConnect only if FSUIPC is unavailable.
+        sample = read_telemetry(force=True)
+    if not isinstance(sample, dict):
+        sample = {"ok": False, "reason": "telemetry writer received no sample", "source": _SOURCE_LOCK or "unavailable"}
+    _WRITER_LAST_SAMPLE = dict(sample)
+    with _LOCK:
+        _WRITER_RING.append((time.monotonic(), dict(sample)))
+    _WRITER_TICK_COUNT += 1
+
+
+def _writer_loop() -> None:
+    while not _WRITER_STOP.is_set():
+        tick_start = time.monotonic()
+        try:
+            _writer_tick()
+        except Exception:
+            pass
+        interval = _writer_interval()
+        wait = min(max(interval, 0.02), 1.0)
+        # Compensate for the read+enrich time spent inside the tick so the
+        # cadence actually reaches the requested rate (30 Hz target -> the
+        # ~12 ms FSUIPC batch read no longer pushes it down to ~22 Hz).
+        elapsed = time.monotonic() - tick_start
+        wait = max(0.0, wait - elapsed)
+        if _WRITER_WAKE.is_set() and wait >= 0.25:
+            _WRITER_WAKE.clear()
+            continue
+        _WRITER_WAKE.clear()
+        _WRITER_STOP.wait(min(wait, 1.0))
+
+
+def _raise_timer_resolution() -> None:
+    """Raise the Windows timer resolution to 1 ms for the writer thread.
+
+    ``threading.Event.wait`` on Windows defaults to ~15.6 ms granularity, which
+    quantizes the writer's 30 Hz (33 ms) cadence down to ~22 Hz. MSFS itself
+    runs with a 1 ms timer; matching it is standard practice and costs nothing
+    measurable (the app is a local server, not a battery-powered client).
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.winmm.timeBeginPeriod(1)
+    except Exception:
+        pass
+
+
+def start_telemetry_writer() -> None:
+    """Start the single-writer telemetry bus thread (idempotent)."""
+    global _WRITER_THREAD
+    if _WRITER_THREAD is not None and _WRITER_THREAD.is_alive():
+        return
+    with _LOCK:
+        if _WRITER_THREAD is not None and _WRITER_THREAD.is_alive():
+            return
+        _raise_timer_resolution()
+        _WRITER_STOP.clear()
+        _WRITER_WAKE.set()
+        _WRITER_THREAD = threading.Thread(target=_writer_loop, name="OpsRoom-TelemetryWriter", daemon=True)
+        _WRITER_THREAD.start()
+
+
+def writer_ring_since(after_ts: float) -> list[tuple[float, dict[str, Any]]]:
+    """Return (monotonic_ts, sample) items newer than ``after_ts``.
+
+    Ring entries are immutable after append, so references are returned without
+    copying; the recorder treats snapshots as read-only.
+    """
+    start_telemetry_writer()
+    with _LOCK:
+        return [(ts, sample) for ts, sample in _WRITER_RING if ts > after_ts]
+
+
+def writer_latest() -> tuple[float, dict[str, Any]] | None:
+    start_telemetry_writer()
+    with _LOCK:
+        if not _WRITER_RING:
+            return None
+        ts, sample = _WRITER_RING[-1]
+        return ts, dict(sample)
+
+
+def writer_status() -> dict[str, Any]:
+    now = time.monotonic()
+    with _LOCK:
+        ring_len = len(_WRITER_RING)
+        latest = _WRITER_RING[-1] if _WRITER_RING else None
+        latest_age = round(max(0.0, now - latest[0]), 3) if latest else None
+        latest_ok = bool(latest[1].get("ok")) if latest else False
+        latest_source = str(latest[1].get("source") or "") if latest else ""
+    return {
+        "running": bool(_WRITER_THREAD and _WRITER_THREAD.is_alive()),
+        "phase": _WRITER_PHASE,
+        "recording": _WRITER_RECORDING,
+        "interval_seconds": round(_writer_interval(), 4),
+        "ring_samples": ring_len,
+        "latest_age_seconds": latest_age,
+        "latest_ok": latest_ok,
+        "latest_source": latest_source,
+        "ticks": _WRITER_TICK_COUNT,
+    }
+
 
 def reselect_telemetry(reason: str = "manual telemetry reselection") -> dict[str, Any]:
     """Re-test FSUIPC first without blocking normal module telemetry reads."""
@@ -1368,18 +1616,34 @@ def _read_addon_offsets(requests: list[tuple[int, str]]) -> list[Any]:
 
 _SIMCONNECT_LVAR_SESSION: Any = None
 _SIMCONNECT_LVAR_REQUESTS: dict[str, Any] = {}
+# Stage 2: bound per-call SimConnect LVar traffic at <= 5 Hz. The telemetry
+# writer enriches every sample at up to 30 Hz (Fenix reads its L:Vars through
+# this reader), so without a value cache a takeoff roll would issue ~30 * N
+# SimConnect LVar reads per second - the #6 stutter again. LVars change at
+# human speeds; a 0.2 s cache is invisible to every consumer.
+_SIMCONNECT_LVAR_CACHE_KEY: tuple[tuple[str, str], ...] = ()
+_SIMCONNECT_LVAR_CACHE_VALUES: list[Any] = []
+_SIMCONNECT_LVAR_CACHE_AT = 0.0
 
-def _read_simconnect_lvars(requests: list[tuple[str, str]]) -> list[Any]:
+def _read_simconnect_lvars(requests: list[tuple[str, str]], force: bool = False) -> list[Any]:
     """Read L:Vars directly through SimConnect, bypassing FSUIPC WASM offsets.
 
     Uses the same SimConnect session as the GSX remote LVar reader. Each
     ``(lvar_name, format)`` tuple is read via ``SimConnect.RequestList.Request``
     which supports MSFS L:Var names as byte-string tokens. Requests are cached
     per session to avoid recreating SimConnect client data areas on every call.
+
+    ``force=True`` bypasses the value cache — used only by the #43 enricher
+    thread so every cycle performs a real (blocking) SimConnect read.
     """
     global _SIMCONNECT_LVAR_SESSION, _SIMCONNECT_LVAR_REQUESTS
+    global _SIMCONNECT_LVAR_CACHE_KEY, _SIMCONNECT_LVAR_CACHE_VALUES, _SIMCONNECT_LVAR_CACHE_AT
     if not requests:
         return []
+    key = tuple((str(name), str(fmt)) for name, fmt in requests)
+    now = time.monotonic()
+    if not force and key == _SIMCONNECT_LVAR_CACHE_KEY and now - _SIMCONNECT_LVAR_CACHE_AT < 0.2:
+        return list(_SIMCONNECT_LVAR_CACHE_VALUES)
     from .simconnect_position import _ensure_session, simconnect_diagnostics, _note_session_read_result
     try:
         diagnostics = simconnect_diagnostics()
@@ -1420,22 +1684,95 @@ def _read_simconnect_lvars(requests: list[tuple[str, str]]) -> list[Any]:
             _note_session_read_result(True)
         else:
             _note_session_read_result(False)
+    _SIMCONNECT_LVAR_CACHE_KEY = key
+    _SIMCONNECT_LVAR_CACHE_VALUES = list(values)
+    _SIMCONNECT_LVAR_CACHE_AT = time.monotonic()
     return values
+
+
+def _enricher_loop() -> None:
+    """#43: warms the Fenix L:Var cache from a dedicated thread.
+
+    The blocking SimConnect L:Var batch read (1.5-2.5 s for ~13 L:Vars through
+    the Python wrapper) runs here, never on the writer tick. The request set is
+    learned from the writer's first cache miss (_read_simconnect_lvars_cached
+    records it) so no aircraft-detection logic is duplicated.
+    """
+    while not _ENRICHER_STOP.is_set():
+        try:
+            reqs = list(_ENRICHER_LVAR_REQUESTS)
+            if reqs:
+                _read_simconnect_lvars(reqs, force=True)
+        except Exception:
+            pass
+        # #26: keep the SimConnect weight cache fresh (cheap batched minimal
+        # read; runs in this background thread, never on the writer tick).
+        try:
+            from .simconnect_position import read_position_minimal
+            minimal = read_position_minimal(force=True)
+            if isinstance(minimal, dict) and (minimal.get("gross_weight_lb") is not None or minimal.get("max_gross_weight_lb") is not None):
+                _SIMCONNECT_WEIGHT_CACHE.update({
+                    "gross_weight_lb": minimal.get("gross_weight_lb"),
+                    "max_gross_weight_lb": minimal.get("max_gross_weight_lb"),
+                    "at": time.monotonic(),
+                })
+        except Exception:
+            pass
+        _ENRICHER_STOP.wait(_ENRICHER_INTERVAL)
+
+
+def _start_addon_enricher() -> None:
+    global _ENRICHER_THREAD
+    if _ENRICHER_THREAD is not None and _ENRICHER_THREAD.is_alive():
+        return
+    _ENRICHER_STOP.clear()
+    _ENRICHER_THREAD = threading.Thread(target=_enricher_loop, name="OpsRoom-AddonEnricher", daemon=True)
+    _ENRICHER_THREAD.start()
+
+
+def _read_simconnect_lvars_cached(requests: list[tuple[str, str]]) -> list[Any]:
+    """#43: writer-safe L:Var reader — returns cache-only values.
+
+    Never touches SimConnect on the writer hot path. On a cache miss (e.g. the
+    enricher has not warmed a newly detected aircraft yet) it records the
+    request set for the enricher and returns [] so enrich_telemetry falls back
+    to the cheap FSUIPC WASM offsets exactly as it does when SimConnect is
+    unavailable.
+    """
+    if not requests:
+        return []
+    key = tuple((str(name), str(fmt)) for name, fmt in requests)
+    if key == _SIMCONNECT_LVAR_CACHE_KEY and time.monotonic() - _SIMCONNECT_LVAR_CACHE_AT < _ENRICHER_CACHE_MAX_AGE:
+        return list(_SIMCONNECT_LVAR_CACHE_VALUES)
+    global _ENRICHER_LVAR_REQUESTS
+    if list(_ENRICHER_LVAR_REQUESTS) != list(requests):
+        _ENRICHER_LVAR_REQUESTS = list(requests)
+    return []
 
 
 def _enrich_addon_telemetry(result: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(result, dict) or not result.get("ok"):
         return result
+    _start_addon_enricher()
     try:
         from .addon_telemetry import enrich_telemetry
-        return enrich_telemetry(result, _read_addon_offsets, _read_simconnect_lvars)
+        enriched = enrich_telemetry(result, _read_addon_offsets, _read_simconnect_lvars_cached)
     except Exception as exc:
         enriched = dict(result)
         enriched["adapter_status"] = {
             "active": False, "mode": "GENERIC FALLBACK",
             "reason": f"Aircraft adapter enrichment failed: {type(exc).__name__}: {exc}",
         }
-        return enriched
+    # #26: merge SimConnect TOTAL_WEIGHT when the FSUIPC weight is missing or
+    # was rejected by the sanity bound (Fenix reports garbage in 0x30C0/0x30C8).
+    if enriched.get("gross_weight_lb") is None:
+        wcache = _SIMCONNECT_WEIGHT_CACHE
+        if wcache and time.monotonic() - float(wcache.get("at") or 0.0) < _ENRICHER_WEIGHT_MAX_AGE:
+            if wcache.get("gross_weight_lb") is not None:
+                enriched["gross_weight_lb"] = wcache["gross_weight_lb"]
+            if wcache.get("max_gross_weight_lb") is not None:
+                enriched["max_gross_weight_lb"] = wcache["max_gross_weight_lb"]
+    return enriched
 
 
 def read_telemetry(force: bool = False, stream: str = "full") -> dict[str, Any]:
@@ -1464,6 +1801,15 @@ def read_telemetry(force: bool = False, stream: str = "full") -> dict[str, Any]:
     now = time.monotonic()
     with _LOCK:
         if not force and _CACHE is not None and now - _CACHE_TIME < _CACHE_SECONDS:
+            return dict(_CACHE)
+        # Stage 2 single-writer bus: the telemetry writer publishes _CACHE at
+        # its own cadence (>= 1 Hz idle, up to 30 Hz in flight). A consumer's
+        # cache miss here only means the writer has not ticked within the tight
+        # 0.18 s window - serve its last published snapshot instead of opening a
+        # new simulator read. Consumers only fall through to a direct read when
+        # the writer is down or has not started yet (_CACHE older than
+        # _WRITER_CACHE_MAX_AGE), preserving pre-Stage-2 behaviour as a fallback.
+        if not force and _CACHE is not None and now - _CACHE_TIME < _WRITER_CACHE_MAX_AGE:
             return dict(_CACHE)
         settings = _telemetry_settings()
         if not _sim_process_running():
@@ -1604,4 +1950,5 @@ def telemetry_diagnostics(probe: bool = False) -> dict[str, Any]:
             },
         },
         "simconnect": simconnect_diagnostics(),
+        "writer": writer_status(),
     }
