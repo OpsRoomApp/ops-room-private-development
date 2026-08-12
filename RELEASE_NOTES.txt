@@ -1,4 +1,70 @@
-# OPS ROOM 0.25.75
+## 0.25.77: crew sign-off, GSX/refresh performance, telemetry reliability and Live OFP fixes
+
+- **Review & Sign is now two moments, not one.** The pre-departure Loadsheet
+  sign-off keeps its real-pilot workflow, and a new Flight Completion sign-off
+  appears after block-in at the arrival gate: review the completed flight
+  (times, fuel, weights) and sign before the logbook closes. Both signatures
+  are stored per flight and shown in the logbook detail and printed records.
+- **The app is fast again when GSX misbehaves.** A flaky GSX Remote WebSocket
+  used to make every status call retry for 5-20 s and saturate the server,
+  freezing refreshes and Host Setup. Status reads are now bounded (~1.2 s max),
+  last-known-good data is served for 2 s, failures are cached, and the
+  automation loop uses the cached status instead of forcing a fresh exchange
+  every cycle. The telemetry writer's stall can no longer trigger a slow
+  direct sim read from a request either — consumers always get the last
+  snapshot with a stale flag.
+- **Live OFP can never freeze again.** The 2 s refresh poll now aborts a slow
+  response instead of wedging forever, keeps the last good data with a STALE
+  marker on failure, and the sign button no longer hides the moment the flight
+  goes LIVE (a status/state key mismatch was locking signatures on the ground).
+- **GSX operator selection always checks your airline first.** Operator popups
+  are now detected by shape (not just title words), so the brand match runs
+  even when GSX uses an unexpected title — no more silent "first company in
+  the list" picks. Fallback picks are recorded, and observer connection
+  failures are logged so a dead observer is diagnosable.
+- **Orphan recordings end on-blocks.** A recording whose flight never reached
+  the logbook (hot start / ad-hoc session) used to record until app exit; it
+  now finalizes 5 minutes after parking with engines off and brakes set.
+- **Announcer volume follows the camera live.** Switching cockpit / cabin /
+  external now re-applies the volume mid-playback, like Universal Announcer.
+- **Weight & CG auto-fill improved.** The Performance tab fills the CG from
+  the Fenix EFB loadsheet (MACZFW/MACTOW) when the aircraft is active, and the
+  Live OFP recovers PAX/BAG/PAYLOAD actuals after a restart instead of showing
+  "—" for the whole flight (loading progress is persisted).
+
+# OPS ROOM 0.25.77
+
+## 0.25.76: UI polish pass — cleaner host setup, fixed overlays, consistent reading
+
+- **Host setup is easier to navigate.** The twelve System Setup panels are now
+  collapsible (your collapsed state is remembered), the SAVE button is pinned
+  so it is always reachable no matter how far you scroll, and the Status tab
+  shows a compact strip instead of three oversized cards.
+- **Every checkbox now shows a proper tick** instead of a cross.
+- **The whole app reads better.** Dozens of labels that were below 9 px (Black
+  Box gauges, dispatch, radio, OBS studio, performance results, Live OFP hints)
+  were lifted onto the readable scale, and the dimmest text colour now meets
+  contrast guidelines.
+- **OBS overlays fixed.** Route arrows render as proper arrows instead of "?",
+  a single slow endpoint can no longer blank an entire overlay, the metric
+  grid and landing/status cards no longer clip no matter how many fields you
+  select, scale above 100% stays anchored to the overlay position, and the
+  studio preview now shows the true source aspect ratio.
+- **Logbook debriefs are cleaner.** The event timeline filters out internal
+  phase-machine noise instead of dumping raw technical events.
+- **Module launcher tidied up.** The classic console launcher drops its
+  confusing 05A/05B/12A/12B numbering, gains the missing Scratchpad tile, and
+  matches the tablet launcher's order.
+- **No more console errors on tablets.** iPads and tablets probing
+  /favicon.ico and /apple-touch-icon.png at the root get real icons instead of
+  404s.
+- **Finance pages never show placeholder routes** like "---- → ----" for
+  records without route data.
+- **Destructive actions look destructive.** DELETE RECORD and Reset career are
+  visually distinct from safe buttons, and invalid form fields get a red
+  border after you interact with them.
+
+## 0.25.75: PIREP analysis fixed, telemetry cadence hardened, and the pending fix list closed
 
 ## 0.25.75: PIREP analysis fixed, telemetry cadence hardened, and the pending fix list closed
 

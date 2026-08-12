@@ -259,6 +259,80 @@ def loadsheet() -> dict[str, Any]:
         return {"ok": False, "reason": f"{type(exc).__name__}: {exc}", "base_url": _base_url()}
 
 
+_LOADSHEET_FINAL_CACHE: dict[str, Any] | None = None
+_LOADSHEET_FINAL_AT = 0.0
+_LOADSHEET_FINAL_TTL = 30.0
+_LOADSHEET_FINAL_FAIL_TTL = 5.0
+
+
+def loadsheet_final(force: bool = False) -> dict[str, Any]:
+    """Fetch the Fenix EFB FINAL loadsheet weights (#60).
+
+    ``GET /fenix/loadsheet?loadsheetType=Final`` returns the aircraft's exact
+    TOW / ZFW / LDW plus maxes and MACs at ANY flight phase (verified live:
+    HTTP 200 during cruise). This is the trusted source that fixes the Live
+    OFP TOW/ZFW/LDW actuals that FSUIPC 0x30C0 never fills on Fenix.
+
+    Weights arrive as ``{value, unit}`` objects; MACs are plain numbers.
+    TTL-cached (30 s on success, 5 s on failure) so repeated Live OFP
+    refreshes never hammer the portal. Never fatal: returns ``ok=False`` when
+    the portal is absent or the payload is not a Final loadsheet.
+    """
+    global _LOADSHEET_FINAL_CACHE, _LOADSHEET_FINAL_AT
+    now = time.monotonic()
+    if not force and _LOADSHEET_FINAL_CACHE and now - _LOADSHEET_FINAL_AT < _LOADSHEET_FINAL_TTL:
+        return dict(_LOADSHEET_FINAL_CACHE)
+
+    def _weight(data: dict[str, Any], key: str) -> float | None:
+        value = data.get(key)
+        if isinstance(value, dict):
+            return _number(value.get("value"))
+        return _number(value)
+
+    result: dict[str, Any] = {"ok": False, "reason": "Fenix Final loadsheet unavailable"}
+    ttl = _LOADSHEET_FINAL_FAIL_TTL
+    try:
+        status_code, _text, parsed = _request("GET", "/fenix/loadsheet?loadsheetType=Final", timeout=2.5)
+        data = parsed if isinstance(parsed, dict) else {}
+        tow = _weight(data, "tow")
+        zfw = _weight(data, "zfw")
+        law = _weight(data, "law")
+        if 200 <= status_code < 300 and (tow is not None or zfw is not None or law is not None):
+            result = {
+                "ok": True,
+                "status_code": status_code,
+                "tow_kg": tow,
+                "zfw_kg": zfw,
+                "law_kg": law,
+                "mac_tow": _number(data.get("macTow")),
+                "mac_zfw": _number(data.get("macZfw")),
+                "max_tow_kg": _weight(data, "maxTow"),
+                "max_zfw_kg": _weight(data, "maxZfw"),
+                "max_law_kg": _weight(data, "maxLaw"),
+                "pax": _int(_weight(data, "pax")),
+                "total_cargo_kg": _weight(data, "totalCargo"),
+                "base_url": _base_url(),
+            }
+            ttl = _LOADSHEET_FINAL_TTL
+    except Exception as exc:
+        result = {"ok": False, "reason": f"{type(exc).__name__}: {exc}", "base_url": _base_url()}
+    _LOADSHEET_FINAL_CACHE = result
+    _LOADSHEET_FINAL_AT = now
+    return dict(result)
+
+
+def loadsheet_final_cached() -> dict[str, Any]:
+    """#71-followup: read the FINAL loadsheet cache WITHOUT touching the portal.
+
+    The background Fenix probe thread keeps this cache warm; request paths
+    (Live OFP payload, perf page) must never block on the EFB fetch again.
+    Returns the cached sheet or an honest "not cached yet" result.
+    """
+    if _LOADSHEET_FINAL_CACHE is not None:
+        return dict(_LOADSHEET_FINAL_CACHE)
+    return {"ok": False, "reason": "Fenix loadsheet not cached yet; background refresh in progress", "base_url": _base_url()}
+
+
 def status(force: bool = False) -> dict[str, Any]:
     global _CACHE, _CACHE_TIME
     global _STICKY_DETECTED, _STICKY_DETECTED_AT, _STICKY_DETECTED_NEGATIVE

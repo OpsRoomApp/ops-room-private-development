@@ -101,13 +101,15 @@ from .logbook import (
     latest_landing as logbook_latest_landing,
     get_active_recorder as logbook_active_recorder, latest_completed as logbook_latest_completed,
     export_csv as logbook_export_csv, export_json as logbook_export_json, export_pdf as logbook_export_pdf, export_entry_pdf as logbook_export_entry_pdf, telemetry as logbook_telemetry, get_entry as logbook_get_entry, start_engine as start_logbook_engine,
+    get_loadsheet_signature as logbook_get_signature, set_loadsheet_signature as logbook_set_signature, clear_loadsheet_signature as logbook_clear_signature, loadsheet_signature_locked as logbook_signature_locked,
+    completion_signature_locked as logbook_completion_signature_locked,
 )
 from .ofp_actuals import build_live_ofp_actuals, plan_from_entry
 from .ofp_overrides import get_overrides, set_overrides, remove_override, clear_overrides
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="OPS ROOM", version="0.25.75")
+app = FastAPI(title="OPS ROOM", version="0.25.77")
 app.include_router(realworld_router)
 app.include_router(realworld_debug_router)
 app.add_middleware(GZipMiddleware, minimum_size=512)
@@ -511,6 +513,19 @@ def security_revoke(device_id: str, request: Request) -> dict:
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(BASE_DIR / "static" / "index.html")
+
+
+# Root-level icon endpoints: iOS/Safari probes these conventional paths before
+# reading the <link> tags, and 404s there show up as console noise on tablets.
+@app.get("/favicon.ico")
+def root_favicon() -> FileResponse:
+    return FileResponse(BASE_DIR / "static" / "opsroom.ico", media_type="image/x-icon")
+
+
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+def root_apple_touch_icon() -> FileResponse:
+    return FileResponse(BASE_DIR / "static" / "icons" / "opsroom-192.png", media_type="image/png")
 
 
 @app.get("/obs")
@@ -1081,6 +1096,66 @@ def briefing_operational(force_refresh: bool = False) -> dict:
     return operational_briefing(force=force_refresh)
 
 
+# #86: last-known-good weight/fuel actuals per flight. The Fenix EFB sheet
+# cache can go cold after landing, which blanks ZFW/TOW/LDW in the completion
+# REVIEW & SIGN popup even though the Live OFP showed real values during the
+# session. The payload caches the cells the moment they carry an actual and
+# re-fills only the empty ones for the same flight, so the popup never shows
+# "—" when the panel did. Keyed by recorder id so a new flight never inherits
+# the previous flight's values.
+_LKG_OFP_CACHE: dict[str, dict] = {}
+_LKG_OFP_CACHE_MAX = 12
+
+
+def _lkg_ofp_snapshot(payload: dict) -> dict:
+    """Collect the weight/fuel cells that currently carry an actual value."""
+    snap: dict = {"weights": {}, "fuel": {}}
+    weights = payload.get("weights") if isinstance(payload.get("weights"), dict) else {}
+    for key in ("passengers", "bags_cargo", "commercial_freight", "payload", "zfw", "tow", "ldw"):
+        cell = weights.get(key)
+        if isinstance(cell, dict) and cell.get("actual") is not None:
+            snap["weights"][key] = cell
+    fuel = payload.get("fuel") if isinstance(payload.get("fuel"), dict) else {}
+    for key in ("ramp_out", "takeoff_off", "trip", "landing_on", "block_in"):
+        cell = fuel.get(key)
+        if isinstance(cell, dict) and cell.get("actual") is not None:
+            snap["fuel"][key] = cell
+    return snap
+
+
+def _stash_lkg_ofp(recorder_id: str, payload: dict) -> None:
+    if not recorder_id:
+        return
+    snap = _lkg_ofp_snapshot(payload)
+    if not snap["weights"] and not snap["fuel"]:
+        return
+    cache = _LKG_OFP_CACHE.setdefault(recorder_id, {})
+    for section in ("weights", "fuel"):
+        bucket = cache.setdefault(section, {})
+        for key, cell in snap[section].items():
+            bucket[key] = cell
+    while len(_LKG_OFP_CACHE) > _LKG_OFP_CACHE_MAX:
+        _LKG_OFP_CACHE.pop(next(iter(_LKG_OFP_CACHE)))
+
+
+def _fill_lkg_ofp(recorder_id: str, payload: dict) -> None:
+    """Re-fill only empty actual cells from the flight's last-known-good."""
+    if not recorder_id:
+        return
+    cache = _LKG_OFP_CACHE.get(recorder_id) or {}
+    weights = payload.get("weights") if isinstance(payload.get("weights"), dict) else {}
+    fuel = payload.get("fuel") if isinstance(payload.get("fuel"), dict) else {}
+    for section, target in (("weights", weights), ("fuel", fuel)):
+        for key, cell in (cache.get(section) or {}).items():
+            current = target.get(key)
+            if not isinstance(current, dict) or current.get("actual") is None:
+                filled = dict(cell)
+                base_source = str(filled.get("source") or "").strip()
+                filled["source"] = f"{base_source} (last known good)".strip() if base_source else "last known good"
+                filled["lkg"] = True
+                target[key] = filled
+
+
 def _live_ofp_payload() -> dict:
     """Build the live OFP completion payload (shared by GET and PRINT)."""
     settings = load_settings()
@@ -1108,6 +1183,19 @@ def _live_ofp_payload() -> dict:
             loading_progress = last_progress
     except Exception:
         loading_progress = None
+    # #60: TOW/ZFW/LDW actuals on Fenix come from the EFB FINAL loadsheet
+    # (FSUIPC 0x30C0 is never populated by the Fenix). #71-followup: this
+    # request path only reads the background-warmed cache (loadsheet_final_cached)
+    # — the inline 2.5 s EFB fetch here was making the Live OFP poll abort at
+    # the 2.5 s frontend timeout and freeze the panel on "waiting".
+    fenix_loadsheet = None
+    try:
+        from .fenix_adapter import loadsheet_final_cached as _fenix_loadsheet_cached
+        sheet = _fenix_loadsheet_cached()
+        if sheet.get("ok"):
+            fenix_loadsheet = sheet
+    except Exception:
+        fenix_loadsheet = None
     payload = build_live_ofp_actuals(
         plan,
         active,
@@ -1116,6 +1204,7 @@ def _live_ofp_payload() -> dict:
         telemetry_fresh=fresh,
         overrides=overrides,
         loading_progress=loading_progress,
+        fenix_loadsheet=fenix_loadsheet,
     )
     if payload.get("state") == "mismatch" and active is None:
         # A fresh plan with only an unrelated completed flight on file means
@@ -1126,6 +1215,109 @@ def _live_ofp_payload() -> dict:
         # Never leak the previous flight's manual overrides into a fresh plan
         # that is only waiting for its own recording to begin.
         payload["manual_overrides"] = {}
+    # #62/#77/#81: electronic signing state (loadsheet + flight completion).
+    # The refresh loop renders the SIGNED chips / REVIEW & SIGN buttons from
+    # this block. `signature_locked` is True once the flight has taken off or
+    # completed; `completion_ready` turns on once the aircraft is parked with
+    # a block-in time recorded and no completion signature yet. Hardened: every
+    # field is computed independently so a failure in one lookup can never
+    # silently blank all sign-off state (the FFT1011 arrival showed the whole
+    # block collapsing to locked on a single source disagreement — the button
+    # AND the completion popup vanished).
+    payload["signed"] = None
+    payload["signature_locked"] = True
+    payload["signed_completion"] = None
+    payload["completion_locked"] = True
+    payload["completion_ready"] = False
+    payload["loadsheet_ready"] = False
+    if recorder_id:
+        try:
+            payload["signed"] = get_loadsheet_signature(recorder_id) or None
+        except Exception:
+            payload["signed"] = None
+        try:
+            payload["signature_locked"] = bool(loadsheet_signature_locked(source))
+        except Exception:
+            payload["signature_locked"] = True
+        try:
+            payload["signed_completion"] = get_loadsheet_signature(recorder_id, kind="completion") or None
+        except Exception:
+            payload["signed_completion"] = None
+        try:
+            payload["completion_locked"] = bool(logbook_completion_signature_locked(source))
+        except Exception:
+            payload["completion_locked"] = True
+        try:
+            times = source.get("times") if isinstance(source.get("times"), dict) else {}
+            block_in = bool(times.get("block_in"))
+            payload["completion_ready"] = bool(block_in and not payload["signed_completion"] and not payload["completion_locked"])
+        except Exception:
+            payload["completion_ready"] = False
+        # #82: pre-departure sign-off readiness — the auto-popup gate. The
+        # sheet is "ready to sign" when the flight is RECORDING, pre-takeoff,
+        # unsigned, on the ground, and at least one W&B source is present
+        # (Fenix FINAL loadsheet, GSX/Fenix boarding progress, or the SimBrief
+        # plan) so the modal never offers an empty sheet.
+        try:
+            state_value = str(source.get("state") or source.get("status") or "").upper()
+            times = source.get("times") if isinstance(source.get("times"), dict) else {}
+            phase = str(source.get("phase") or (source.get("_state") or {}).get("phase") or "").upper()
+            on_ground_phase = phase in {"PARKED", "PUSHBACK", "TAXI OUT", "TAXI"}
+            loadsheet_ok = bool((payload.get("fenix_loadsheet") or {}).get("ok"))
+            progress_ok = bool(isinstance(loading_progress, dict) and loading_progress)
+            plan_ok = bool(plan)
+            payload["loadsheet_ready"] = bool(
+                state_value == "RECORDING"
+                and not times.get("takeoff")
+                and not payload["signature_locked"]
+                and not payload["signed"]
+                and on_ground_phase
+                and (loadsheet_ok or progress_ok or plan_ok)
+            )
+        except Exception:
+            payload["loadsheet_ready"] = False
+    # #86: the completion REVIEW & SIGN popup needs the flight's finance and
+    # passenger-satisfaction summary. A completed entry carries them in its
+    # metadata (posted at finalize); refresh once (non-persist) so a late
+    # GSX-receipt reconcile is reflected without a DB write on the request
+    # path. Absent finance is never fatal -- the popup renders "—".
+    payload.setdefault("finance", {})
+    payload.setdefault("satisfaction", {})
+    if completed is not None and isinstance(completed, dict) and completed.get("id"):
+        try:
+            from .logbook import _refresh_entry_finance as _refresh_finance
+            entry = _refresh_finance(completed, persist=False)
+        except Exception:
+            entry = completed
+        try:
+            statement = entry.get("finance") if isinstance(entry.get("finance"), dict) else {}
+            airline = statement.get("airline") if isinstance(statement.get("airline"), dict) else {}
+            pilot = statement.get("pilot") if isinstance(statement.get("pilot"), dict) else {}
+            payload["finance"] = {
+                "ok": bool(statement.get("ok")),
+                "currency": str(statement.get("currency") or ""),
+                "symbol": str(statement.get("symbol") or ""),
+                "airline_result": airline.get("profit"),
+                "pilot_pay": pilot.get("pay"),
+            }
+            satis = statement.get("passenger_satisfaction") if isinstance(statement.get("passenger_satisfaction"), dict) else {}
+            if isinstance(satis, dict) and satis.get("score") is not None and "error" not in satis:
+                payload["satisfaction"] = {
+                    "score": satis.get("score"),
+                    "label": str(satis.get("category") or ""),
+                }
+        except Exception:
+            payload["finance"] = {}
+            payload["satisfaction"] = {}
+    # #86: persist and re-fill last-known-good weight/fuel actuals so the
+    # completion review never shows "—" for a cell the Live OFP had values for
+    # minutes earlier (Fenix sheet cache expiry after landing).
+    if recorder_id:
+        try:
+            _stash_lkg_ofp(recorder_id, payload)
+            _fill_lkg_ofp(recorder_id, payload)
+        except Exception:
+            pass
     return payload
 
 
@@ -1210,6 +1402,97 @@ def briefing_ofp_live_overrides(payload: dict | None = None) -> dict:
     if errors:
         return {"ok": False, "reason": "Some overrides were rejected", "errors": errors, "manual_overrides": valid}
     return {"ok": True, "manual_overrides": valid}
+
+
+# ── #62: electronic loadsheet signing ────────────────────────────────────
+# One signature slot per flight, stored in the dedicated loadsheet_signatures
+# table (never in metadata_json, which the recorder rewrites wholesale).
+# Signing is allowed pre-departure only; once takeoff is recorded (or the
+# flight completes) the signature is locked and cannot be re-signed/cleared.
+
+
+def _signature_source(flight: str = "", kind: str = "loadsheet") -> tuple[str | None, dict[str, Any] | None, bool]:
+    """Resolve (recorder_id, source_entry, locked) for signature operations.
+
+    Mirrors _live_ofp_payload: the active recorder wins; after block-in the
+    most recent completed entry is used so the pilot can sign/see the sheet
+    while parked at the gate with a finished flight on file.
+
+    ``kind`` selects the lock rule: ``loadsheet`` (#62, locked after takeoff)
+    or ``completion`` (#77, open only post-arrival / after completion).
+    """
+    flight_id = str(flight or "").strip()
+    if not flight_id:
+        active = logbook_active_recorder()
+        if active is not None:
+            flight_id = str(active.get("id") or "")
+            source = active
+        else:
+            source = logbook_latest_completed()
+            if source is not None:
+                flight_id = str(source.get("id") or "")
+    else:
+        try:
+            source = logbook_get_entry(flight_id)
+        except Exception:
+            source = None
+    if not flight_id or not source:
+        return None, None, True
+    if str(kind or "").strip().lower() == "completion":
+        locked = logbook_completion_signature_locked(source)
+    else:
+        locked = logbook_signature_locked(source)
+    return flight_id, source, locked
+
+
+@app.get("/api/briefing/ofp-live/signature")
+def briefing_ofp_live_signature_get(flight: str = "", kind: str = "loadsheet") -> dict:
+    """Current signature state for a flight (or the active one) and kind."""
+    flight_id, source, locked = _signature_source(flight, kind)
+    if not flight_id:
+        return {"ok": False, "reason": "No active or completed recorder is available."}
+    return {"ok": True, "flight_id": flight_id, "kind": kind, "locked": locked, "signed": logbook_get_signature(flight_id, kind=kind)}
+
+
+@app.post("/api/briefing/ofp-live/sign")
+def briefing_ofp_live_sign(payload: dict | None = None) -> dict:
+    """Store the electronic crew signature for the current flight.
+
+    Body: ``{"kind": "loadsheet"|"completion", "signer": "A. PILOT", "role": "CAPTAIN", "sig_data_url": "data:image/png;base64,...", "snapshot": {...}}``
+    ``kind=loadsheet`` (#62) is rejected after takeoff; ``kind=completion``
+    (#77) is only accepted post-arrival (block-in recorded / flight completed).
+    """
+    data = payload if isinstance(payload, dict) else {}
+    kind = str(data.get("kind") or "loadsheet").strip().lower()
+    flight_id, source, locked = _signature_source(str(data.get("flight") or ""), kind)
+    if not flight_id:
+        return {"ok": False, "reason": "No active or completed recorder is available to sign."}
+    if locked:
+        if kind == "completion":
+            return {"ok": False, "reason": "Flight Completion sign-off is only available after block-in at the arrival gate."}
+        return {"ok": False, "reason": "Loadsheet signing is locked after takeoff."}
+    signer = str(data.get("signer") or "").strip()
+    if not signer:
+        return {"ok": False, "reason": "Signer name is required."}
+    sig_data_url = str(data.get("sig_data_url") or "").strip()
+    if sig_data_url and not sig_data_url.startswith("data:image/png;base64,") and not sig_data_url.startswith("data:image/webp;base64,"):
+        return {"ok": False, "reason": "Signature image must be a PNG data URL."}
+    snapshot = data.get("snapshot") if isinstance(data.get("snapshot"), dict) else {}
+    stored = logbook_set_signature(flight_id, signer, role=str(data.get("role") or ""), sig_data_url=sig_data_url, snapshot=snapshot, kind=kind)
+    return {"ok": True, "signed": stored}
+
+
+@app.delete("/api/briefing/ofp-live/signature")
+def briefing_ofp_live_signature_delete(flight: str = "", kind: str = "loadsheet") -> dict:
+    """Clear/re-sign a signature. Loadsheet: pre-departure only. Completion:
+    append-only record, no delete once the flight completed."""
+    flight_id, source, locked = _signature_source(flight, kind)
+    if not flight_id:
+        return {"ok": False, "reason": "No active or completed recorder is available."}
+    if locked:
+        return {"ok": False, "reason": "Loadsheet signing is locked after takeoff." if kind != "completion" else "Flight Completion sign-off is locked."}
+    removed = logbook_clear_signature(flight_id, kind=kind)
+    return {"ok": True, "removed": removed}
 
 
 # ── FAA NMS-API NOTAM proxy client (v0.25.60) ────────────────────────────
@@ -2835,6 +3118,21 @@ def api_fenix_status(force_refresh: bool = False) -> dict:
     return fenix_status(force=force_refresh)
 
 
+@app.get("/api/fenix/loadsheet")
+def api_fenix_loadsheet(force_refresh: bool = False) -> dict:
+    """#75: Fenix EFB FINAL loadsheet (TOW/ZFW/LDW/MACTOW/MACZFW, PAX, cargo).
+
+    TTL-cached in fenix_adapter (30 s success / 5 s fail); used by the
+    Performance tab to auto-fill the CG (ZFWCG) from the real aircraft data
+    instead of leaving it manual.
+    """
+    try:
+        from .fenix_adapter import loadsheet_final
+        return loadsheet_final(force=force_refresh)
+    except Exception as exc:
+        return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+
 @app.get("/api/fenix/simbrief")
 def api_fenix_simbrief() -> dict:
     return fenix_simbrief()
@@ -2897,7 +3195,7 @@ def server_qr(request: Request) -> Response:
 def health() -> dict:
     return {
         "ok": True,
-        "version": "0.25.75",
+        "version": "0.25.77",
         "product": "OPS ROOM",
         "refresh_seconds": CACHE_SECONDS,
         "simconnect": simconnect_diagnostics(),

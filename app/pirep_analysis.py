@@ -1021,6 +1021,10 @@ def _opsroom_pirep_compute_satisfaction(meta: dict[str, Any], result: dict[str, 
             "departure_delay_minutes": (meta or {}).get("departure_delay_minutes"),
             "arrival_delay_minutes": (meta or {}).get("arrival_delay_minutes"),
             "emergency_events": (meta or {}).get("emergency_events") or (meta or {}).get("emergency_count"),
+            # #63: taxi durations for the operations deduction (the analysis
+            # has no "operations" block; derive from recorded event times).
+            "times": (meta or {}).get("times"),
+            "durations": (meta or {}).get("durations"),
         }
         return _satisfaction_compute(_satis_meta, result, _satis_weights)
     except Exception as _satis_exc:  # missing telemetry must not break scoring

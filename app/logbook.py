@@ -132,6 +132,31 @@ def _init_db() -> None:
                 data_json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_samples_flight_time ON samples(flight_id, elapsed_seconds);
+            -- #62: electronic loadsheet signature. One slot per flight; the
+            -- snapshot_json captures the exact values signed (weights, MAC,
+            -- sources, UTC) so the record proves what was signed. Deliberately
+            -- NOT in flights.metadata_json: the recorder upsert rewrites that
+            -- column wholesale and would clobber the signature.
+            CREATE TABLE IF NOT EXISTS loadsheet_signatures(
+                flight_id TEXT PRIMARY KEY REFERENCES flights(id) ON DELETE CASCADE,
+                signer TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT '',
+                sig_data_url TEXT NOT NULL DEFAULT '',
+                signed_utc TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL DEFAULT '{}'
+            );
+            -- #77: post-arrival Flight Completion sign-off. Kept as its own
+            -- table (same shape as loadsheet_signatures) so the pre-departure
+            -- loadsheet row and the post-arrival completion row coexist per
+            -- flight without a PRIMARY KEY migration on live databases.
+            CREATE TABLE IF NOT EXISTS completion_signatures(
+                flight_id TEXT PRIMARY KEY REFERENCES flights(id) ON DELETE CASCADE,
+                signer TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT '',
+                sig_data_url TEXT NOT NULL DEFAULT '',
+                signed_utc TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL DEFAULT '{}'
+            );
             """
         )
         conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema',?)", (str(_SCHEMA),))
@@ -669,14 +694,27 @@ def _sample_ground_safe(sample: dict[str, Any]) -> bool:
 def _airborne_candidate(sample: dict[str, Any]) -> bool:
     if sample.get("on_ground") is not False:
         return False
-    if _gsx_predeparture_active():
-        return False
     gs = _number(sample.get("ground_speed_kts")) or 0.0
     ias = _number(sample.get("ias_kts")) or 0.0
     agl = _number(sample.get("radio_altitude_ft"))
     if agl is None:
         agl = _number(sample.get("agl_ft")) or 0.0
-    return bool(gs >= 55.0 and ias >= 45.0 and agl >= 30.0)
+    physically_airborne = bool(gs >= 55.0 and ias >= 45.0 and agl >= 30.0)
+    if not physically_airborne:
+        return False
+    # #59: GSX pre-departure state (boarding/catering/refuel rows, cached
+    # boarding progress) must NEVER veto airborne confirmation once the
+    # physical evidence is unambiguous — GSX keeps its departure workflow open
+    # until it registers the aircraft has departed, which delayed the OFF
+    # timestamp ~45 s on EWG5EZ (phase stayed TAKEOFF ROLL to 2,147 ft AGL).
+    # GSX can only *weaken* a borderline candidate (agl < 150 ft); a clear
+    # climb is confirmed by physics alone. GSX can delay a departure, never
+    # prove or disprove one.
+    if agl >= 150.0 or (sample.get("vertical_speed_fpm") or 0.0) >= 500.0:
+        return True
+    if _gsx_predeparture_active():
+        return False
+    return True
 
 
 def _confirmed_airborne_from_recent(recent: list[dict[str, Any]]) -> bool:
@@ -709,15 +747,24 @@ def _new_meta(t: dict[str, Any], plan: dict[str, Any] | None, manual: bool) -> d
     _event(meta, "RECORDING", "Manual flight recording started" if manual else "Automatic flight recording started", now)
     snapshots = meta["operational_snapshots"]
     snapshots["start"] = _op_snapshot(t, now)
-    if manual and _telemetry_confirms_airborne(t):
-        meta["times"]["block_out"] = now; meta["times"]["takeoff"] = now
-        meta["positions"]["takeoff"] = _position(t); meta["airports"]["takeoff"] = airport; meta["fuel"]["takeoff_lb"] = fuel
-        # Manual mid-air starts: departure values are estimated, never exact.
-        snapshots["out"] = _op_snapshot(t, now, estimated=True)
-        snapshots["off"] = _op_snapshot(t, now, estimated=True)
+    if _telemetry_confirms_airborne(t):
+        meta["hot_start"] = True
         meta["_state"]["airborne_seen"] = True
         meta["_state"]["confirmed_airborne_seen"] = True
-        _event(meta, "AIRBORNE", "Manual recording began after confirmed airborne telemetry; departure times are estimated", now, "warning")
+        if manual:
+            meta["times"]["block_out"] = now; meta["times"]["takeoff"] = now
+            meta["positions"]["takeoff"] = _position(t); meta["airports"]["takeoff"] = airport; meta["fuel"]["takeoff_lb"] = fuel
+            # Manual mid-air starts: departure values are estimated, never exact.
+            snapshots["out"] = _op_snapshot(t, now, estimated=True)
+            snapshots["off"] = _op_snapshot(t, now, estimated=True)
+            _event(meta, "AIRBORNE", "Manual recording began after confirmed airborne telemetry; departure times are estimated", now, "warning")
+        else:
+            # #69: automatic hot start (app launched mid-flight / recorder joined
+            # an already-airborne session). The phase machine must be allowed to
+            # reach LANDING without a recorded takeoff, or the session stays in
+            # DESCENT CANDIDATE forever and the flight never finalizes (the
+            # 4.35 h orphan). Departure times stay unset (unknown, not estimated).
+            _event(meta, "AIRBORNE", "Automatic recording began mid-flight (hot start); departure times are unavailable", now, "warning")
     elif manual:
         _event(meta, "PREBLOCK", "Manual recording initialized on ground/pre-departure state; takeoff will remain unset until confirmed", now)
     return meta
@@ -768,7 +815,11 @@ def _phase(sample: dict[str, Any], meta: dict[str, Any]) -> str:
         # #42: phase-ordering invariant — TAXI OUT must never precede BLOCK OUT.
         # Any pre-off-blocks ground movement is a pushback, regardless of whether
         # the dedicated GSX/body-vx/track signals can see it (Fenix cannot).
-        if not times.get("block_out") and not state.get("pushback_forward_taxi_proven"):
+        # #56 hardening: a "pushback proven" flag set before any physical
+        # movement (parked sample with a GSX-active row, tug merely scheduled)
+        # is invalid — treat it as absent so the invariant still yields
+        # PUSHBACK at the first real movement.
+        if not times.get("block_out") and not (state.get("pushback_forward_taxi_proven") and state.get("pushback_movement_seen")):
             return "PUSHBACK"
         if gs < 40:
             return "TAXI OUT"
@@ -818,6 +869,16 @@ def _phase(sample: dict[str, Any], meta: dict[str, Any]) -> str:
     if vs > 300 and (not cruise or alt < cruise - 1000):
         state["descent_candidate_count"] = 0
         state.pop("descent_candidate_alt_ft", None)
+        # #66: once ENROUTE is settled, never bounce back to CLIMB. The climb
+        # detector keeps firing for minutes after a slow top-of-climb (observed:
+        # 20 rejected ENROUTE -> CLIMB proposals on EWG5EZ) because vs stays
+        # >300 while the aircraft slowly approaches cruise. Only a genuine
+        # climb excursion (strong sustained climb well below cruise) may
+        # re-propose CLIMB from ENROUTE.
+        if previous_phase == "ENROUTE":
+            if vs > 900 and (not cruise or alt < cruise - 3000):
+                return "CLIMB"
+            return "ENROUTE"
         return "CLIMB"
 
     # v0.24.17: do not declare descent from a single VNAV/ATC restriction
@@ -852,33 +913,10 @@ def _phase(sample: dict[str, Any], meta: dict[str, Any]) -> str:
     return "ENROUTE"
 
 
-_PHASE_TRANSITIONS: dict[str, set[str]] = {
-    # PARKED -> TAXI IN is a deliberate recovery transition. It is used when a
-    # temporary frozen provider falsely reported PARKED before fresh telemetry
-    # proved the aircraft was still taxiing after landing.
-    "PARKED": {"PARKED", "PUSHBACK", "TAXI OUT", "TAKEOFF ROLL", "TAXI IN"},
-    "PUSHBACK": {"PUSHBACK", "PARKED", "TAXI OUT", "TAKEOFF ROLL"},
-    "TAXI OUT": {"TAXI OUT", "PUSHBACK", "TAKEOFF ROLL", "TAKEOFF", "PARKED"},
-    "TAKEOFF ROLL": {"TAKEOFF ROLL", "TAKEOFF", "INITIAL CLIMB", "CLIMB"},
-    "TAKEOFF": {"TAKEOFF", "INITIAL CLIMB", "CLIMB"},
-    "INITIAL CLIMB": {"INITIAL CLIMB", "CLIMB", "ENROUTE", "CRUISE"},
-    "CLIMB": {"CLIMB", "INITIAL CLIMB", "ENROUTE", "CRUISE"},
-    "ENROUTE": {"ENROUTE", "CRUISE", "DESCENT CANDIDATE", "DESCENT"},
-    "CRUISE": {"CRUISE", "ENROUTE", "DESCENT CANDIDATE", "DESCENT"},
-    "DESCENT CANDIDATE": {"DESCENT CANDIDATE", "DESCENT", "ENROUTE", "CRUISE"},
-    "DESCENT": {"DESCENT", "APPROACH", "GO-AROUND", "MISSED APPROACH"},
-    "APPROACH": {"APPROACH", "DESCENT", "LANDING ROLL", "GO-AROUND", "MISSED APPROACH", "INITIAL CLIMB"},
-    "GO-AROUND": {"GO-AROUND", "MISSED APPROACH", "CLIMB", "ENROUTE", "DESCENT", "APPROACH"},
-    "MISSED APPROACH": {"MISSED APPROACH", "CLIMB", "ENROUTE", "DESCENT", "APPROACH"},
-    "LANDING ROLL": {"LANDING ROLL", "TAXI IN", "PARKED"},
-    "TAXI IN": {"TAXI IN", "PARKED"},
-}
-
-
-def _phase_transition_allowed(previous: str | None, current: str) -> bool:
-    if not previous or previous == current:
-        return True
-    return current in _PHASE_TRANSITIONS.get(str(previous).upper(), {current})
+# #85: the phase-transition invariant table is SHARED with flight_watch so
+# the display and recorder can never drift on legal phase ordering. Content is
+# byte-identical to the local table this replaces (verified).
+from .phase_machine import _PHASE_TRANSITIONS, transition_allowed as _phase_transition_allowed  # noqa: E402
 
 
 def _update_fuel_accounting(meta: dict[str, Any], current: dict[str, Any]) -> None:
@@ -939,6 +977,13 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
         state["pushback_completed"] = True
         state["pushback_completed_at"] = now
 
+    # #56: a GSX-active pushback row while parked with the brake set is a
+    # schedule artifact (the tug is *scheduled*, not pushing), not a physical
+    # pushback. Record real physical movement on a latched pushback so the
+    # completion cues below can never be fooled by a parked sample.
+    if pushback_latched and (gs or 0.0) >= 1.5:
+        state["pushback_movement_seen"] = True
+
     # #42: phase-ordering invariant — the aircraft cannot taxi out before off
     # blocks. Any ground movement out of PARKED before block-out is a pushback.
     # Fenix is blind to the dedicated signals (no body-vx, track == heading),
@@ -987,6 +1032,7 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
                 _event(meta, "TAXI OUT", f"Taxi-out confirmed (GS >10kt, forward motion); overriding stale pushback", now)
                 state["taxi_out_gs_logged"] = True
             state["pushback_forward_taxi_proven"] = True
+            state["pushback_movement_seen"] = True
             pushback_latched = False
             state["pushback_positive_latch"] = False
             state["pushback_active"] = False
@@ -1015,21 +1061,33 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
                     _event(meta, "TAXI OUT", f"Forward taxi movement confirmed ({taxi_speed:.1f} kt); stale GSX pushback state ignored", now)
                     state["taxi_out_motion_logged"] = True
                 state["pushback_forward_taxi_proven"] = True
+                state["pushback_movement_seen"] = True
             pushback_latched = False
             state["pushback_positive_latch"] = False
             state["pushback_active"] = False
     elif taxi_speed < 1.2 or current.get("parking_brake") is True:
         state.pop("taxi_motion_candidate", None)
         if pushback_latched and current.get("parking_brake") is True:
-            # #42: movement -> full stop -> parking brakes set = pushback
-            # complete (the pilot always parks the aircraft after the tug
-            # releases). Next ground movement is genuine taxi.
-            state["pushback_completed"] = True
-            state["pushback_completed_at"] = now
-            state["pushback_forward_taxi_proven"] = True
-            pushback_latched = False
-            state["pushback_positive_latch"] = False
-            state["pushback_active"] = False
+            if state.get("pushback_movement_seen"):
+                # #42: movement -> full stop -> parking brakes set = pushback
+                # complete (the pilot always parks the aircraft after the tug
+                # releases). Next ground movement is genuine taxi.
+                state["pushback_completed"] = True
+                state["pushback_completed_at"] = now
+                state["pushback_forward_taxi_proven"] = True
+                pushback_latched = False
+                state["pushback_positive_latch"] = False
+                state["pushback_active"] = False
+            else:
+                # #56: the GSX-active row at flight start (tug *scheduled*, not
+                # pushing) latches on a parked sample with the brake set. No
+                # physical movement ever happened, so this is NOT pushback
+                # completion — drop the latch without stamping forward-taxi
+                # proof. The #42 ordering invariant re-latches on the first real
+                # movement (gs >= 1.5) and the phase machine yields PUSHBACK.
+                pushback_latched = False
+                state.pop("pushback_positive_latch", None)
+                state.pop("pushback_active", None)
 
     current["pushback_active"] = bool(pushback_latched)
     if _sample_ground_safe(current) and not _airborne_candidate(current):
@@ -1594,6 +1652,23 @@ def _hold_for_post_arrival_services(meta: dict[str, Any], t: dict[str, Any] | No
     engines_off = bool(t and t.get("engines_running") is False)
     parking_brake = bool(t and t.get("parking_brake"))
     settled = phase_up == "PARKED" and engines_off and parking_brake
+    # #65: GSX automation actively working arrival services must pause the
+    # fallback timer — the pilot requested services and GSX is mid-work; only
+    # a genuinely idle/absent GSX should be time-boxed. The #44 fallback is a
+    # last resort for "GSX never runs" / "GSX lost", not a race against a
+    # running arrival. (With latches persisted across restart, the GSX-complete
+    # fast path above also survives an app restart mid-arrival.)
+    gsx_working = False
+    try:
+        from .gsx_remote import automation_status as _gsx_auto_status
+        _mode = str((_gsx_auto_status() or {}).get("mode") or "").upper()
+        gsx_working = _mode in {"ARRIVAL", "FULL_TURNAROUND"}
+    except Exception:
+        gsx_working = False
+    if gsx_working:
+        state.pop("post_arrival_settled_since_epoch", None)
+        state["post_arrival_gsx_paused"] = True
+        return True
     if settled:
         since_epoch = state.get("post_arrival_settled_since_epoch")
         if since_epoch is None:
@@ -1963,7 +2038,141 @@ def get_entry(entry_id: str) -> dict[str, Any]:
     meta["rating"] = row["rating"]
     meta["notes"] = row["notes"]
     meta["sample_count"] = _sample_count(entry_id)
+    # #62/#77: attach both sign-off records so logbook detail and the full
+    # PIREP can render what was signed (snapshot included).
+    meta["signed"] = get_loadsheet_signature(entry_id)
+    meta["signed_completion"] = get_loadsheet_signature(entry_id, kind="completion")
     return _attach_airline_branding(meta)
+
+
+# ── #62/#77: electronic crew sign-off ───────────────────────────────────
+# Two signature slots per flight, one table each (no PK migration on live
+# DBs): ``loadsheet_signatures`` (pre-departure weight & balance, #62) and
+# ``completion_signatures`` (post-arrival Flight Completion sign-off, #77).
+# Each snapshot_json stores the exact values the pilot signed (planned vs
+# actual weights/MAC/sources + UTC, or the completed-flight summary), so the
+# record proves what was signed, not just that something was signed.
+
+_SIGNATURE_TABLES = {
+    "loadsheet": "loadsheet_signatures",
+    "completion": "completion_signatures",
+}
+
+
+def _signature_table(kind: str) -> str:
+    return _SIGNATURE_TABLES.get(str(kind or "").strip().lower(), "loadsheet_signatures")
+
+
+def get_loadsheet_signature(flight_id: str | None, kind: str = "loadsheet") -> dict[str, Any] | None:
+    """Return the stored signature dict for a flight/kind, or None if unsigned.
+
+    ``kind`` is ``loadsheet`` (pre-departure, #62) or ``completion``
+    (post-arrival, #77). Never raises on a legacy database that predates the
+    table — an unsigned flight is the same as a flight with no signature.
+    """
+    if not flight_id:
+        return None
+    table = _signature_table(kind)
+    try:
+        with _connect() as conn:
+            row = conn.execute(f"SELECT * FROM {table} WHERE flight_id=?", (str(flight_id),)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if not row:
+        return None
+    try:
+        snapshot = json.loads(row["snapshot_json"])
+    except Exception:
+        snapshot = {}
+    return {
+        "flight_id": str(row["flight_id"]),
+        "kind": kind,
+        "signer": str(row["signer"]),
+        "role": str(row["role"] or ""),
+        "sig_data_url": str(row["sig_data_url"] or ""),
+        "signed_utc": str(row["signed_utc"]),
+        "snapshot": snapshot if isinstance(snapshot, dict) else {},
+    }
+
+
+def set_loadsheet_signature(flight_id: str, signer: str, role: str = "", sig_data_url: str = "", snapshot: dict[str, Any] | None = None, kind: str = "loadsheet") -> dict[str, Any]:
+    """Store (or replace) the signature for a flight/kind. Returns the stored dict."""
+    if not flight_id:
+        raise ValueError("No flight id provided for signature")
+    table = _signature_table(kind)
+    signer = str(signer or "").strip()[:80] or "UNSIGNED"
+    role = str(role or "").strip()[:40]
+    sig_data_url = str(sig_data_url or "").strip()[:200000]  # PNG data URL guard
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    signed_utc = _utc_now()
+    with _connect() as conn:
+        conn.execute(
+            f"INSERT OR REPLACE INTO {table}(flight_id, signer, role, sig_data_url, signed_utc, snapshot_json) VALUES(?,?,?,?,?,?)",
+            (str(flight_id), signer, role, sig_data_url, signed_utc, json.dumps(snapshot, default=str)),
+        )
+    return {
+        "flight_id": str(flight_id),
+        "kind": kind,
+        "signer": signer,
+        "role": role,
+        "sig_data_url": sig_data_url,
+        "signed_utc": signed_utc,
+        "snapshot": snapshot,
+    }
+
+
+def clear_loadsheet_signature(flight_id: str | None, kind: str = "loadsheet") -> bool:
+    """Remove the signature for a flight/kind. Returns True if one was removed."""
+    if not flight_id:
+        return False
+    table = _signature_table(kind)
+    with _connect() as conn:
+        cur = conn.execute(f"DELETE FROM {table} WHERE flight_id=?", (str(flight_id),))
+        return cur.rowcount > 0
+
+
+def completion_signature_locked(entry: dict[str, Any] | None) -> bool:
+    """#77: the Flight Completion sign-off is open only post-arrival.
+
+    Allowed while the flight is RECORDING in a post-arrival state (block-in
+    recorded, parked at the gate) or after it completed. Locked for any
+    pre-departure / enroute state, matching the real-world window: the crew
+    reviews and signs after arrival services, before the logbook closes.
+    """
+    if not isinstance(entry, dict):
+        return True
+    state_value = str(entry.get("state") or entry.get("status") or "").upper()
+    times = entry.get("times") if isinstance(entry.get("times"), dict) else {}
+    if not times.get("block_in"):
+        return True
+    phase = str(entry.get("phase") or (entry.get("_state") or {}).get("phase") or "").upper()
+    if state_value in {"COMPLETE", "INCOMPLETE"}:
+        return False
+    if state_value != "RECORDING":
+        return True
+    # Post-arrival pending: on the ground after block-in, PARKED/TAXI IN.
+    return phase not in {"PARKED", "TAXI IN"}
+
+
+def loadsheet_signature_locked(entry: dict[str, Any] | None) -> bool:
+    """#62: the signature is locked once the flight has taken off (or ended).
+
+    Re-sign/clear is only allowed pre-departure. A completed flight or any
+    recorded takeoff time means the sheet is closed for signing.
+    """
+    if not isinstance(entry, dict):
+        return True
+    # #74: the active recorder dict uses ``state`` ("RECORDING"), while persisted
+    # rows use ``status``. Reading only ``status`` made every live pre-takeoff
+    # flight look non-recording and locked the signature at LIVE. Read both.
+    state_value = str(entry.get("state") or entry.get("status") or "").upper()
+    if state_value != "RECORDING":
+        return True
+    times = entry.get("times") if isinstance(entry.get("times"), dict) else {}
+    if times.get("takeoff"):
+        return True
+    phase = str(entry.get("phase") or (entry.get("_state") or {}).get("phase") or "").upper()
+    return phase in {"TAKEOFF", "INITIAL CLIMB", "CLIMB", "ENROUTE", "DESCENT", "APPROACH", "LANDING", "TAXI IN"}
 
 
 def _sample_count(flight_id: str | None) -> int:
@@ -1971,9 +2180,66 @@ def _sample_count(flight_id: str | None) -> int:
     with _connect() as conn: return int(conn.execute("SELECT COUNT(*) FROM samples WHERE flight_id=?", (flight_id,)).fetchone()[0])
 
 
+def flight_row_exists(flight_id: str | None) -> bool:
+    """#69: True when a logbook flight row exists for ``flight_id``.
+
+    Used by the Black Box orphan watchdog: an active recording whose flight has
+    no logbook row (ad-hoc ``blackbox-*`` starts, hot starts that never
+    persisted) must self-terminate on-blocks instead of recording forever.
+    """
+    if not flight_id:
+        return False
+    try:
+        with _connect() as conn:
+            return conn.execute("SELECT 1 FROM flights WHERE id=? LIMIT 1", (str(flight_id),)).fetchone() is not None
+    except Exception:
+        return True  # on DB trouble, don't force-stop recordings
+
+
 def _rows(query: str = "", limit: int = 1000) -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute("SELECT * FROM flights WHERE status!='RECORDING' ORDER BY started_utc DESC LIMIT ?", (max(1, min(limit, 5000)),)).fetchall()
+        # #62/#77: one batch read for all signatures instead of a per-row
+        # lookup. The completion table (post-arrival sign-off) is read too and
+        # attached as ``signed_completion``.
+        try:
+            signed_rows = conn.execute(
+                "SELECT flight_id, signer, role, signed_utc, snapshot_json FROM loadsheet_signatures"
+            ).fetchall() if rows else []
+        except sqlite3.OperationalError:
+            signed_rows = []
+        try:
+            completion_rows = conn.execute(
+                "SELECT flight_id, signer, role, signed_utc, snapshot_json FROM completion_signatures"
+            ).fetchall() if rows else []
+        except sqlite3.OperationalError:
+            completion_rows = []
+    signatures: dict[str, dict[str, Any]] = {}
+    completions: dict[str, dict[str, Any]] = {}
+    for sig in signed_rows:
+        try:
+            snap = json.loads(sig["snapshot_json"])
+        except Exception:
+            snap = {}
+        signatures[str(sig["flight_id"])] = {
+            "flight_id": str(sig["flight_id"]),
+            "signer": str(sig["signer"]),
+            "role": str(sig["role"] or ""),
+            "signed_utc": str(sig["signed_utc"]),
+            "snapshot": snap if isinstance(snap, dict) else {},
+        }
+    for sig in completion_rows:
+        try:
+            snap = json.loads(sig["snapshot_json"])
+        except Exception:
+            snap = {}
+        completions[str(sig["flight_id"])] = {
+            "flight_id": str(sig["flight_id"]),
+            "signer": str(sig["signer"]),
+            "role": str(sig["role"] or ""),
+            "signed_utc": str(sig["signed_utc"]),
+            "snapshot": snap if isinstance(snap, dict) else {},
+        }
     entries = []
     q = query.strip().upper()
     for row in rows:
@@ -1982,6 +2248,8 @@ def _rows(query: str = "", limit: int = 1000) -> list[dict[str, Any]]:
         except Exception:
             continue
         meta["rating"] = row["rating"]; meta["notes"] = row["notes"]; meta["sample_count"] = _sample_count(meta.get("id"))
+        meta["signed"] = signatures.get(str(meta.get("id") or ""))
+        meta["signed_completion"] = completions.get(str(meta.get("id") or ""))
         if q:
             flight = meta.get("flight") or {}; aircraft = meta.get("aircraft") or {}
             hay = " ".join(str(x or "") for x in [flight.get("callsign"), flight.get("origin"), flight.get("destination"), flight.get("registration"), flight.get("aircraft_icao"), aircraft.get("title"), row["notes"]]).upper()
@@ -2028,13 +2296,22 @@ def _landing_payload(meta: dict[str, Any], row_id: str, updated_utc: str | None 
     flight = meta.get("flight") if isinstance(meta.get("flight"), dict) else {}
     aircraft = meta.get("aircraft") if isinstance(meta.get("aircraft"), dict) else {}
     landing_id = f"{row_id}:{times.get('landing')}"
+    # #67: prefer the ACTUAL recorded runway from the landing analysis (the
+    # recorded-track heading), falling back to the SimBrief planned runway only
+    # when the analysis has no landing geometry. Keep both so the UI can label
+    # planned-vs-actual instead of silently substituting.
+    actual_runway = landing_analysis.get("runway")
+    planned_runway = flight.get("arrival_runway")
+    runway = actual_runway or planned_runway
     return {
         "ok": True,
         "id": landing_id,
         "landing_utc": times.get("landing"),
         "updated_utc": updated_utc or meta.get("updated_utc"),
         "callsign": flight.get("callsign"),
-        "runway": flight.get("arrival_runway"),
+        "runway": runway,
+        "planned_runway": planned_runway,
+        "runway_source": "recorded track" if actual_runway else ("planned" if planned_runway else None),
         "aircraft": flight.get("aircraft_icao") or aircraft.get("model") or aircraft.get("title"),
         "landing_rate_fpm": metrics.get("landing_rate_fpm"),
         "touchdown_g": metrics.get("touchdown_g"),

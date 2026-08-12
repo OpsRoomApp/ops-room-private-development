@@ -1,4 +1,4 @@
-/* OPS ROOM 0.25.75 fixed-layout Full PIREP export.
+/* OPS ROOM 0.25.77 fixed-layout Full PIREP export.
    The interactive report stays untouched. This stylesheet is activated only
    for the self-contained headless PDF document. */
 @page{size:A4 landscape;margin:0}
@@ -31,6 +31,9 @@ html.pdf-export #pdfDocument{display:block!important;width:297mm;background:#050
 .pdf-ofp-completion .ofp-completion-head>span{display:grid;gap:.5mm}
 .pdf-ofp-completion .ofp-completion-head i{font-style:normal;font-size:4.6pt;letter-spacing:.14em;color:#7f8a90}
 .pdf-ofp-completion .ofp-completion-head b{font:700 8pt/1 "Cascadia Mono",Consolas,monospace;color:#67c7d8}
+.pdf-ofp-completion .ofp-signed-strip{display:flex;flex-wrap:wrap;gap:1mm 4mm;align-items:center;margin:0 0 3mm;padding:1.6mm 2mm;background:rgba(86,208,110,.07);border:.25mm solid rgba(86,208,110,.4)}
+.pdf-ofp-completion .ofp-signed-strip b{font:800 5.4pt/1 "Cascadia Mono",Consolas,monospace;letter-spacing:.14em;color:#56d06e}
+.pdf-ofp-completion .ofp-signed-strip span{font:700 7pt/1.3 "Cascadia Mono",Consolas,monospace;color:#b8ecc4}
 .pdf-ofp-completion .ofp-completion-grid{display:grid;grid-template-columns:1fr 1fr;gap:4mm;margin-top:3mm}
 .pdf-ofp-completion .ofp-completion-grid section:first-child{grid-column:1/-1}
 .pdf-ofp-completion .ofp-completion-grid section h3{font-size:6pt!important;letter-spacing:.14em;margin:0 0 1.5mm!important}

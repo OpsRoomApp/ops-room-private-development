@@ -380,6 +380,21 @@ def format_ofp_receipt(payload: dict[str, Any], width: int = 48) -> list[str]:
             f"{label:<19}{_w(planned):>8} {_w(actual):>8} {_w(delta, 1):>8}"
         )
     lines.append("")
+    # #62: the signed-off loadsheet stamp travels on the printed receipt.
+    signed = payload.get("signed") if isinstance(payload.get("signed"), dict) else None
+    if signed and signed.get("signed_utc"):
+        try:
+            d = datetime.fromisoformat(str(signed["signed_utc"]).replace("Z", "+00:00"))
+            signed_stamp = f"{d.hour:02d}{d.minute:02d}Z"
+        except Exception:
+            signed_stamp = ""
+        signer = str(signed.get("signer") or "").strip()
+        role = str(signed.get("role") or "").strip()
+        who = " · ".join(part for part in (signer, role) if part)
+        if who:
+            lines.append(f"SIGNED: {who}{' · ' + signed_stamp if signed_stamp else ''}")
+        elif signed_stamp:
+            lines.append(f"SIGNED {signed_stamp}")
     return lines
 
 

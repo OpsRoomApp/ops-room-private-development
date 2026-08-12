@@ -17,7 +17,7 @@
     const cs=text('flightCallsign')||'FLIGHT';
     const logo=byId('airlineLogoTop')?.innerHTML||'';const div=document.createElement('div');div.className='pdf-page-head';div.innerHTML=`<div class="pdf-brand">${logo}<span>OPS ROOM <b>FLIGHT ANALYSIS</b></span></div><div class="pdf-route"><strong>${route}</strong><span>${cs} · ${title} · PAGE ${page} / ${total}</span></div>`;return div;
   }
-  function footer(page,total){const d=document.createElement('div');d.className='pdf-page-foot';d.innerHTML=`<span>OPS ROOM 0.25.75</span><span>PAGE ${page} / ${total}</span><span>OPS ROOM</span>`;return d}
+  function footer(page,total){const d=document.createElement('div');d.className='pdf-page-foot';d.innerHTML=`<span>OPS ROOM 0.25.77</span><span>PAGE ${page} / ${total}</span><span>OPS ROOM</span>`;return d}
   function page(cls,title,bodyBuilder){const p=document.createElement('section');p.className=`pdf-page ${cls}`;p.dataset.title=title;const body=document.createElement('div');body.className='pdf-page-body';bodyBuilder(body);p.append(body);return p}
   function simpleSectionPage(cls,title,id){return page(cls,title,body=>body.append(cloneNode(byId(id))))}
   function invoicePages(){

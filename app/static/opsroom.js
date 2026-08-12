@@ -66,6 +66,10 @@ let olAirwayLayer = null;
 let olWaypointLayer = null;
 let olBoundaryLayer = null;
 let olNotamLayer = null;
+let olWeatherLayer = null;
+let mapWeatherFrameKey = '';
+let mapWeatherPollTimer = null;
+let mapWeatherPollBound = false;
 let olSurfaceLayer = null;
 let olRunwaySurfaceLayer = null;
 let olTaxiSurfaceLayer = null;
@@ -457,7 +461,7 @@ async function safeJsonResponse(response){
 
 function reportFrontendError(source, detail){
   try{
-    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.75', ts:new Date().toISOString()};
+    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.77', ts:new Date().toISOString()};
     lastFrontendError = payload.detail;
     navigator.sendBeacon?.('/api/frontend/log', new Blob([JSON.stringify(payload)], {type:'application/json'})) || fetch('/api/frontend/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true}).catch(()=>{});
   }catch(_){ }
@@ -1417,7 +1421,7 @@ function briefingOfpLiveSkeleton(data){
   // Columns in the fourth argument are editable: clicking the ACTUAL cell
   // opens an inline input that writes a manual override (source=manual).
   const row = (label,key,cols,ovrCols=[]) => `<tr><th scope="row">${label}</th>${cols.map(c=>{const attrs=ovrCols.includes(c)?' data-ofp-override="'+key+'" class="ofp-ovr" title="Click to enter a manual value"':'';return `<td data-ofp-live="${key}:${c}"${attrs}>—</td>`;}).join('')}</tr>`;
-  return `<div class="ofp-live-status-strip"><b id="ofpLiveState" class="ofp-live-state state-standby">WAITING</b><span><i>PHASE</i><b id="ofpLivePhase">—</b></span><span><i>SOURCE</i><b id="ofpLiveSource">—</b></span><span><i>OPERATION</i><b id="ofpLiveOp">—</b></span><span><i>UPDATED</i><b id="ofpLiveUpdated">—</b></span><span class="ofp-live-manual" id="ofpLiveManualChip" hidden><i>MANUAL</i><b id="ofpLiveManualCount">0</b></span><span class="ofp-live-hint">click ACTUAL cells to enter manual values</span><span class="ofp-live-actions"><button type="button" class="control-button" id="ofpLiveClearOverrides" hidden>CLEAR OVERRIDES</button><button type="button" class="control-button" data-ofp-copy="actuals">COPY ACTUALS</button><button type="button" class="control-button" data-ofp-copy="full">COPY FULL COMPARISON</button><button type="button" class="control-button" id="ofpLivePrint" data-ofp-print title="Print the live comparison to the configured Thermal/POS printer">PRINT</button></span></div>
+  return `<div class="ofp-live-status-strip"><b id="ofpLiveState" class="ofp-live-state state-standby">WAITING</b><span><i>PHASE</i><b id="ofpLivePhase">—</b></span><span><i>SOURCE</i><b id="ofpLiveSource">—</b></span><span><i>OPERATION</i><b id="ofpLiveOp">—</b></span><span><i>UPDATED</i><b id="ofpLiveUpdated">—</b></span><span class="ofp-live-manual" id="ofpLiveManualChip" hidden><i>MANUAL</i><b id="ofpLiveManualCount">0</b></span><span class="ofp-live-signed" id="ofpLiveSigned" hidden><i>SIGNED ✓</i><b id="ofpLiveSignedBy">—</b></span><span class="ofp-live-signed" id="ofpLiveCompletionSigned" hidden><i>COMPLETION SIGNED ✓</i><b id="ofpLiveCompletionSignedBy">—</b></span><span class="ofp-live-hint" id="ofpLiveHint">click ACTUAL cells to enter manual values</span><span class="ofp-live-actions"><button type="button" class="control-button" id="ofpLiveClearOverrides" hidden>CLEAR OVERRIDES</button><button type="button" class="control-button" data-ofp-copy="actuals">COPY ACTUALS</button><button type="button" class="control-button" data-ofp-copy="full">COPY FULL COMPARISON</button><button type="button" class="control-button" id="ofpLiveSign" title="Review and sign (type or draw, like the scratchpad)">SIGN LOADSHEET</button><button type="button" class="control-button" id="ofpLivePrint" data-ofp-print title="Print the live comparison to the configured Thermal/POS printer">PRINT</button></span></div>
   <div class="ofp-live-tables">
   <table class="ofp-live-table"><caption>TIMES</caption><thead><tr><th scope="col">EVENT</th><th scope="col">SCHEDULED</th><th scope="col">ACTUAL</th><th scope="col">DELTA</th><th scope="col">NOTE</th></tr></thead><tbody>
   ${row('OUT','times:out',['sched','actual','delta','est'],['actual'])}${row('OFF','times:off',['sched','actual','delta','est'],['actual'])}${row('ON','times:on',['sched','actual','delta','est'],['actual'])}${row('IN','times:in',['sched','actual','delta','est'],['actual'])}${row('BLOCK','times:block',['sched','actual','delta','est'])}
@@ -1464,6 +1468,67 @@ function patchBriefingOfpLive(data){
   if(manualCountEl) manualCountEl.textContent = String(manualCount);
   const clearBtn = $('ofpLiveClearOverrides');
   if(clearBtn) clearBtn.hidden = manualCount === 0;
+  // #62/#77: signature chips + Review & Sign button state (two kinds: the
+  // pre-departure loadsheet and the post-arrival Flight Completion sign-off).
+  const signed = data.signed || null;
+  const completionSigned = data.signed_completion || null;
+  const locked = data.signature_locked !== false;
+  const completionLocked = data.completion_locked !== false;
+  const completionReady = data.completion_ready === true;
+  const signedChip = $('ofpLiveSigned');
+  if(signedChip){
+    signedChip.hidden = !signed;
+    if(signed){
+      const by = String(signed.signer || '').trim() || '—';
+      const stamp = signed.signed_utc ? ' ' + briefingOfpTime(signed.signed_utc) : '';
+      $('ofpLiveSignedBy').textContent = by + stamp;
+    }
+  }
+  const completionChip = $('ofpLiveCompletionSigned');
+  if(completionChip){
+    completionChip.hidden = !completionSigned;
+    if(completionSigned){
+      const by = String(completionSigned.signer || '').trim() || '—';
+      const stamp = completionSigned.signed_utc ? ' ' + briefingOfpTime(completionSigned.signed_utc) : '';
+      $('ofpLiveCompletionSignedBy').textContent = by + stamp;
+    }
+  }
+  // #77: surface the sign-off once (non-blocking toast) the moment the flight
+  // becomes ready for the Flight Completion review.
+  if(completionReady && !completionSigned && !_lsCompletionToastShown){
+    _lsCompletionToastShown = true;
+    showToast('REVIEW & SIGN','ARRIVAL COMPLETE','Review the completed flight and sign off before the logbook closes.','info');
+  }
+  if(!completionReady) _lsCompletionToastShown = false;
+  // #82: pre-departure loadsheet sign-off auto-popup (one-time, non-blocking,
+  // same lifecycle as the completion toast above).
+  const loadsheetReady = data.loadsheet_ready === true;
+  if(loadsheetReady && !signed && !_lsLoadsheetToastShown){
+    _lsLoadsheetToastShown = true;
+    showToast('REVIEW & SIGN','LOADSHEET READY','Weights & balance are ready — review and sign before departure.','info');
+  }
+  if(!loadsheetReady) _lsLoadsheetToastShown = false;
+  const signBtn = $('ofpLiveSign');
+  if(signBtn){
+    // Post-arrival: the completion sign-off takes over the button. Otherwise
+    // the pre-departure loadsheet state governs it (#74 fix: active flights
+    // stay signable until takeoff).
+    if(completionReady && !completionSigned){
+      signBtn.hidden = false;
+      signBtn.textContent = 'REVIEW & SIGN — FLIGHT COMPLETION';
+    }else{
+      signBtn.hidden = locked && !completionReady;
+      signBtn.textContent = signed ? 'RE-SIGN LOADSHEET' : 'SIGN LOADSHEET';
+    }
+  }
+  const hintEl = $('ofpLiveHint');
+  if(hintEl){
+    // #62: "ready to sign" cue when the Fenix FINAL loadsheet is synced
+    // (#60) and the flight is still on the ground and unsigned.
+    const towActual = (data.weights || {}).tow && (data.weights.tow.actual_display ?? data.weights.tow.actual) != null;
+    if(completionReady && !completionSigned) hintEl.textContent = 'Arrival complete — review the flight and sign off';
+    else hintEl.textContent = !signed && !locked && towActual ? 'Fenix loadsheet synced — ready to sign' : 'click ACTUAL cells to enter manual values';
+  }
   const set = (key,text,opts)=>briefingOfpSetCell(panel,key,text,opts);
   if($('ofpLivePhase')) $('ofpLivePhase').textContent = uiWords(live.phase) || '—';
   if($('ofpLiveSource')) $('ofpLiveSource').textContent = String(live.telemetry_source || '—').toUpperCase();
@@ -1484,7 +1549,7 @@ function patchBriefingOfpLive(data){
   set('times:block:est', '');
   const weights = data.weights || {};
   const disp = (item,key,digits=0)=>briefingOfpWeight(item?.[key+'_display'] ?? item?.[key], unit, digits);
-  const wrow = (key,item,isCount=false,ovrKey=null)=>{ if(!item) return; set(`weights:${key}:planned`, isCount?briefingOfpWeight(item.planned, '', 0):disp(item,'planned')); set(`weights:${key}:max`, disp(item,'max')); set(`weights:${key}:actual`, disp(item,'actual'), (ovrKey && manual[ovrKey] !== undefined) ? {manual:true, manualValue:manual[ovrKey]} : undefined); set(`weights:${key}:delta`, briefingOfpWeight(item.delta_display ?? item.delta, unit, 1)); };
+  const wrow = (key,item,isCount=false,ovrKey=null)=>{ if(!item) return; const u = isCount ? '' : unit; set(`weights:${key}:planned`, isCount?briefingOfpWeight(item.planned, '', 0):disp(item,'planned')); set(`weights:${key}:max`, disp(item,'max')); set(`weights:${key}:actual`, briefingOfpWeight(item.actual_display ?? item.actual, u, 0), (ovrKey && manual[ovrKey] !== undefined) ? {manual:true, manualValue:manual[ovrKey]} : undefined); set(`weights:${key}:delta`, briefingOfpWeight(item.delta_display ?? item.delta, u, 1)); };
   wrow('pax', weights.passengers, true, 'weights:pax'); wrow('bags', weights.bags_cargo); wrow('freight', weights.commercial_freight);
   wrow('payload', weights.payload); wrow('zfw', weights.zfw, false, 'weights:zfw'); wrow('tow', weights.tow, false, 'weights:tow'); wrow('ldw', weights.ldw, false, 'weights:ldw');
   const fuel = data.fuel || {};
@@ -1544,6 +1609,11 @@ function bindBriefingOfpLiveEditors(panel){
     printButton.dataset.ofpPrintBound = '1';
     printButton.addEventListener('click',briefingOfpPrint);
   }
+  const signButton = $('ofpLiveSign');
+  if(signButton && !signButton.dataset.ofpSignBound){
+    signButton.dataset.ofpSignBound = '1';
+    signButton.addEventListener('click',openLoadsheetSignDialog);
+  }
 }
 function briefingOfpStartEdit(cell){
   if(cell.querySelector('input')) return;
@@ -1596,6 +1666,11 @@ async function refreshBriefingOfpLive(force=false){
   briefingOfpLiveBusy = true;
   const controller = new AbortController();
   briefingOfpLiveAbortController = controller;
+  // #73: a slow backend response used to wedge the busy flag forever (the
+  // fetch had no timeout), freezing the panel until a full app reload. Abort
+  // after ~2.5 s so the next poll tick recovers; the server also serves the
+  // last-known-good payload with a stale flag instead of blocking.
+  const abortTimer = setTimeout(()=>{ try{ controller.abort(); }catch(_){} }, 2500);
   try{
     const response = await fetch('/api/briefing/ofp-live', {cache:'no-store', signal: controller.signal});
     const data = await safeJsonResponse(response);
@@ -1604,9 +1679,14 @@ async function refreshBriefingOfpLive(force=false){
     renderBriefingOfpLive(data);
   }catch(error){
     if(error && error.name === 'AbortError') return;
+    // #73: on failure keep the last good data visible and mark it stale instead
+    // of wiping the panel — a transient error must never blank the OFP.
     const panel = $('briefingOfpLivePanel');
+    const staleChip = panel?.querySelector('.ofp-live-stale');
+    if(staleChip){ staleChip.textContent = 'STALE · POLL FAILED'; staleChip.hidden = false; }
     if(panel && !panel.querySelector('.ofp-live-tables')) panel.innerHTML = `<div class="network-empty">LIVE OFP UNAVAILABLE — ${escapeHtml(friendlyError(error.message))}</div>`;
   }finally{
+    clearTimeout(abortTimer);
     briefingOfpLiveBusy = false;
     if(briefingOfpLiveAbortController === controller) briefingOfpLiveAbortController = null;
   }
@@ -1713,6 +1793,431 @@ async function briefingOfpPrint(){
     showToast('LIVE OFP','PRINT FAILED',friendlyError(error.message),'warn');
   }finally{
     if(btn) btn.textContent = original;
+  }
+}
+
+// #62 — electronic loadsheet signing (real-pilot sign-off).
+// One signature slot per flight; TYPE and DRAW both work on PC and tablet,
+// scratchpad-style. The dialog snapshot captures the exact values being
+// signed so the record proves what was signed, not just that it was.
+let _lsSignDialog = null;
+let _lsSignTool = 'draw';
+let _lsSignKind = 'loadsheet';
+let _lsCompletionToastShown = false;
+let _lsLoadsheetToastShown = false;
+let _lsSignStrokes = [];
+let _lsSignCurrentStroke = null;
+let _lsSignDrawing = false;
+function lsSignFlightId(){
+  const data = briefingOfpLiveData || {};
+  const rid = data.recorder_identity || {};
+  return String(rid.id || data.flight_id || '');
+}
+function lsSignUnit(data){
+  return briefingOfpUnit((data && data.units) ? data.units.display : null) || 'KG';
+}
+function lsSignCell(cell){
+  const c = cell || {};
+  return {
+    planned: c.planned_display !== undefined && c.planned_display !== null ? c.planned_display : c.planned,
+    actual: c.actual_display !== undefined && c.actual_display !== null ? c.actual_display : c.actual,
+    max: c.max_display !== undefined && c.max_display !== null ? c.max_display : c.max,
+  };
+}
+function lsSignSnapshot(data, kind){
+  kind = kind || 'loadsheet';
+  const w = data.weights || {};
+  const f = data.fuel || {};
+  const t = data.times || {};
+  const g = key=>{ const cell = t[key] || {}; return {scheduled_utc: cell.scheduled_utc, actual_utc: cell.actual_utc, delta_seconds: cell.delta_seconds}; };
+  const base = {
+    signed_at: new Date().toISOString().replace('T',' ').slice(0,19) + 'Z',
+    operation: String((data.operation||{}).resolved || 'AUTO').toUpperCase(),
+    phase: String((data.live||{}).phase || 'UNKNOWN').toUpperCase(),
+    telemetry_source: String((data.live||{}).telemetry_source || ''),
+    units: lsSignUnit(data),
+  };
+  if(kind === 'completion'){
+    // #77: the Flight Completion sign-off captures the whole flight — block
+    // times, fuel, weights and the resulting finance/satisfaction summary.
+    const fin = data.finance || {};
+    const sat = data.satisfaction || {};
+    return Object.assign({}, base, {
+      kind: 'completion',
+      // #86: the snapshot includes BLOCK so the stored record matches exactly
+      // what the pilot reviewed in the TIMES section of the modal.
+      times: {
+        out: g('out'), off: g('off'), on: g('on'), in: g('in'),
+        block: {
+          planned_seconds: (t.block || {}).planned_seconds ?? null,
+          actual_seconds: (t.block || {}).actual_seconds ?? null,
+          delta_seconds: (t.block || {}).delta_seconds ?? null,
+        },
+      },
+      fuel: {
+        ramp_out: lsSignCell(f.ramp_out),
+        takeoff_off: lsSignCell(f.takeoff_off),
+        trip: lsSignCell(f.trip),
+        landing_on: lsSignCell(f.landing_on),
+        block_in: lsSignCell(f.block_in),
+      },
+      weights: {
+        zfw: lsSignCell(w.zfw),
+        tow: lsSignCell(w.tow),
+        ldw: lsSignCell(w.ldw),
+      },
+      finance: {
+        airline_result: fin.airline_result !== undefined ? fin.airline_result : null,
+        pilot_pay: fin.pilot_pay !== undefined ? fin.pilot_pay : null,
+      },
+      satisfaction: {
+        label: sat.label || null,
+        score: sat.score !== undefined ? sat.score : null,
+      },
+    });
+  }
+  return Object.assign({}, base, {
+    kind: 'loadsheet',
+    times: {out: g('out'), off: g('off'), on: g('on'), in: g('in')},
+    weights: {
+      passengers: lsSignCell(w.passengers),
+      bags_cargo: lsSignCell(w.bags_cargo),
+      commercial_freight: lsSignCell(w.commercial_freight),
+      payload: lsSignCell(w.payload),
+      zfw: lsSignCell(w.zfw),
+      tow: lsSignCell(w.tow),
+      ldw: lsSignCell(w.ldw),
+    },
+    fuel: {
+      ramp_out: lsSignCell(f.ramp_out),
+      takeoff_off: lsSignCell(f.takeoff_off),
+      trip: lsSignCell(f.trip),
+      landing_on: lsSignCell(f.landing_on),
+      block_in: lsSignCell(f.block_in),
+    },
+  });
+}
+function lsSignSummaryHtml(data, kind){
+  kind = kind || 'loadsheet';
+  const unit = lsSignUnit(data);
+  const flight = (data.plan_identity||{});
+  const who = [flight.callsign, flight.origin && flight.destination ? flight.origin + ' → ' + flight.destination : ''].filter(Boolean).join(' · ');
+  if(kind === 'completion'){
+    // #86: full flight review — TIMES / WEIGHTS / FUEL planned vs actual, plus
+    // a finance + satisfaction strip. The unit appears only in the section
+    // captions (never duplicated per row), and cells that carried an actual
+    // earlier in the session are re-filled from last-known-good by the backend.
+    const t = data.times || {};
+    const f = data.fuel || {};
+    const w = data.weights || {};
+    const fin = data.finance || {};
+    const sat = data.satisfaction || {};
+    const sym = String(fin.symbol || fin.currency || '');
+    const cellVal = (cell, base)=>{
+      if(!cell) return '—';
+      const disp = cell[base + '_display'];
+      const raw = cell[base];
+      const v = (disp !== undefined && disp !== null) ? disp : raw;
+      return briefingOfpWeight(v ?? null, '', 0);
+    };
+    const cellDelta = (cell)=>{
+      if(!cell || cell.delta_display === undefined || cell.delta_display === null) return '—';
+      const n = Number(cell.delta_display);
+      if(!Number.isFinite(n)) return '—';
+      return (n > 0 ? '+' : '') + Math.round(n).toLocaleString();
+    };
+    const headRow = '<div class="ls-head"><span>EVENT</span><span>PLANNED</span><span>ACTUAL</span><span>DELTA</span></div>';
+    const itemHead = '<div class="ls-head"><span>ITEM</span><span>PLANNED</span><span>ACTUAL</span><span>DELTA</span></div>';
+    const timeRow = (label,key)=>{
+      const c = t[key] || {};
+      return `<div class="ls-row"><span>${label}</span><b>${briefingOfpTime(c.scheduled_utc)}</b><b>${briefingOfpTime(c.actual_utc)}</b><b class="ls-delta">${briefingOfpDelta(c.delta_seconds)}</b></div>`;
+    };
+    const block = t.block || {};
+    const timeRows = timeRow('OUT','out') + timeRow('OFF','off') + timeRow('ON','on') + timeRow('IN','in') +
+      `<div class="ls-row"><span>BLOCK</span><b>${briefingOfpDuration(block.planned_seconds)}</b><b>${briefingOfpDuration(block.actual_seconds)}</b><b class="ls-delta">${briefingOfpDelta(block.delta_seconds)}</b></div>`;
+    const weightRows = ['zfw','tow','ldw'].map(key=>{
+      const c = w[key] || {};
+      return `<div class="ls-row"><span>${key.toUpperCase()}</span><b>${cellVal(c,'planned')}</b><b>${cellVal(c,'actual')}</b><b class="ls-delta">${cellDelta(c)}</b></div>`;
+    }).join('');
+    const fuelRows = [['RAMP / OUT','ramp_out'],['TAKEOFF / OFF','takeoff_off'],['TRIP','trip'],['LANDING / ON','landing_on'],['BLOCK IN','block_in']].map(([label,key])=>{
+      const c = f[key] || {};
+      return `<div class="ls-row"><span>${label}</span><b>${cellVal(c,'planned')}</b><b>${cellVal(c,'actual')}</b><b class="ls-delta">${cellDelta(c)}</b></div>`;
+    }).join('');
+    const fuelUsed = briefingOfpWeight((f.trip && (f.trip.actual_display ?? f.trip.actual)) ?? null, '', 0);
+    const blockDur = briefingOfpDuration((t.block && (t.block.actual_seconds ?? t.block.planned_seconds)) ?? null);
+    const money = (v)=> (v !== undefined && v !== null && v !== '') ? (sym ? `${sym} ` : '') + Number(v).toLocaleString() : '—';
+    const satis = (sat.score !== undefined && sat.score !== null) ? `${Number(sat.score)}/100${sat.label ? ' · ' + escapeHtml(String(sat.label).toUpperCase()) : ''}` : '—';
+    const strip = `<div class="ls-summary-strip">` +
+      `<div><span>BLOCK</span><b>${blockDur}</b></div>` +
+      `<div><span>FUEL USED</span><b>${fuelUsed} ${escapeHtml(unit)}</b></div>` +
+      `<div><span>AIRLINE RESULT</span><b>${money(fin.airline_result)}</b></div>` +
+      `<div><span>PILOT PAY</span><b>${money(fin.pilot_pay)}</b></div>` +
+      `<div><span>SATISFACTION</span><b>${satis}</b></div>` +
+      `</div>`;
+    return `<div class="ls-sign-flight">${escapeHtml(who || 'FLIGHT')} · REVIEW AND SIGN</div>` +
+      `<div class="ls-sign-review">` +
+        `<div class="ls-sign-section"><span class="ls-sign-section-title">TIMES <small>SCHEDULED / ACTUAL / DELTA</small></span><div class="ls-sign-table">${headRow}${timeRows}</div></div>` +
+        `<div class="ls-sign-section"><span class="ls-sign-section-title">WEIGHTS <small>${escapeHtml(unit)} · PLANNED / ACTUAL</small></span><div class="ls-sign-table">${itemHead}${weightRows}</div></div>` +
+        `<div class="ls-sign-section"><span class="ls-sign-section-title">FUEL <small>${escapeHtml(unit)} · PLANNED / ACTUAL</small></span><div class="ls-sign-table">${itemHead}${fuelRows}</div></div>` +
+      `</div>` +
+      strip;
+  }
+  const w = data.weights || {};
+  const rows = [
+    ['PAX', w.passengers, true],
+    ['BAG/CARGO', w.bags_cargo],
+    ['PAYLOAD', w.payload],
+    ['ZFW', w.zfw],
+    ['TOW', w.tow],
+    ['LDW', w.ldw],
+  ];
+  const cells = rows.map(([label,cell,count])=>{ const c = cell || {};
+    const planned = briefingOfpWeight(c.planned_display ?? c.planned, count ? '' : unit, 0);
+    const actual = briefingOfpWeight(c.actual_display ?? c.actual, count ? '' : unit, 0);
+    return `<div><span>${label}</span><b>${planned}</b><i>${actual}</i></div>`;
+  }).join('');
+  return `<div class="ls-sign-flight">${escapeHtml(who || 'FLIGHT')}</div><div class="ls-sign-grid">${cells}</div>`;
+}
+function lsSignPadReset(){
+  const canvas = $('lsSignCanvas');
+  if(canvas){
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#f2f0e5';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+  }
+  const type = $('lsSignType');
+  if(type) type.value = '';
+}
+function lsSignDraw(){
+  const canvas = $('lsSignCanvas');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for(const stroke of _lsSignStrokes){
+    const points = stroke.points || [];
+    if(!points.length) continue;
+    ctx.strokeStyle = '#f2f0e5';
+    ctx.lineWidth = Number(stroke.width || 4);
+    ctx.beginPath();
+    ctx.moveTo(points[0].x * canvas.width, points[0].y * canvas.height);
+    if(points.length === 1){
+      ctx.arc(points[0].x * canvas.width, points[0].y * canvas.height, Math.max(1, Number(stroke.width||4)/2), 0, Math.PI * 2);
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.fill();
+    }else{
+      for(const p of points.slice(1)) ctx.lineTo(p.x * canvas.width, p.y * canvas.height);
+      ctx.stroke();
+    }
+  }
+}
+function lsSignPoint(event){
+  const canvas = $('lsSignCanvas');
+  if(!canvas) return {x:0, y:0};
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(1, rect.width || 1), h = Math.max(1, rect.height || 1);
+  return {x: Math.max(0, Math.min(1, (event.clientX - rect.left) / w)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / h))};
+}
+function lsSignPadPointerDown(event){
+  if(_lsSignTool !== 'draw') return;
+  event.preventDefault();
+  const canvas = $('lsSignCanvas');
+  canvas?.setPointerCapture?.(event.pointerId);
+  _lsSignDrawing = true;
+  _lsSignCurrentStroke = {width: 4, points: [lsSignPoint(event)]};
+  _lsSignStrokes.push(_lsSignCurrentStroke);
+  lsSignDraw();
+}
+function lsSignPadPointerMove(event){
+  if(!_lsSignDrawing || !_lsSignCurrentStroke) return;
+  event.preventDefault();
+  _lsSignCurrentStroke.points.push(lsSignPoint(event));
+  lsSignDraw();
+}
+function lsSignPadPointerUp(event){
+  if(!_lsSignDrawing) return;
+  event.preventDefault();
+  _lsSignDrawing = false;
+  _lsSignCurrentStroke = null;
+}
+function lsSignExportImage(){
+  const canvas = $('lsSignCanvas');
+  if(!canvas) return '';
+  try{
+    return canvas.toDataURL('image/png');
+  }catch(_){
+    return '';
+  }
+}
+function lsSignSetTool(tool){
+  if(!['type','draw'].includes(tool)) tool = 'draw';
+  const hadStrokes = _lsSignStrokes.length > 0;
+  const apply = ()=>{
+    _lsSignTool = tool;
+    document.querySelectorAll('[data-ls-tool]').forEach(btn=>btn.classList.toggle('primary-control', btn.dataset.lsTool === tool));
+    const canvas = $('lsSignCanvas');
+    const type = $('lsSignType');
+    if(canvas){
+      canvas.hidden = tool !== 'draw';
+      canvas.style.pointerEvents = tool === 'draw' ? 'auto' : 'none';
+      canvas.style.touchAction = tool === 'draw' ? 'none' : 'auto';
+    }
+    if(type) type.hidden = tool !== 'type';
+  };
+  if(tool !== _lsSignTool && hadStrokes && tool === 'type'){
+    uiConfirm('Switch to TYPE? The drawn signature will be replaced.', 'SWITCH').then(ok=>{
+      if(ok){ _lsSignStrokes = []; lsSignDraw(); apply(); }
+    });
+    return;
+  }
+  apply();
+}
+function openLoadsheetSignDialog(){
+  const data = briefingOfpLiveData;
+  if(!data?.ok || !lsSignFlightId()){
+    showToast('SIGN LOADSHEET','NO FLIGHT','No active recording is available to sign.','warn');
+    return;
+  }
+  // #77: the button becomes the Flight Completion sign-off once the aircraft
+  // is parked after block-in; otherwise it is the pre-departure loadsheet.
+  const kind = data.completion_ready === true ? 'completion' : 'loadsheet';
+  _lsSignKind = kind;
+  if(kind === 'completion'){
+    if(data.completion_locked === true && !data.signed_completion){
+      showToast('REVIEW & SIGN','LOCKED','Flight Completion sign-off is only available after block-in at the arrival gate.','warn');
+      return;
+    }
+  }else{
+    if(data.signature_locked === true && !data.signed){
+      showToast('SIGN LOADSHEET','LOCKED','Loadsheet signing is locked after takeoff.','warn');
+      return;
+    }
+  }
+  if(!_lsSignDialog){
+    _lsSignDialog = document.createElement('dialog');
+    _lsSignDialog.className = 'loadsheet-sign-dialog';
+    _lsSignDialog.innerHTML =
+      '<div class="loadsheet-sign-box">' +
+        '<header><strong>SIGN LOADSHEET</strong><span id="lsSignFlightLabel"></span><button type="button" class="control-button" data-ls-close title="Close">✕</button></header>' +
+        '<div class="ls-sign-summary"><span class="ls-sign-summary-title">SIGNING THESE VALUES <small>(PLANNED / ACTUAL)</small></span><div id="lsSignSummary" class="ls-sign-grid"></div></div>' +
+        '<div class="ls-sign-form">' +
+          '<label>NAME <input id="lsSignName" type="text" maxlength="80" autocomplete="off" placeholder="e.g. A. PILOT"></label>' +
+          '<label>ROLE <select id="lsSignRole"><option value="">—</option><option value="CAPTAIN">CAPTAIN</option><option value="FIRST OFFICER">FIRST OFFICER</option></select></label>' +
+        '</div>' +
+        '<div class="ls-sign-pad-head"><b>SIGNATURE</b><div class="ls-sign-tools"><button type="button" class="control-button" data-ls-tool="type">TYPE</button><button type="button" class="control-button" data-ls-tool="draw">DRAW</button><button type="button" class="control-button" data-ls-clear>CLEAR</button></div></div>' +
+        '<div class="ls-sign-pad"><canvas id="lsSignCanvas" width="640" height="280" aria-label="Draw your signature"></canvas><textarea id="lsSignType" class="ls-sign-type" maxlength="48" placeholder="TYPE YOUR SIGNATURE" spellcheck="false"></textarea></div>' +
+        '<div class="ls-sign-actions"><button type="button" class="control-button danger-control" id="lsSignRemove" title="Remove the current signature (pre-departure only)">REMOVE SIGNATURE</button><span class="ls-sign-spacer"></span><button type="button" class="control-button" data-ls-cancel>CANCEL</button><button type="button" class="control-button primary-control" id="lsSignSubmit">SIGN LOADSHEET</button></div>' +
+      '</div>';
+    document.body.appendChild(_lsSignDialog);
+    const close = ()=>_lsSignDialog.close();
+    _lsSignDialog.querySelector('[data-ls-close]').addEventListener('click', close);
+    _lsSignDialog.querySelector('[data-ls-cancel]').addEventListener('click', close);
+    _lsSignDialog.addEventListener('cancel', e=>{ e.preventDefault(); close(); });
+    _lsSignDialog.addEventListener('click', e=>{ if(e.target === _lsSignDialog) close(); });
+    const canvas = _lsSignDialog.querySelector('#lsSignCanvas');
+    canvas.addEventListener('pointerdown', lsSignPadPointerDown);
+    canvas.addEventListener('pointermove', lsSignPadPointerMove);
+    canvas.addEventListener('pointerup', lsSignPadPointerUp);
+    canvas.addEventListener('pointercancel', lsSignPadPointerUp);
+    _lsSignDialog.querySelectorAll('[data-ls-tool]').forEach(btn=>btn.addEventListener('click', ()=>lsSignSetTool(btn.dataset.lsTool)));
+    _lsSignDialog.querySelector('[data-ls-clear]').addEventListener('click', ()=>{ _lsSignStrokes = []; lsSignDraw(); const t = $('lsSignType'); if(t) t.value = ''; });
+    _lsSignDialog.querySelector('#lsSignSubmit').addEventListener('click', submitLoadsheetSignature);
+    _lsSignDialog.querySelector('#lsSignRemove').addEventListener('click', removeLoadsheetSignature);
+  }
+  _lsSignStrokes = [];
+  _lsSignDrawing = false;
+  _lsSignTool = 'draw';
+  lsSignPadReset();
+  const completionMode = _lsSignKind === 'completion';
+  if(_lsSignDialog) _lsSignDialog.classList.toggle('ls-sign-dialog-wide', completionMode);
+  const sumTitle = _lsSignDialog ? _lsSignDialog.querySelector('.ls-sign-summary-title') : null;
+  if(sumTitle) sumTitle.innerHTML = completionMode
+    ? 'FLIGHT REVIEW — SIGNING THESE VALUES <small>(PLANNED / ACTUAL)</small>'
+    : 'SIGNING THESE VALUES <small>(PLANNED / ACTUAL)</small>';
+  const current = completionMode ? data.signed_completion : data.signed;
+  const header = _lsSignDialog.querySelector('header strong');
+  if(header) header.textContent = completionMode ? 'FLIGHT COMPLETION SIGN-OFF' : 'LOADSHEET SIGN-OFF';
+  $('lsSignFlightLabel').textContent = String((data.plan_identity||{}).callsign || 'FLIGHT');
+  $('lsSignSummary').innerHTML = lsSignSummaryHtml(data, _lsSignKind);
+  const nameInput = $('lsSignName');
+  if(nameInput) nameInput.value = current ? String(current.signer || '') : '';
+  const roleSel = $('lsSignRole');
+  if(roleSel && current) roleSel.value = String(current.role || '');
+  const removeBtn = $('lsSignRemove');
+  if(removeBtn) removeBtn.hidden = !current;
+  $('lsSignSubmit').textContent = current ? (completionMode ? 'RE-SIGN COMPLETION' : 'RE-SIGN LOADSHEET') : (completionMode ? 'SIGN OFF FLIGHT' : 'SIGN LOADSHEET');
+  lsSignSetTool('draw');
+  _lsSignDialog.showModal();
+  setTimeout(()=>{ if(nameInput) nameInput.focus(); }, 50);
+}
+async function submitLoadsheetSignature(){
+  const data = briefingOfpLiveData || {};
+  const flightId = lsSignFlightId();
+  if(!flightId){ showToast('SIGN LOADSHEET','NO FLIGHT','No active recording is available to sign.','warn'); return; }
+  const signer = String($('lsSignName')?.value || '').trim();
+  const role = String($('lsSignRole')?.value || '').trim();
+  if(!signer){ showToast('SIGN LOADSHEET','NAME REQUIRED','Enter the signer name.','warn'); return; }
+  let sigDataUrl = '';
+  if(_lsSignTool === 'draw'){
+    if(_lsSignStrokes.length){ sigDataUrl = lsSignExportImage(); }
+  }else{
+    const typed = String($('lsSignType')?.value || '').trim();
+    if(!typed && !signer){ showToast('SIGN LOADSHEET','SIGNATURE REQUIRED','Type or draw your signature.','warn'); return; }
+    if(typed){
+      // Render the typed signature onto the pad so the stored record is a
+      // uniform PNG (same surface as a drawn signature).
+      const canvas = $('lsSignCanvas');
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#f2f0e5';
+      ctx.font = '700 52px "Courier New", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(typed.toUpperCase(), canvas.width / 2, canvas.height / 2 + 6, canvas.width - 24);
+      sigDataUrl = lsSignExportImage();
+      lsSignDraw(); // restore the blank pad view
+    }
+  }
+  const submitBtn = $('lsSignSubmit');
+  const original = submitBtn ? submitBtn.textContent : 'SIGN LOADSHEET';
+  if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'SAVING...'; }
+  try{
+    const response = await fetch('/api/briefing/ofp-live/sign', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({kind: _lsSignKind, flight: flightId, signer, role, sig_data_url: sigDataUrl, snapshot: lsSignSnapshot(data, _lsSignKind)}), cache:'no-store'});
+    const result = await safeJsonResponse(response);
+    if(!result?.ok) throw new Error(result.reason || 'Sign failed');
+    const toastTitle = _lsSignKind === 'completion' ? 'REVIEW & SIGN' : 'SIGN LOADSHEET';
+    const toastText = _lsSignKind === 'completion' ? `FLIGHT SIGNED OFF — ${signer} · ${new Date().toISOString().slice(11,16)}Z` : `SIGNED — ${signer} · ${new Date().toISOString().slice(11,16)}Z`;
+    showToast(toastTitle,'SIGNED',toastText,'info');
+    _lsSignDialog?.close();
+    refreshBriefingOfpLive(true);
+  }catch(error){
+    const toastTitle = _lsSignKind === 'completion' ? 'REVIEW & SIGN' : 'SIGN LOADSHEET';
+    showToast(toastTitle,'SIGN FAILED',friendlyError(error.message),'warn');
+  }finally{
+    if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = original; }
+  }
+}
+async function removeLoadsheetSignature(){
+  const flightId = lsSignFlightId();
+  if(!flightId) return;
+  const completionMode = _lsSignKind === 'completion';
+  const confirmText = completionMode
+    ? 'Remove the Flight Completion sign-off for this flight? It can be re-signed while the flight is open.'
+    : 'Remove the loadsheet signature for this flight? It can be re-signed while on the ground.';
+  if(!(await uiConfirm(confirmText, 'REMOVE'))) return;
+  try{
+    const response = await fetch('/api/briefing/ofp-live/signature?flight=' + encodeURIComponent(flightId) + '&kind=' + encodeURIComponent(_lsSignKind), {method:'DELETE', cache:'no-store'});
+    const result = await safeJsonResponse(response);
+    if(!result?.ok) throw new Error(result.reason || 'Remove failed');
+    showToast(completionMode ? 'REVIEW & SIGN' : 'SIGN LOADSHEET','REMOVED','Signature cleared.','info');
+    _lsSignDialog?.close();
+    refreshBriefingOfpLive(true);
+  }catch(error){
+    showToast(completionMode ? 'REVIEW & SIGN' : 'SIGN LOADSHEET','REMOVE FAILED',friendlyError(error.message),'warn');
   }
 }
 document.addEventListener('visibilitychange', ()=>{
@@ -4257,6 +4762,17 @@ async function startUpdate(manifest){
     $('updaterBox').className='maintenance-box waiting';
     $('updaterBox').innerHTML='<b>DOWNLOADING UPDATE</b><p>Downloading and verifying the release package from GitHub. Do not close OPS ROOM.</p>';
     const prepared=await safeJsonResponse(await fetch('/api/updater/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manifest})}));
+    if(prepared.mode==='installer'){
+      // #78 bridge: the Setup.exe already ran silently (and was SHA256-verified
+      // and post-verified by the backend). The running process is the old
+      // build -- a restart picks up the freshly installed version.
+      const verified=prepared.verified!==false;
+      $('updaterState').textContent=verified?'INSTALLED':'RESTART TO VERIFY';
+      $('updaterBox').className='maintenance-box '+(verified?'ready':'waiting');
+      $('updaterBox').innerHTML=`<b>${verified?'UPDATE INSTALLED':'INSTALL RUNNING'}</b><p>v${escapeHtml(String(prepared.version||''))} is installed${verified?'':' — OPS ROOM closed during install; verification completes on the next start'}. Restart OPS ROOM to finish the update.</p>`;
+      notifyOps({source:'OPS ROOM UPDATE',title:`v${prepared.version} INSTALLED`,message:'Restart OPS ROOM to finish the update.',priority:'operational',page:'system',persistent:true,tag:`update-${prepared.version}`});
+      return;
+    }
     $('updaterState').textContent='INSTALLING';
     $('updaterBox').innerHTML='<b>STARTING UPDATER</b><p>OPS ROOM will close now. A visible OPS ROOM Updater window will show install progress and restart the app automatically.</p>';
     await safeJsonResponse(await fetch('/api/updater/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({package:prepared.package,version:prepared.version,updater:prepared.updater})}));
@@ -4806,7 +5322,7 @@ async function refreshAviationLayers(){
     const airportOn=mapLayerChecked('mapLayerAirports',true),navaidOn=mapLayerChecked('mapLayerNavaids',false),waypointOn=mapLayerChecked('mapLayerWaypoints',false),airwayOn=mapLayerChecked('mapLayerAirways',false),boundaryOn=mapLayerChecked('mapLayerBoundaries',false);
     const surfaceEnabled=mapLayerChecked('mapLayerSurface',true)||mapLayerChecked('mapLayerRunways',true);
     const needAirportLookup=(airportOn&&zoom>=4)||(surfaceEnabled&&surfaceZoomMode(zoom)!=='none');
-    olAirportLayer?.setVisible(airportOn);olNavaidLayer?.setVisible(navaidOn);olWaypointLayer?.setVisible(waypointOn);olAirwayLayer?.setVisible(airwayOn);olBoundaryLayer?.setVisible(boundaryOn);olRunwaySurfaceLayer?.setVisible(mapLayerChecked('mapLayerRunways',true));olTaxiSurfaceLayer?.setVisible(mapLayerChecked('mapLayerSurface',true));olSurfaceLabelLayer?.setVisible(surfaceEnabled);
+    olAirportLayer?.setVisible(airportOn);olNavaidLayer?.setVisible(navaidOn);olWaypointLayer?.setVisible(waypointOn);olAirwayLayer?.setVisible(airwayOn);olBoundaryLayer?.setVisible(boundaryOn);olRunwaySurfaceLayer?.setVisible(mapLayerChecked('mapLayerRunways',true));olTaxiSurfaceLayer?.setVisible(mapLayerChecked('mapLayerSurface',true));olSurfaceLabelLayer?.setVisible(surfaceEnabled);olWeatherLayer?.setVisible(mapWeatherVisible());
     let airportItems=routeSurfaceAirports();
     if(needAirportLookup){
       const lookupBbox=surfaceEnabled&&surfaceZoomMode(zoom)!=='none'?airportLookupBboxParam(zoom):bbox;
@@ -4985,6 +5501,43 @@ function saveMapView(){
   renderMapControllerList();
   scheduleAviationRefresh(260);
 }
+// ── v0.25.80: server-cached RainViewer precipitation layer ────────────────
+// Tiles are served by opsroom.live (our own nginx + admin-api proxy), never
+// fetched from RainViewer by the client. The frame key comes from the
+// /api/v1/rainviewer/status endpoint and is embedded in the tile URL, so a
+// frame rollover produces fresh URLs (and fresh nginx cache keys) instead of
+// stale tiles. The tile/status base is fixed to opsroom.live (the server-
+// cached proxy); clients never talk to RainViewer directly.
+const MAP_RAINVIEWER_BASE = 'https://opsroom.live';
+const MAP_WEATHER_POLL_MS = 60000;
+function mapWeatherVisible(){return mapLayerChecked('mapLayerWeather',false)}
+function mapWeatherTileUrl(frameKey){return `${MAP_RAINVIEWER_BASE}/api/v1/rainviewer/tiles/${frameKey||'__none__'}/{z}/{x}/{y}.png`}
+function mapWeatherApplyVisibility(){
+  if(!olWeatherLayer)return;
+  const on=mapWeatherVisible();
+  olWeatherLayer.setVisible(on);
+  if(on&&!mapWeatherFrameKey)mapWeatherPollFrame(true);
+}
+async function mapWeatherPollFrame(force=false){
+  if(!olWeatherLayer||!mapWeatherVisible())return;
+  try{
+    const r=await fetchWithTimeout(MAP_RAINVIEWER_BASE+'/api/v1/rainviewer/status',{cache:'no-store'},6000);
+    const d=await safeJsonResponse(r);
+    if(!d||!d.ok||!d.frame_key)return;
+    if(force||d.frame_key!==mapWeatherFrameKey){
+      mapWeatherFrameKey=d.frame_key;
+      const src=olWeatherLayer.getSource();
+      if(src){src.setUrl(mapWeatherTileUrl(mapWeatherFrameKey));src.refresh();if(olWeatherLayer)olWeatherLayer.changed()}
+    }
+  }catch(_){/* server unreachable -> keep the last frame quietly */}
+}
+function mapWeatherStartPolling(){
+  if(mapWeatherPollBound)return;
+  mapWeatherPollBound=true;
+  mapWeatherPollFrame(false);
+  mapWeatherPollTimer=setInterval(()=>mapWeatherPollFrame(false),MAP_WEATHER_POLL_MS);
+  window.addEventListener('pagehide',()=>{if(mapWeatherPollTimer){clearInterval(mapWeatherPollTimer);mapWeatherPollTimer=null}});
+}
 function initOnlineMap(){
   if(olMap||!window.ol)return;
   const initial=restoreMapView();
@@ -5003,11 +5556,16 @@ function initOnlineMap(){
   olBoundaryLayer=makeVectorLayer(boundaryStyle,7);
   olNotamLayer=makeVectorLayer(notamStyle,8);
   olNotamLayer.setVisible(mapLayerChecked('mapLayerNotams',false));
+  // v0.25.80: server-cached RainViewer precipitation layer. Rendered between
+  // the basemap and the vector layers; attribution stays visible in the map's
+  // attribution control (RainViewer free-tier requirement).
+  olWeatherLayer=new ol.layer.Tile({source:new ol.source.XYZ({url:mapWeatherTileUrl('__none__'),opacity:.75,attributions:'Weather data by <a href="https://www.rainviewer.com" target="_blank" rel="noopener noreferrer">RainViewer</a>'}),opacity:.75,zIndex:5,visible:mapWeatherVisible()});
   olRunwaySurfaceLayer=new ol.layer.Vector({source:new ol.source.Vector({wrapX:false}),style:runwaySurfaceStyle,zIndex:34,renderMode:'vector',renderBuffer:1200,updateWhileAnimating:true,updateWhileInteracting:true});
   olTaxiSurfaceLayer=new ol.layer.Vector({source:new ol.source.Vector({wrapX:false}),style:taxiSurfaceStyle,zIndex:33,renderMode:'vector',renderBuffer:1200,updateWhileAnimating:true,updateWhileInteracting:true});
   olSurfaceLayer=olTaxiSurfaceLayer;
   olSurfaceLabelLayer=makeVectorLayer(surfaceLabelStyle,35,{declutter:true,updateWhileAnimating:true,updateWhileInteracting:true});
-  olMap=new ol.Map({target:'liveMap',layers:[olRasterFallbackLayer,olBaseLayer,olBoundaryLayer,olNotamLayer,olAirwayLayer,olCoverageLayer,olRouteLayer,olTaxiSurfaceLayer,olRunwaySurfaceLayer,olSurfaceLabelLayer,olAirportLayer,olRouteAirportLayer,olWaypointLayer,olNavaidLayer,olControllerLayer,olTrafficLayer,olOwnshipLayer],view:new ol.View({center:initial.center,zoom:initial.zoom,minZoom:2,maxZoom:19,enableRotation:true,rotation:initial.rotation||0}),controls:ol.control.defaults.defaults({attribution:false,zoom:true,rotate:true}).extend([new ol.control.Attribution({collapsible:false})])});
+  olMap=new ol.Map({target:'liveMap',layers:[olRasterFallbackLayer,olBaseLayer,olBoundaryLayer,olNotamLayer,olWeatherLayer,olAirwayLayer,olCoverageLayer,olRouteLayer,olTaxiSurfaceLayer,olRunwaySurfaceLayer,olSurfaceLabelLayer,olAirportLayer,olRouteAirportLayer,olWaypointLayer,olNavaidLayer,olControllerLayer,olTrafficLayer,olOwnshipLayer],view:new ol.View({center:initial.center,zoom:initial.zoom,minZoom:2,maxZoom:19,enableRotation:true,rotation:initial.rotation||0}),controls:ol.control.defaults.defaults({attribution:false,zoom:true,rotate:true}).extend([new ol.control.Attribution({collapsible:false})])});
+  mapWeatherStartPolling();
   mapAutoFramePending=!mapHasStoredView;
   olMap.on('moveend',()=>{saveMapView();});
   olMap.on('singleclick',event=>{
@@ -5163,10 +5721,10 @@ function mapCenterOnAircraft(){
 function setMapCheckbox(id,value){const el=$(id);if(el)el.checked=!!value}
 function applyMapPreset(preset){
   const mapPresets={
-    clean:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:false,mapLayerNotams:false},
-    route:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:true,mapLayerWaypoints:false,mapLayerAirways:true,mapLayerBoundaries:false,mapLayerNotams:false},
-    airport:{mapLayerTraffic:true,mapLayerControllers:false,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:false,mapLayerNotams:false},
-    network:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:true,mapLayerAirports:false,mapLayerRunways:false,mapLayerSurface:false,mapLayerTaxiLabels:false,mapLayerStandLabels:false,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:true,mapLayerNotams:false}
+    clean:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:false,mapLayerNotams:false,mapLayerWeather:false},
+    route:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:true,mapLayerWaypoints:false,mapLayerAirways:true,mapLayerBoundaries:false,mapLayerNotams:false,mapLayerWeather:false},
+    airport:{mapLayerTraffic:true,mapLayerControllers:false,mapLayerCoverage:false,mapLayerAirports:true,mapLayerRunways:true,mapLayerSurface:true,mapLayerTaxiLabels:true,mapLayerStandLabels:true,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:false,mapLayerNotams:false,mapLayerWeather:false},
+    network:{mapLayerTraffic:true,mapLayerControllers:true,mapLayerCoverage:true,mapLayerAirports:false,mapLayerRunways:false,mapLayerSurface:false,mapLayerTaxiLabels:false,mapLayerStandLabels:false,mapLayerNavaids:false,mapLayerWaypoints:false,mapLayerAirways:false,mapLayerBoundaries:true,mapLayerNotams:false,mapLayerWeather:false}
   };
   const cfg=mapPresets[preset]||mapPresets.clean;Object.entries(cfg).forEach(([id,value])=>setMapCheckbox(id,value));
   document.querySelectorAll('[data-map-preset]').forEach(button=>button.classList.toggle('active',button.dataset.mapPreset===preset));syncMapNotamToggle();
@@ -6133,11 +6691,11 @@ function renderFinances(data){
     const avg=Math.round(scores.reduce((a,b)=>a+b,0)/scores.length);
     return`<article><span>Avg passenger satisfaction</span><b class="${avg>=75?'profit-positive':avg>=50?'':'profit-negative'}">${avg}%</b><small>Lifetime average · ${scores.length} flights</small></article>`;
   })();
-  const latestHtml=latest?`<section><h3>Latest completed flight</h3><div class="finance-kpi-row"><article><span>Flight</span><b>${escapeHtml(route.origin||'----')} \u2192 ${escapeHtml(route.destination||'----')}</b><small>${escapeHtml(latest.callsign||'Recorded flight')}</small></article><article><span>Revenue</span><b>${money(air.revenue?.total,sym)}</b><small>Passengers and cargo</small></article><article><span>Operating cost</span><b>${money(air.costs?.total,sym)}</b><small>Fuel, services, fees and reserves</small></article><article><span>Flight result</span><b class="${Number(air.profit)>=0?'profit-positive':'profit-negative'}">${money(air.profit,sym)}</b><small>Pilot pay ${money(pilot.pay,sym)}</small></article>${satisHtml}</div></section>`:`<section><h3>Latest completed flight</h3><div class="network-empty">No completed finance statement yet.</div></section>`;
+  const latestHtml=latest?`<section><h3>Latest completed flight</h3><div class="finance-kpi-row"><article><span>Flight</span><b>${route.origin&&route.destination?`${escapeHtml(route.origin)} \u2192 ${escapeHtml(route.destination)}`:escapeHtml(latest.callsign||'Recorded flight')}</b><small>${route.origin&&route.destination?escapeHtml(latest.callsign||'Recorded flight'):'Route not recorded'}</small></article><article><span>Revenue</span><b>${money(air.revenue?.total,sym)}</b><small>Passengers and cargo</small></article><article><span>Operating cost</span><b>${money(air.costs?.total,sym)}</b><small>Fuel, services, fees and reserves</small></article><article><span>Flight result</span><b class="${Number(air.profit)>=0?'profit-positive':'profit-negative'}">${money(air.profit,sym)}</b><small>Pilot pay ${money(pilot.pay,sym)}</small></article>${satisHtml}</div></section>`:`<section><h3>Latest completed flight</h3><div class="network-empty">No completed finance statement yet.</div></section>`;
   if($('financeSummary'))$('financeSummary').innerHTML=`<div class="finance-dual-ledger">${latestHtml}<section><h3>Career</h3><div class="finance-kpi-row"><article><span>Airline balance</span><b>${money(data.airline_balance,sym)}</b></article><article><span>Pilot wallet</span><b>${money(data.pilot_balance,sym)}</b></article><article><span>Lifetime revenue</span><b>${money(tot.airline_revenue,sym)}</b></article><article><span>Lifetime operating cost</span><b>${money(tot.airline_costs,sym)}</b></article>${lifetimeSatisHtml}</div></section></div>`;
   if($('financeRank'))$('financeRank').innerHTML=`<div class="rank-current"><span>Current position</span><b>${escapeHtml(cur.label||'Cadet')}</b><small>${progress.pireps||0} completed flights · ${Number(progress.block_hours||0).toFixed(1)} block hours</small></div><div class="rank-progress"><span>Next position</span><b>${rankStr(next)}</b><small>${progress.pireps||0}/${progress.next_pireps||0} flights · ${Number(progress.block_hours||0).toFixed(1)}/${progress.next_block_hours||0} block hours</small><i style="width:${Math.max(0,Math.min(100,Number(progress.percent)||0))}%"></i></div>`;
   if($('financeRanks')){try{const ladder=[...(rank.ladder||[])].reverse();$('financeRanks').innerHTML=ladder.map(r=>`<article class="${r.key===cur.key?'active':''}"><span>${rankInsignia(r.key)}</span><b>${escapeHtml(r.label)}</b><small>${r.pireps} completed flights · ${r.block_hours} block hours${r.key===cur.key?' · Current position':''}</small></article>`).join('')}catch(e){$('financeRanks').innerHTML='<div class="network-empty">Rank history is temporarily unavailable.</div>'}}
-  if($('financeLedger'))$('financeLedger').innerHTML=(data.ledger||[]).length?(data.ledger||[]).slice(0,16).map(item=>{const row=item.statement||{},rowAir=row.airline||{},rowPilot=row.pilot||{},rowRoute=row.route||{};return `<div><time>${messageTime(item.time)}Z</time><b>${escapeHtml(item.callsign||'Flight')} · ${escapeHtml(rowRoute.origin||'----')} → ${escapeHtml(rowRoute.destination||'----')}</b><span>Result ${money(rowAir.profit,sym)} · Pilot pay ${money(rowPilot.pay,sym)}</span></div>`}).join(''):'<div class="network-empty">No completed flight statements yet.</div>';
+  if($('financeLedger'))$('financeLedger').innerHTML=(data.ledger||[]).length?(data.ledger||[]).slice(0,16).map(item=>{const row=item.statement||{},rowAir=row.airline||{},rowPilot=row.pilot||{},rowRoute=row.route||{};return `<div><time>${messageTime(item.time)}Z</time><b>${rowRoute.origin&&rowRoute.destination?`${escapeHtml(item.callsign||'Flight')} · ${escapeHtml(rowRoute.origin)} → ${escapeHtml(rowRoute.destination)}`:escapeHtml(item.callsign||'Flight')}</b><span>Result ${money(rowAir.profit,sym)} · Pilot pay ${money(rowPilot.pay,sym)}</span></div>`}).join(''):'<div class="network-empty">No completed flight statements yet.</div>';
   if($('financeSetupCurrency'))$('financeSetupCurrency').value=data.currency||'EUR';
   if($('financeSetupPace'))$('financeSetupPace').value=career.progression_pace||'standard';
   if($('financeFareAuto'))$('financeFareAuto').checked=fare.auto!==false;
@@ -6372,7 +6930,7 @@ async function loadLogbookTelemetry(entryId){
 
 function renderLogbookDetailAdvanced(entry){
   if(!entry){$('logbookCharts').hidden=true;return}const f=entry.flight||{},t=entry.times||{},dur=entry.durations||{},m=entry.metrics||{},fuel=entry.fuel||{},d=entry.debrief||{},events=entry.events||[],violations=entry.violations||[];
-  $('logbookDetailTitle').textContent=`${f.callsign||'FLIGHT'} · ${logbookRoute(entry)}`;$('logbookDetail').innerHTML=`<div class="debrief-airline-hero">${airlineBrandHtml(f,'large',true)}<div><strong>${escapeHtml(f.callsign||'FLIGHT')}</strong><span>${escapeHtml(logbookRoute(entry))}</span><small>${escapeHtml(logbookAircraft(entry))}${f.registration?` · ${escapeHtml(f.registration)}`:''}</small></div></div><div class="debrief-source">FLIGHT ANALYSIS</div><div class="debrief-score"><strong>${d.score??0}</strong><span>OPS ROOM SCORE</span><b>${escapeHtml(d.landing_grade||'NOT GRADED')}</b></div><div class="debrief-grid"><div><span>BLOCK OUT / IN</span><b>${logbookTime(t.block_out)} / ${logbookTime(t.block_in)}</b></div><div><span>TAKEOFF / LANDING</span><b>${logbookTime(t.takeoff)} / ${logbookTime(t.landing)}</b></div><div><span>BLOCK / AIRBORNE</span><b>${duration(dur.block_seconds)} / ${duration(dur.airborne_seconds)}</b></div><div><span>ACTUAL / PLANNED DIST</span><b>${formatDistance(m.distance_nm)} / ${formatDistance(f.distance_nm)}</b></div><div><span>FUEL USED / PLANNED</span><b>${formatWeightFromLb(fuel.used_lb)} / ${f.planned_trip_fuel!=null?formatPlanWeight(f.planned_trip_fuel,f.fuel_units):'---'}</b></div><div><span>LANDING RATE / G</span><b>${landingRate(m.landing_rate_fpm)} / ${m.touchdown_g!=null?Number(m.touchdown_g).toFixed(2):'--'} G</b></div><div><span>TOUCHDOWN SPEEDS</span><b>${formatSpeed(m.touchdown_speed_kts)} · ${m.touchdowns||0} CONTACTS</b></div><div><span>MAX ALT / IAS / GS</span><b>${formatAltitude(m.max_altitude_ft)} / ${formatSpeed(m.max_ias_kts)} / ${formatSpeed(m.max_ground_speed_kts)}</b></div><div><span>MAX CLIMB / DESCENT</span><b>${formatVerticalSpeed(m.max_climb_fpm)} / ${formatVerticalSpeed(m.max_descent_fpm)}</b></div><div><span>CROSS TRACK AVG / MAX</span><b>${m.average_cross_track_nm!=null?Number(m.average_cross_track_nm).toFixed(1):'--'} / ${m.max_cross_track_nm!=null?Number(m.max_cross_track_nm).toFixed(1):'--'} NM</b></div></div>${financeMiniHtml(entry)}<div class="debrief-violations"><strong>${violations.length} DETECTED DEVIATIONS</strong>${violations.length?violations.map(x=>`<div><time>${logbookTime(x.time)}</time><b>${escapeHtml(x.title)}</b><span>${escapeHtml(x.detail)} · -${x.penalty||0}</span></div>`).join(''):'<div><span>NO AUTOMATIC DEVIATIONS DETECTED</span></div>'}</div><div class="debrief-events">${events.slice(-100).map(x=>`<div><time>${logbookTime(x.time)}</time><b>${escapeHtml(x.kind)}</b><span>${escapeHtml(x.detail)}</span></div>`).join('')}</div>`;
+  $('logbookDetailTitle').textContent=`${f.callsign||'FLIGHT'} · ${logbookRoute(entry)}`;$('logbookDetail').innerHTML=`<div class="debrief-airline-hero">${airlineBrandHtml(f,'large',true)}<div><strong>${escapeHtml(f.callsign||'FLIGHT')}</strong><span>${escapeHtml(logbookRoute(entry))}</span><small>${escapeHtml(logbookAircraft(entry))}${f.registration?` · ${escapeHtml(f.registration)}`:''}</small></div></div><div class="debrief-source">FLIGHT ANALYSIS</div><div class="debrief-score"><strong>${d.score??0}</strong><span>OPS ROOM SCORE</span><b>${escapeHtml(d.landing_grade||'NOT GRADED')}</b></div><div class="debrief-grid"><div><span>BLOCK OUT / IN</span><b>${logbookTime(t.block_out)} / ${logbookTime(t.block_in)}</b></div><div><span>TAKEOFF / LANDING</span><b>${logbookTime(t.takeoff)} / ${logbookTime(t.landing)}</b></div><div><span>BLOCK / AIRBORNE</span><b>${duration(dur.block_seconds)} / ${duration(dur.airborne_seconds)}</b></div><div><span>ACTUAL / PLANNED DIST</span><b>${formatDistance(m.distance_nm)} / ${formatDistance(f.distance_nm)}</b></div><div><span>FUEL USED / PLANNED</span><b>${formatWeightFromLb(fuel.used_lb)} / ${f.planned_trip_fuel!=null?formatPlanWeight(f.planned_trip_fuel,f.fuel_units):'---'}</b></div><div><span>LANDING RATE / G</span><b>${landingRate(m.landing_rate_fpm)} / ${m.touchdown_g!=null?Number(m.touchdown_g).toFixed(2):'--'} G</b></div><div><span>TOUCHDOWN SPEEDS</span><b>${formatSpeed(m.touchdown_speed_kts)} · ${m.touchdowns||0} CONTACTS</b></div><div><span>MAX ALT / IAS / GS</span><b>${formatAltitude(m.max_altitude_ft)} / ${formatSpeed(m.max_ias_kts)} / ${formatSpeed(m.max_ground_speed_kts)}</b></div><div><span>MAX CLIMB / DESCENT</span><b>${formatVerticalSpeed(m.max_climb_fpm)} / ${formatVerticalSpeed(m.max_descent_fpm)}</b></div><div><span>CROSS TRACK AVG / MAX</span><b>${m.average_cross_track_nm!=null?Number(m.average_cross_track_nm).toFixed(1):'--'} / ${m.max_cross_track_nm!=null?Number(m.max_cross_track_nm).toFixed(1):'--'} NM</b></div></div>${entry && entry.signed ? `<div class="debrief-signed"><span>LOADSHEET SIGNED ✓</span><b>${escapeHtml(String(entry.signed.signer||'').trim()||'—')}${entry.signed.role?` · ${escapeHtml(String(entry.signed.role))}`:''} · ${escapeHtml(String(entry.signed.signed_utc||'').slice(11,16)||'--')}Z</b></div>`:''}${entry && entry.signed_completion ? `<div class="debrief-signed"><span>COMPLETION SIGNED ✓</span><b>${escapeHtml(String(entry.signed_completion.signer||'').trim()||'—')}${entry.signed_completion.role?` · ${escapeHtml(String(entry.signed_completion.role))}`:''} · ${escapeHtml(String(entry.signed_completion.signed_utc||'').slice(11,16)||'--')}Z</b></div>`:''}${financeMiniHtml(entry)}<div class="debrief-violations"><strong>${violations.length} DETECTED DEVIATIONS</strong>${violations.length?violations.map(x=>`<div><time>${logbookTime(x.time)}</time><b>${escapeHtml(x.title)}</b><span>${escapeHtml(x.detail)} · -${x.penalty||0}</span></div>`).join(''):'<div><span>NO AUTOMATIC DEVIATIONS DETECTED</span></div>'}</div><div class="debrief-events">${operationalEvents(events,'logbook',100).map(x=>`<div><time>${logbookTime(x.time)}</time><b>${escapeHtml(x.kind)}</b><span>${escapeHtml(x.text)}</span></div>`).join('')}</div>`;
   $('logbookEditor').hidden=false;$('logbookRating').value=String(entry.rating||0);$('logbookNotes').value=entry.notes||'';$('logbookSelectedPdf').href=`/api/logbook/${encodeURIComponent(entry.id)}/export.pdf`; $('logbookSelectedPdf').setAttribute('download',`OPS_ROOM_PIREP_${String(entry.id||'').slice(0,8)}.pdf`); $('logbookSelectedPdf').removeAttribute('target');$('logbookOpenPirep').href=`/pirep/${encodeURIComponent(entry.id)}`;
   const blackBoxButton=$('logbookBlackBox'),blackBoxSummary=entry.black_box||null;
   if(blackBoxButton){blackBoxButton.hidden=!blackBoxSummary;blackBoxButton.disabled=!blackBoxSummary;blackBoxButton.dataset.recordingId=blackBoxSummary?.recording_id||'';blackBoxButton.textContent=blackBoxSummary?'BLACK BOX REPLAY':'NO BLACK BOX RECORDING'}
@@ -6400,8 +6958,11 @@ function updateObsTools(){
   $('obsOpacityValue').textContent=`${$('obsOpacity').value}%`;$('obsScaleValue').textContent=`${$('obsScale').value}%`;$('obsLogoSizeValue').textContent=`${$('obsLogoSize').value} px`;
   saveObsPrefs();const url=obsSourceUrl();$('obsUrl').textContent=url;$('obsOpenSource').href=url;
   const width=Math.max(320,Number($('obsWidth')?.value||1280)),height=Math.max(120,Number($('obsHeight')?.value||260));
-  $('obsPreview').style.height=`${Math.max(180,Math.min(520,Math.round(760*height/width)))}px`;
-  $('obsPreview').src=`${url}&preview=1&t=${Date.now()}`;
+  // Keep the preview true to the configured source aspect ratio instead of
+  // assuming a fixed 760px-wide stage; the iframe fills the stage width and
+  // derives its height from the actual width/height the user set.
+  const preview=$('obsPreview');preview.style.aspectRatio=`${width} / ${height}`;preview.style.height='auto';
+  preview.src=`${url}&preview=1&t=${Date.now()}`;
   $('obsPreviewState').textContent=String($('obsView').value||'flight').replaceAll('_',' ').toUpperCase();
 }
 async function copyObsUrl(){const url=obsSourceUrl();try{await navigator.clipboard.writeText(url);$('obsCopyUrl').textContent='COPIED'}catch{window.prompt('Copy OBS browser-source URL',url)}setTimeout(()=>$('obsCopyUrl').textContent='COPY SOURCE URL',1400)}
@@ -6529,6 +7090,25 @@ async function fillPerformanceWeatherLive(){
   if(badge){badge.textContent='SIMBRIEF OFP';badge.classList.remove('live')}
   return 'SIMBRIEF OFP';
 }
+async function fillPerformanceFenixCg(){
+  // #75: when a Fenix A320 is active, the EFB FINAL loadsheet carries the real
+  // MACTOW / MACZFW CG (% MAC). Prefer MACZFW (the ZFW CG the perf model
+  // needs); fall back to MACTOW. Only fills when the field is still empty or
+  // SimBrief didn't provide a CG — the live aircraft data wins.
+  const cgField = $('perfCg');
+  const note = $('perfCgNote');
+  if(!cgField) return;
+  try{
+    const data = await fetch('/api/fenix/loadsheet', {cache:'no-store'}).then(r=>r.json());
+    if(!data?.ok) return;
+    const cg = Number(data.mac_zfw ?? data.mac_tow);
+    if(Number.isFinite(cg) && cg > 0 && (cgField.value === '' || cgField.value == null || Number(cgField.value) <= 0)){
+      cgField.value = cg;
+      if(note){ note.textContent = `FENIX MAC${data.mac_zfw != null ? 'ZFW' : 'TOW'} · ${cg.toFixed(1)}% MAC`; note.hidden = false; note.style.color = ''; }
+    }
+  }catch{/* Fenix not active / portal unreachable — keep SimBrief/manual CG */}
+  perfCgHighlight();
+}
 async function fillPerformanceLiveWeight(){
   const hint=$('perfLiveWeightHint');
   try{
@@ -6612,7 +7192,7 @@ async function calculatePerformance(){
     const speedSource = 'OPS ROOM';
     const extra = [];
     if(result.recommended_flap) extra.push(`<div><span>FLAP</span><b>${escapeHtml(result.recommended_flap)}</b></div>`);
-    if(result.speeds.pitch_trim != null) extra.push(`<div><span>PITCH TRIM</span><b>${escapeHtml(String(result.speeds.pitch_trim))} UP</b></div>`);
+    if(result.speeds.pitch_trim != null){ const pt = Number(result.speeds.pitch_trim); extra.push(`<div><span>PITCH TRIM</span><b>${escapeHtml(String(Math.abs(pt)))} ${pt < 0 ? 'DN' : 'UP'}</b></div>`); }
     if(result.speeds.flex_or_assumed_c != null) extra.push(`<div><span>FLEX TEMP</span><b>${escapeHtml(String(result.speeds.flex_or_assumed_c))} °C</b></div>`);
     if(tlr) extra.push(`<div><span>TLR CROSS-CHECK</span><b>${escapeHtml(tlr.speedText)}</b></div>`);
     if(box) box.innerHTML = `<div><span>STATUS</span><b>${escapeHtml(result.status)}</b></div><div><span>REQUIRED</span><b>${result.distances.factored_required_m} M</b></div><div><span>MARGIN</span><b>${result.distances.runway_margin_m ?? '---'} M</b></div><div><span>SPEEDS · ${escapeHtml(speedSource)}</span><b>${escapeHtml(speeds)}</b></div>${extra.join('')}`;
@@ -6629,6 +7209,7 @@ async function startPerformance(){
   perfSetWeightLabel();
   fillPerformanceFromSimbrief();
   await fillPerformanceWeatherLive();
+  await fillPerformanceFenixCg();
   await fillPerformanceLiveWeight();
   renderPerformanceTlr();
 }
@@ -7221,6 +7802,7 @@ function setup(){
   $('mapResetView').addEventListener('click',resetMapView);$('mapNorthUp')?.addEventListener('click',resetMapNorthUp);$('mapCenterAircraft')?.addEventListener('click',mapCenterOnAircraft);
   ['mapLayerTraffic','mapLayerControllers','mapLayerCoverage','mapLayerAirports','mapLayerRunways','mapLayerSurface','mapLayerTaxiLabels','mapLayerStandLabels','mapLayerNavaids','mapLayerWaypoints','mapLayerAirways','mapLayerBoundaries'].forEach(id=>$(id)?.addEventListener('change',()=>{document.querySelectorAll('[data-map-preset]').forEach(b=>b.classList.remove('active'));if(id==='mapLayerSurface'||id==='mapLayerRunways'||id==='mapLayerTaxiLabels'||id==='mapLayerStandLabels'){olRunwaySurfaceLayer?.changed();olTaxiSurfaceLayer?.changed();olSurfaceLabelLayer?.changed();if(!mapLayerChecked('mapLayerSurface',true)&&!mapLayerChecked('mapLayerRunways',true)){clearAirportSurface('SURFACE LAYER OFF');}}if(mapData)renderMap(mapData);scheduleAviationRefresh(80)}));
   $('mapLayerNotams')?.addEventListener('change',()=>{document.querySelectorAll('[data-map-preset]').forEach(b=>b.classList.remove('active'));loadNotamLayer();if(mapData)renderMap(mapData);syncMapNotamToggle();});
+  $('mapLayerWeather')?.addEventListener('change',()=>{document.querySelectorAll('[data-map-preset]').forEach(b=>b.classList.remove('active'));mapWeatherApplyVisibility();});
   $('mapNotamToggle')?.addEventListener('click',()=>{const box=$('mapLayerNotams');if(box){box.checked=!box.checked;box.dispatchEvent(new Event('change'));}syncMapNotamToggle();});
   syncMapNotamToggle();
   document.querySelectorAll('[data-notam-filter]').forEach(button=>button.addEventListener('click',()=>applyMapNotamFilter(button.dataset.notamFilter||'all')));

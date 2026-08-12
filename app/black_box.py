@@ -48,6 +48,9 @@ _CLOSED_FLIGHT_IDS: dict[str, float] = {}
 # SimConnect dispatch thread returning None) must never look like "engine just
 # started". Require this many consecutive engine-on samples before starting.
 _ENGINE_ON_DEBOUNCE = 3
+# #69: how long an ORPHAN recording (no logbook flight row) must sit parked
+# with engines off + parking brake set before it is finalized on-blocks.
+_ORPHAN_STOP_SECONDS = 300.0
 
 FIELDS = [
     "lat", "lon", "altitude_ft", "agl_ft", "radio_altitude_ft",
@@ -80,6 +83,11 @@ FIELDS = [
     # `control_provenance` is a dict field: `_normalize` passes dicts through untouched
     # (never coerced/rounded) and `_pack_rows`/`_unpack_rows` round-trip it as JSON.
     "pilot_aileron_input_fo", "pilot_elevator_input_fo", "control_provenance",
+    # Schema v3 (append-only): per-sample altitude provenance so recording
+    # data-integrity issues (#54) can be verified from the file itself — which
+    # offset produced altitude_ft (0x0570 pressure / 0x3324 baro indicated /
+    # 0x6020 GPS). Appended at the tail; older recordings decode unchanged.
+    "altitude_source",
 ]
 
 
@@ -378,6 +386,13 @@ def start_recording(flight_id: str, meta: dict[str, Any] | None = None) -> dict[
     with _LOCK:
         if _ACTIVE:
             return status()
+        if _CLOSED_FLIGHT_IDS.get(str(flight_id)) is not None:
+            # #68: a recording for this flight was already stopped (TAXI IN /
+            # on-blocks / user stop). Refuse to open a SECOND file for the
+            # same flight -- this chokepoint is what the watchdog/observe_phase
+            # restart race (empty EWG5EZ .part) used to slip through.
+            return {"ok": False, "recording": False, "already_recorded": True,
+                    "reason": f"Flight {flight_id} already has a completed recording"}
         if replay_guard_active():
             return {"ok": False, "recording": False, "replay_suppressed": True, "reason": "In-simulator replay is active"}
         recording_id = f"{_safe_id(flight_id)}-{uuid.uuid4().hex[:12]}"
@@ -464,6 +479,19 @@ def stop_recording(reason: str = "TAXI IN") -> dict[str, Any]:
         return finished
 
 
+def _abort_empty_recording_locked(active: dict[str, Any]) -> None:
+    """Delete a recording that never received a sample and clear its state (#68)."""
+    global _ACTIVE, _THREAD
+    try:
+        path = Path(active.get("path") or "")
+        if path.exists():
+            path.unlink()
+    except Exception:
+        pass
+    _ACTIVE = None
+    _THREAD = None
+
+
 def _cleanup_stale_parts() -> None:
     """Finalize leftover ``.opsbb.part`` files (v0.25.72, #20).
 
@@ -471,7 +499,8 @@ def _cleanup_stale_parts() -> None:
     watchdog oscillation) leave ``.part`` files in the library. Any ``.part``
     that is not the currently-active recording is finalized: state stamped,
     WAL checkpointed and the file renamed to ``.opsbb`` so the library never
-    shows half-files.
+    shows half-files. Zero-sample ``.part`` files (a start that never wrote a
+    single sample -- the empty EWG5EZ file, #68) are deleted outright.
     """
     with _LOCK:
         active_path = str((_ACTIVE or {}).get("path") or "").lower()
@@ -481,10 +510,19 @@ def _cleanup_stale_parts() -> None:
                 continue
             meta = _metadata(path)
             state = str(meta.get("state") or "INTERRUPTED")
+            with _connect(path) as conn:
+                row = conn.execute("SELECT COALESCE(MAX(ended_elapsed),0) duration,COALESCE(SUM(sample_count),0) samples FROM chunks").fetchone()
+            samples = int(row["samples"] or 0)
+            if samples == 0:
+                # #68: pure litter -- delete it instead of finalizing an empty
+                # recording into the library.
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
+                continue
             if state == "RECORDING":
-                with _connect(path) as conn:
-                    row = conn.execute("SELECT COALESCE(MAX(ended_elapsed),0) duration,COALESCE(SUM(sample_count),0) samples FROM chunks").fetchone()
-                _set_metadata(path, state="INTERRUPTED", completed_utc=_utc_now(), stop_reason="OPS ROOM stopped before TAXI IN", duration_seconds=float(row["duration"] or 0), sample_count=int(row["samples"] or 0))
+                _set_metadata(path, state="INTERRUPTED", completed_utc=_utc_now(), stop_reason="OPS ROOM stopped before TAXI IN", duration_seconds=float(row["duration"] or 0), sample_count=samples)
             else:
                 _set_metadata(path, state=state, completed_utc=meta.get("completed_utc") or _utc_now())
             _checkpoint(path)
@@ -761,6 +799,14 @@ def _record_loop() -> None:
     cursor = 0.0
     last_engines_running = False
     engine_on_streak = 0
+    # #69: orphan-recording self-terminate. A recording whose flight has no
+    # logbook row (ad-hoc / hot-start session) can never be stopped by the
+    # logbook's finalize chain, so it used to record until app exit (4.35 h
+    # orphan observed). When such a recording is parked (engines off + parking
+    # brake set + on ground) for ORPHAN_STOP_SECONDS it is finalized here.
+    orphan_parked_since_mono: float | None = None
+    orphan_row_check_mono = 0.0
+    orphan_stop_requested = False
     while not _STOP.is_set():
         with _LOCK:
             active = _ACTIVE
@@ -791,7 +837,13 @@ def _record_loop() -> None:
             # consecutive engine-on samples AND a fresh off->on edge.
             engine_on_streak = engine_on_streak + 1 if engines_now else 0
             latched = _CLOSED_FLIGHT_IDS.get(ctx_flight_id)
-            if engines_now and engine_on_streak >= _ENGINE_ON_DEBOUNCE and not last_engines_running and (not ctx_flight_id or latched is None):
+            # #68: never START a recording in a strictly post-touchdown phase.
+            # A recording can only begin pre-departure (engine-on at the gate,
+            # pushback, taxi-out); TAXI IN / LANDING / LANDING ROLL are
+            # end-of-flight phases where a start is always a bug (the empty
+            # EWG5EZ .part created 23 s after the TAXI IN stop).
+            post_arrival_phase = phase in {"TAXI IN", "LANDING", "LANDING ROLL"}
+            if engines_now and engine_on_streak >= _ENGINE_ON_DEBOUNCE and not last_engines_running and (not ctx_flight_id or latched is None) and not post_arrival_phase:
                 with _LOCK:
                     flight_id = str(_PHASE_CONTEXT.get("flight_id") or "")
                     flight_meta = dict(_PHASE_CONTEXT.get("meta") or {})
@@ -847,6 +899,56 @@ def _record_loop() -> None:
                         _RING.append(dict(row))
                 if len(active.get("buffer") or []) >= 60 or time.monotonic() - float(active.get("last_flush") or 0) >= 2.0:
                     _flush_locked(active)
+        # #68: a recording that received no valid sample within a few seconds
+        # (telemetry dead at start, or a start racing a stop) is aborted cleanly
+        # -- the file is deleted instead of lingering as an empty .part.
+        with _LOCK:
+            active = _ACTIVE
+            if active is not None and int(active.get("valid_count") or 0) == 0 and time.monotonic() - float(active["started_mono"]) > 8.0:
+                _abort_empty_recording_locked(active)
+        # #69: orphan-recording self-terminate (see loop header). Throttle the
+        # DB row check to once per 30 s; the parked-state watch runs every tick.
+        with _LOCK:
+            active = _ACTIVE
+            if active is not None:
+                now_mono = time.monotonic()
+                flight_id = str(active.get("flight_id") or "")
+                if now_mono - orphan_row_check_mono > 30.0:
+                    orphan_row_check_mono = now_mono
+                    try:
+                        from .logbook import flight_row_exists
+                        orphan = not flight_row_exists(flight_id)
+                    except Exception:
+                        orphan = False
+                else:
+                    orphan = bool(active.get("_orphan_checked"))
+                latest = items[-1][1] if items else None
+                if latest is None:
+                    try:
+                        _latest_pair = writer_latest()
+                        latest = _latest_pair[1] if _latest_pair else None
+                    except Exception:
+                        latest = None
+                systems = (latest or {}).get("systems") if isinstance((latest or {}).get("systems"), dict) else {}
+                engines_off = (latest or {}).get("engines_running") is False
+                brake_set = bool((latest or {}).get("parking_brake") if (latest or {}).get("parking_brake") is not None else systems.get("parking_brake") or systems.get("parking_brake_set"))
+                on_ground = bool((latest or {}).get("on_ground", True))
+                parked_conditions = bool(latest) and engines_off and brake_set and on_ground
+                if orphan and parked_conditions:
+                    if orphan_parked_since_mono is None:
+                        orphan_parked_since_mono = now_mono
+                    elif now_mono - orphan_parked_since_mono >= _ORPHAN_STOP_SECONDS:
+                        _event_locked(active, "RECORDING STOP", "Recording finalized: orphan session parked on-blocks (no logbook flight row)")
+                        orphan_stop_requested = True
+                else:
+                    orphan_parked_since_mono = None
+                if orphan:
+                    active["_orphan_checked"] = True
+                else:
+                    active.pop("_orphan_checked", None)
+        if orphan_stop_requested:
+            orphan_stop_requested = False
+            stop_recording("ORPHAN ON BLOCKS")
         _STOP.wait(0.05)
     with _LOCK:
         if _ACTIVE:

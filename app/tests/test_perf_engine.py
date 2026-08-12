@@ -7,7 +7,8 @@ generic fallback for every other aircraft.
 
 These tests pin the exact-data families against their published reference
 numbers and smoke-test the whole profile set so the Performance tab can
-never 500 on any aircraft in the dropdown.
+never 500 on any aircraft in the dropdown. v0.25.76 (#61) adds the Fenix
+EFB exact takeoff engine as Tier-1 for Fenix A320 flights.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import unittest
 
 from app import performance as perf
 from app.perf_engine import A350Takeoff
+from app import fenix_perf
 
 
 class A320NeoReference(unittest.TestCase):
@@ -47,6 +49,76 @@ class A320NeoReference(unittest.TestCase):
         self.assertEqual(r["status"], "OK")
         self.assertGreaterEqual(s["v2_kt"], s["vr_kt"])
         self.assertGreaterEqual(s["vr_kt"], s["v1_kt"])
+
+
+class FenixEfbContract(unittest.TestCase):
+    """#61: Fenix EFB takeoff-engine mapping helpers and the perf override."""
+
+    def test_flap_value_mapping(self) -> None:
+        self.assertEqual(fenix_perf._flap_value("1+F"), 1)
+        self.assertEqual(fenix_perf._flap_value("OPT"), 0)
+        self.assertEqual(fenix_perf._flap_value("2"), 2)
+        self.assertEqual(fenix_perf._flap_value("CONF 3"), 3)
+        self.assertEqual(fenix_perf._flap_value(""), 0)
+
+    def test_anti_ice_and_surface(self) -> None:
+        self.assertEqual(fenix_perf._anti_ice_setting(True), "EngineAndWing")
+        self.assertEqual(fenix_perf._anti_ice_setting("engine"), "Engine")
+        self.assertEqual(fenix_perf._anti_ice_setting(False), "None")
+        self.assertEqual(fenix_perf._surface_condition("wet"), "Wet")
+        self.assertEqual(fenix_perf._surface_condition("dry"), "Dry")
+
+    def test_aircraft_type_from_title(self) -> None:
+        self.assertEqual(fenix_perf.aircraft_type_from_title("Fenix A320 CFM"), fenix_perf.AIRCRAFT_TYPE_CFM)
+        self.assertEqual(fenix_perf.aircraft_type_from_title("Fenix A320 IAE"), fenix_perf.AIRCRAFT_TYPE_IAE)
+        self.assertIsNone(fenix_perf.aircraft_type_from_title("Boeing 737-800"))
+        self.assertIsNone(fenix_perf.aircraft_type_from_title("Fenix A321neo"))
+
+    def test_fenix_override_applies_exact_speeds(self) -> None:
+        """When the EFB returns V-speeds, they replace the built-in speeds."""
+        payload = {
+            "aircraft": "A20N", "mode": "takeoff", "weight_kg": 60000,
+            "runway_length_m": 2500, "oat_c": 15, "qnh_hpa": 1013,
+            "elevation_ft": 0, "condition": "dry", "runway_heading": 0,
+            "wind_dir": 0, "wind_speed": 0, "cg_pct": 24.5,
+        }
+        fake = {
+            "ok": True, "v1_kt": 149.0, "vr_kt": 149.0, "v2_kt": 152.0,
+            "flex_c": 62.0, "flap": 2, "green_dot_kt": 221.0,
+            "flap_retraction_kt": 150.0, "slat_retraction_kt": 195.0,
+            "trim": 0.5, "trim_direction": "DN", "corrected_stop_margin": 536.0,
+        }
+        original = perf._fenix_takeoff_result
+        perf._fenix_takeoff_result = lambda *a, **k: fake
+        try:
+            r = perf.calculate(payload)
+        finally:
+            perf._fenix_takeoff_result = original
+        s = r["speeds"]
+        self.assertEqual(s["v1_kt"], 149.0)
+        self.assertEqual(s["vr_kt"], 149.0)
+        self.assertEqual(s["v2_kt"], 152.0)
+        self.assertEqual(s["flex_or_assumed_c"], 62.0)
+        # Trim direction DN -> negative sign (frontend renders 'DN').
+        self.assertEqual(s["pitch_trim"], -0.5)
+        self.assertIn("Fenix EFB", r["source"])
+        self.assertTrue(any("EFB" in w for w in r["warnings"]))
+
+    def test_fenix_override_up_trim_positive(self) -> None:
+        fake = {"ok": True, "v1_kt": 145.0, "vr_kt": 146.0, "v2_kt": 149.0,
+                "trim": 1.0, "trim_direction": "UP"}
+        original = perf._fenix_takeoff_result
+        perf._fenix_takeoff_result = lambda *a, **k: fake
+        try:
+            r = perf.calculate({
+                "aircraft": "A320", "mode": "takeoff", "weight_kg": 60000,
+                "runway_length_m": 2500, "oat_c": 15, "qnh_hpa": 1013,
+                "elevation_ft": 0, "condition": "dry", "runway_heading": 0,
+                "wind_dir": 0, "wind_speed": 0, "cg_pct": 24.5,
+            })
+        finally:
+            perf._fenix_takeoff_result = original
+        self.assertEqual(r["speeds"]["pitch_trim"], 1.0)
 
 
 class B738Reference(unittest.TestCase):

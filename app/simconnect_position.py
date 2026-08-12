@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import math
-from ctypes import POINTER, Structure, byref, c_double, c_int32, cast, sizeof
+from ctypes import POINTER, Structure, byref, c_double, c_uint32, cast, sizeof
 import os
 import sys
 import threading
@@ -12,6 +13,41 @@ from pathlib import Path
 from typing import Any
 
 from .aircraft_adapters import detect_adapter
+
+class _SimConnectLogRateLimit(logging.Filter):
+    """#83: rate-limit the upstream wrapper's per-exception warn lines.
+
+    The vendored SimConnect package logs every dispatch exception (e.g.
+    SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID) through its own logger; on some
+    aircraft/sessions a handful leak per tick. This keeps at most one line per
+    exception text per interval so the operator log stays readable while the
+    first occurrence is still visible.
+    """
+
+    def __init__(self, interval: float = 30.0) -> None:
+        super().__init__()
+        self._interval = interval
+        self._last: dict[str, float] = {}
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = str(getattr(record, "msg", ""))
+        if "EXCEPTION" not in msg.upper():
+            return True
+        now = time.monotonic()
+        if now - self._last.get(msg, -1e9) >= self._interval:
+            self._last[msg] = now
+            return True
+        return False
+
+
+def _install_log_rate_limit() -> None:
+    try:
+        logger = logging.getLogger("SimConnect.SimConnect")
+        if not any(isinstance(f, _SimConnectLogRateLimit) for f in logger.filters):
+            logger.addFilter(_SimConnectLogRateLimit())
+    except Exception:
+        pass
+
 
 # SimConnect is optional in source/development mode. The standalone Windows
 # package includes it and its native DLL. Access is serialized because the
@@ -47,13 +83,54 @@ _LAST_REBUILD_AT = 0.0
 _REBUILD_BACKOFF_SECONDS = 30.0
 _DISPATCH_ERROR_LIMIT = 10
 
+# v0.25.76 (#64): the native SimConnect wrapper's dispatch thread crashes with
+# 0xc00000b0 and the native heap damage persists across session rebuilds — 45
+# crashes on EWG5EZ finally tripped ntdll heap validation (0xc0000374) and
+# killed the whole process. After a small ceiling of dispatch crashes within a
+# short window we stop rebuilding entirely and permanently degrade to the
+# FSUIPC/WASM path for the rest of the run, instead of retrying into a corrupt
+# heap forever. Reset only by an app restart.
+_SESSION_CRASH_COUNT = 0
+_SESSION_CRASH_WINDOW_START = 0.0
+_SESSION_CRASH_CEILING = 5
+_SESSION_CRASH_WINDOW_SECONDS = 300.0
+_SESSION_PERMANENTLY_DEGRADED = False
+
+
+def _note_dispatch_crash() -> bool:
+    """Count a dispatch-thread death and decide whether SimConnect is done.
+
+    Returns True once the crash ceiling is reached (SimConnect permanently
+    disabled for this run) so callers can stop retrying into a corrupt heap.
+    """
+    global _SESSION_CRASH_COUNT, _SESSION_CRASH_WINDOW_START, _SESSION_PERMANENTLY_DEGRADED
+    now = time.monotonic()
+    if now - _SESSION_CRASH_WINDOW_START > _SESSION_CRASH_WINDOW_SECONDS:
+        _SESSION_CRASH_COUNT = 0
+        _SESSION_CRASH_WINDOW_START = now
+    _SESSION_CRASH_COUNT += 1
+    if _SESSION_CRASH_COUNT >= _SESSION_CRASH_CEILING:
+        if not _SESSION_PERMANENTLY_DEGRADED:
+            print(
+                "SimConnect disabled for this session: "
+                f"{_SESSION_CRASH_COUNT} dispatch crashes in "
+                f"{int(now - _SESSION_CRASH_WINDOW_START)}s. "
+                "Degrading to the FSUIPC/WASM path for the rest of this run; "
+                "restart the app to retry SimConnect."
+            )
+        _SESSION_PERMANENTLY_DEGRADED = True
+        return True
+    return False
+
 
 def _guarded_dispatch_run(sm: Any) -> None:
     """Replacement for the upstream SimConnect wrapper's ``_run`` loop.
 
     Keeps the identical CallDispatch cadence while healthy, but suppresses the
     per-error print flood and marks the session dead after a short run of
-    consecutive OSErrors so the health counters can rebuild it quickly.
+    consecutive OSErrors so the health counters can rebuild it quickly. Each
+    death is counted (#64); past the crash ceiling the session is never
+    rebuilt again this run.
     """
     global _SESSION_DISPATCH_DEAD
     errors = 0
@@ -68,6 +145,14 @@ def _guarded_dispatch_run(sm: Any) -> None:
                 print(f"SimConnect dispatch failure (rebuilding session): {err}")
             if errors >= _DISPATCH_ERROR_LIMIT:
                 _SESSION_DISPATCH_DEAD = True
+                _note_dispatch_crash()
+                # #83: log the death with the session's age so the operator log
+                # can correlate a dispatch death with writer/telemetry state.
+                age = round(time.monotonic() - _SESSION_STARTED, 1) if _SESSION_STARTED else None
+                print(
+                    f"SimConnect session degraded: dispatch dead after {errors} consecutive errors "
+                    f"(session age {age}s) — FSUIPC held until the session rebuilds"
+                )
                 sm.quit = 1
                 try:
                     sm.dll.Close(sm.hSimConnect)
@@ -81,6 +166,16 @@ _REPLAY_FRAME_SUBSCRIBED = False
 _REPLAY_FRAME_EVENT_ID: Any | None = None
 _REPLAY_FRAME_ORIG_HANDLER: Any | None = None
 _REPLAY_FRAME_LAST_MONO = 0.0
+
+# Cached sim terrain under the aircraft (GROUND_ALTITUDE, feet MSL). The
+# recording's own MSL altitude can drift off true terrain near the arrival
+# field (baro/QNH datum), so pose altitude is floored at terrain + recorded
+# AGL to prevent the replay from being written below the ground.
+_REPLAY_GROUND_FT: float | None = None
+_REPLAY_GROUND_MONO = 0.0
+_REPLAY_GROUND_INTERVAL = 1.0
+_REPLAY_GROUND_LOCK = threading.Lock()
+_REPLAY_GROUND_AGL_FLOOR = 300.0  # only probe terrain below this AGL (ft)
 
 # v0.25.60 — Two-tier Black Box polling: low-rate SimVars (engine flags,
 # parking brake, flaps, gear, spoilers, wind, sim rate, pause/slew, reverser,
@@ -184,10 +279,11 @@ class _ReplayPose(Structure):
 
 class _ReplayInitPosition(Structure):
     # Matches SkyDolly's SIMCONNECT_DATA_INITPOSITION: lat/lon/alt/pitch/bank/heading + onGround + airspeed
+    # SDK layout: 6x double, then DWORD OnGround, DWORD Airspeed (knots).
     _fields_ = [
         ("latitude", c_double), ("longitude", c_double), ("altitude", c_double),
         ("pitch", c_double), ("bank", c_double), ("heading", c_double),
-        ("on_ground", c_int32), ("airspeed", c_double),
+        ("on_ground", c_uint32), ("airspeed", c_uint32),
     ]
 
 
@@ -332,6 +428,15 @@ def set_sim_rate(rate: float) -> bool:
             return False
 
 
+def session_dispatch_dead() -> bool:
+    """#83: True while the SimConnect dispatch thread is dead (rebuilding).
+
+    Consumers (telemetry writer) use this to avoid forcing reads into a broken
+    session and to hold the last good source until the rebuild completes.
+    """
+    return bool(_SESSION_DISPATCH_DEAD)
+
+
 def simconnect_diagnostics() -> dict[str, Any]:
     candidates = _candidate_library_paths()
     try:
@@ -354,6 +459,7 @@ def simconnect_diagnostics() -> dict[str, Any]:
 
 def _connect_with_timeout(sm: Any, timeout_seconds: float = 8.0) -> None:
     """Connect the upstream wrapper without its unbounded busy-wait loop."""
+    _install_log_rate_limit()
     from ctypes import byref
     from ctypes.wintypes import LPCSTR
 
@@ -386,6 +492,12 @@ def _connect_with_timeout(sm: Any, timeout_seconds: float = 8.0) -> None:
 
 def _close_session() -> None:
     global _SESSION_SM, _SESSION_AQ, _SESSION_STARTED, _SESSION_CONSECUTIVE_FAILURES, _SESSION_DISPATCH_DEAD
+    global _REPLAY_POSE_DEFINITION, _REPLAY_INITIAL_DEFINITION, _REPLAY_GROUND_FT
+    # Replay definitions and the terrain cache are bound to the session's
+    # SimConnect handle — drop them when the session is rebuilt.
+    _REPLAY_POSE_DEFINITION = None
+    _REPLAY_INITIAL_DEFINITION = None
+    _REPLAY_GROUND_FT = None
     if _SESSION_SM is not None:
         try:
             sm = _SESSION_SM
@@ -450,6 +562,13 @@ def _note_session_read_result(ok: bool) -> None:
 
 def _ensure_session(diagnostics: dict[str, Any]) -> tuple[Any, Any]:
     global _SESSION_SM, _SESSION_AQ, _SESSION_STARTED
+    if _SESSION_PERMANENTLY_DEGRADED:
+        # #64: repeated native dispatch crashes have poisoned the heap; never
+        # rebuild again this run. Callers already fall back to FSUIPC/WASM.
+        raise ConnectionError(
+            "SimConnect disabled for this session (repeated dispatch crashes); "
+            "degraded to the FSUIPC/WASM path."
+        )
     if _SESSION_SM is not None and _SESSION_AQ is not None and getattr(_SESSION_SM, "ok", False) and not _SESSION_DISPATCH_DEAD:
         return _SESSION_SM, _SESSION_AQ
     _close_session()
@@ -2097,7 +2216,7 @@ def replay_subscribe_frame() -> dict[str, Any]:
                     pass
 
             sm.handle_id_event = handler
-            hr = sm.SubscribeToSystemEvent(sm.hSimConnect, event_id, b"Frame")
+            hr = sm.dll.SubscribeToSystemEvent(sm.hSimConnect, event_id.value, b"Frame")
             if not sm.IsHR(hr, 0):
                 sm.handle_id_event = _REPLAY_FRAME_ORIG_HANDLER
                 raise RuntimeError(f"SimConnect rejected Frame subscription ({hr})")
@@ -2115,7 +2234,7 @@ def replay_unsubscribe_frame() -> None:
         if _REPLAY_FRAME_EVENT_ID is not None:
             try:
                 sm, _ = _ensure_session(simconnect_diagnostics())
-                sm.UnsubscribeFromSystemEvent(sm.hSimConnect, _REPLAY_FRAME_EVENT_ID)
+                sm.dll.UnsubscribeFromSystemEvent(sm.hSimConnect, _REPLAY_FRAME_EVENT_ID.value)
                 if _REPLAY_FRAME_ORIG_HANDLER is not None:
                     sm.handle_id_event = _REPLAY_FRAME_ORIG_HANDLER
             except Exception:
@@ -2159,7 +2278,20 @@ def replay_set_freeze(enabled: bool) -> dict[str, Any]:
             return {"ok": False, "frozen": False, "reason": f"{type(exc).__name__}: {exc}"}
 
 
+_REPLAY_POSE_DEFINITION: Any | None = None
+
+
 def _ensure_replay_pose_definition(sm: Any) -> Any:
+    """Register the replay pose data definition once per session and reuse it.
+
+    SkyDolly parity: the 9-FLOAT64 pose definition is registered a single time
+    at first use and reused for every frame.  Registering per frame cost ~300
+    extra SimConnect calls/sec (new_def_id + 9x AddToDataDefinition) which
+    stuttered the sim during replay.
+    """
+    global _REPLAY_POSE_DEFINITION
+    if _REPLAY_POSE_DEFINITION is not None:
+        return _REPLAY_POSE_DEFINITION
     from SimConnect.Enum import SIMCONNECT_DATATYPE  # type: ignore
     from SimConnect.Constants import SIMCONNECT_UNUSED  # type: ignore
     definition = sm.new_def_id()
@@ -2176,12 +2308,62 @@ def _ensure_replay_pose_definition(sm: Any) -> Any:
     )
     for name, units in definitions:
         hr = sm.dll.AddToDataDefinition(
-            sm.hSimConnect, definition, name, units,
+            sm.hSimConnect, definition.value, name, units,
             SIMCONNECT_DATATYPE.SIMCONNECT_DATATYPE_FLOAT64, 0, SIMCONNECT_UNUSED,
         )
         if not sm.IsHR(hr, 0):
             raise RuntimeError(f"Could not define replay pose variable {name.decode()}")
+    _REPLAY_POSE_DEFINITION = definition
     return definition
+
+
+def _replay_ground_altitude_ft(sm: Any, aq: Any) -> float | None:
+    """Cached terrain elevation under the aircraft (feet MSL), refreshed every 0.5 s.
+
+    The wrapper's ``GROUND_ALTITUDE`` request is meters and costs ~35 ms per read,
+    so it is cached: the replay floor only needs terrain that is a few seconds
+    stale, not frame-fresh.
+    """
+    global _REPLAY_GROUND_FT, _REPLAY_GROUND_MONO
+    now = time.monotonic()
+    if _REPLAY_GROUND_FT is not None and now - _REPLAY_GROUND_MONO < _REPLAY_GROUND_INTERVAL:
+        return _REPLAY_GROUND_FT
+    try:
+        meters = aq.get("GROUND_ALTITUDE")
+        if meters is None:
+            return _REPLAY_GROUND_FT
+        value = float(meters) * 3.280839895
+        with _REPLAY_GROUND_LOCK:
+            _REPLAY_GROUND_FT = value
+            _REPLAY_GROUND_MONO = now
+        return value
+    except Exception:
+        return _REPLAY_GROUND_FT
+
+
+def _replay_clamped_altitude(frame: dict[str, Any], altitude_ft: float, sm: Any, aq: Any) -> float:
+    """Floor pose altitude so the aircraft is never written below the terrain.
+
+    Some recordings (Fenix-era FSUIPC altitude) drift off true MSL near the
+    arrival field, going negative while AGL stays positive.  The sim terrain
+    under the aircraft is a safe floor: airborne frames ride at terrain + the
+    recorded AGL (correct height over the surface), on-ground frames snap to
+    just above the surface so the wheels meet the runway.
+
+    The terrain probe is only issued while the aircraft is near the surface
+    (AGL below ``_REPLAY_GROUND_AGL_FLOOR``) and is cached, so cruise replay
+    never pays the ~35 ms SimConnect read.
+    """
+    agl = _finite_number(frame.get("agl_ft"))
+    on_ground = bool(frame.get("on_ground"))
+    if not on_ground and (agl is None or agl < 0 or agl > _REPLAY_GROUND_AGL_FLOOR):
+        return altitude_ft
+    ground = _replay_ground_altitude_ft(sm, aq)
+    if ground is None:
+        return altitude_ft
+    if on_ground:
+        return max(altitude_ft, ground + 3.0)
+    return max(altitude_ft, ground + float(agl) + 2.0)
 
 
 def _ensure_replay_initial_definition(sm: Any) -> Any:
@@ -2196,7 +2378,7 @@ def _ensure_replay_initial_definition(sm: Any) -> Any:
     from SimConnect.Constants import SIMCONNECT_UNUSED
     definition = sm.new_def_id()
     hr = sm.dll.AddToDataDefinition(
-        sm.hSimConnect, definition, b"Initial Position", None,
+        sm.hSimConnect, definition.value, b"Initial Position", None,
         SIMCONNECT_DATATYPE.SIMCONNECT_DATATYPE_INITPOSITION, 0, SIMCONNECT_UNUSED,
     )
     if not sm.IsHR(hr, 0):
@@ -2232,11 +2414,11 @@ def replay_apply_state(frame: dict[str, Any], *, initial: bool = False, apply_co
                 init_pos = _ReplayInitPosition(
                     float(lat), float(lon), float(alt),
                     float(pitch), float(bank), float(heading),
-                    1 if frame.get("on_ground") else 0, float(airspeed),
+                    1 if frame.get("on_ground") else 0, int(round(airspeed)),
                 )
                 definition = _ensure_replay_initial_definition(sm)
                 hr = sm.dll.SetDataOnSimObject(
-                    sm.hSimConnect, definition, SIMCONNECT_OBJECT_ID_USER,
+                    sm.hSimConnect, definition.value, SIMCONNECT_OBJECT_ID_USER,
                     SIMCONNECT_DATA_SET_FLAG(0), 0, sizeof(init_pos), byref(init_pos),
                 )
                 if not sm.IsHR(hr, 0):
@@ -2246,12 +2428,29 @@ def replay_apply_state(frame: dict[str, Any], *, initial: bool = False, apply_co
                 from SimConnect.Constants import SIMCONNECT_OBJECT_ID_USER  # type: ignore
                 definition = _ensure_replay_pose_definition(sm)
                 wrapped_heading = ((float(heading) % 360.0) + 360.0) % 360.0
-                vx = _finite_number(frame.get("body_velocity_x_fps")) or 0.0
-                vy = _finite_number(frame.get("body_velocity_y_fps")) or 0.0
-                vz = _finite_number(frame.get("body_velocity_z_fps")) or 0.0
+                # Floor the pose against the sim terrain + recorded AGL so a
+                # drifting MSL datum cannot write the aircraft below the ground
+                # (clip / ground-collision takeover during landing replay).
+                alt = _replay_clamped_altitude(frame, float(alt), sm, aq)
+                vx = _finite_number(frame.get("body_velocity_x_fps"))
+                vy = _finite_number(frame.get("body_velocity_y_fps"))
+                vz = _finite_number(frame.get("body_velocity_z_fps"))
+                if vx is None:
+                    # Fenix-era recordings do not carry body velocities; derive
+                    # forward speed from the recorded ground speed so the sim's
+                    # velocity and flight instruments follow the replay.
+                    gs_kts = _finite_number(frame.get("ground_speed_kts")) or 0.0
+                    vx = gs_kts * 1.68781  # knots -> feet per second
+                    vy = 0.0 if vy is None else float(vy)
+                    vs_fpm = _finite_number(frame.get("vertical_speed_fpm"))
+                    # Body Z is down-positive; climb (positive vs_fpm) is negative vz.
+                    vz = (-float(vs_fpm) / 60.0) if vs_fpm is not None else 0.0
+                else:
+                    vy = 0.0 if vy is None else float(vy)
+                    vz = 0.0 if vz is None else float(vz)
                 pose = _ReplayPose(float(lat), float(lon), float(alt), float(pitch), float(bank), wrapped_heading, float(vx), float(vy), float(vz))
                 hr = sm.dll.SetDataOnSimObject(
-                    sm.hSimConnect, definition, SIMCONNECT_OBJECT_ID_USER,
+                    sm.hSimConnect, definition.value, SIMCONNECT_OBJECT_ID_USER,
                     SIMCONNECT_DATA_SET_FLAG(0), 0, sizeof(pose), byref(pose),
                 )
                 if not sm.IsHR(hr, 0):

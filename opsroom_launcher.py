@@ -81,6 +81,50 @@ def enable_log_file() -> Path:
     return log_path
 
 
+_CRASH_SENTINEL_NAME = "crash_sentinel.json"
+
+
+def _check_crash_sentinel() -> str | None:
+    """#64 item 3: surface a previous-run native crash on the next launch.
+
+    The launcher writes a sentinel at startup and removes it ONLY on a clean
+    shutdown. If a sentinel exists at startup, the previous run died without
+    running its cleanup (native crash -- e.g. the SimConnect dispatch heap
+    corruption that killed OPS ROOM.exe -- or a force-kill), so opsroom.log
+    has no traceback. Returns a human-readable "started at" string for the
+    caller to print, and writes a fresh sentinel for the current run.
+    """
+    sentinel = app_data_dir() / _CRASH_SENTINEL_NAME
+    previous: str | None = None
+    if sentinel.exists():
+        try:
+            data = json.loads(sentinel.read_text(encoding="utf-8"))
+            started = data.get("started_at") or "an unknown time"
+            pid = data.get("pid", "?")
+            previous = f"{started} (pid {pid})"
+        except Exception:
+            previous = "an unknown time"
+    try:
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text(
+            json.dumps({"started_at": time.strftime("%Y-%m-%d %H:%M:%S"), "pid": os.getpid()}),
+            encoding="utf-8",
+        )
+    except Exception as exc:
+        print(f"Crash sentinel write failed safely: {type(exc).__name__}: {exc}")
+    return previous
+
+
+def _clear_crash_sentinel() -> None:
+    """Remove the sentinel after a CLEAN shutdown only (never after a crash)."""
+    try:
+        sentinel = app_data_dir() / _CRASH_SENTINEL_NAME
+        if sentinel.exists():
+            sentinel.unlink()
+    except Exception:
+        pass
+
+
 
 def enable_high_dpi() -> None:
     """Enable crisp per-monitor rendering before WebView2 creates a window."""
@@ -358,6 +402,16 @@ def main() -> int:
         return run_self_test()
     enable_high_dpi()
     log_path = enable_log_file()
+    previous_crash = _check_crash_sentinel()
+    if previous_crash:
+        print(
+            "*** WARNING: the previous run (started "
+            + str(previous_crash)
+            + ") did not exit cleanly -- it may have crashed natively "
+            "(e.g. the SimConnect dispatch heap corruption that kills the whole "
+            "process with no Python traceback). Details: this log and Windows "
+            "Event Log > Application > Error #1000."
+        )
     settings = load_settings()
     port = int(settings.get("server", {}).get("port", 8080))
     lan_access = bool(settings.get("server", {}).get("lan_access", False))
@@ -365,7 +419,7 @@ def main() -> int:
     url = f"http://{LOCAL_HOST}:{port}"
 
     print("\n" + "=" * 72)
-    print(f"Starting OPS ROOM 0.25.75 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Starting OPS ROOM 0.25.77 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Log file: {log_path}")
     print(f"Server bind: {'0.0.0.0' if lan_access else 'localhost'}:{port}")
 
@@ -501,6 +555,7 @@ def main() -> int:
         if server.is_alive():
             print("OPS ROOM server did not exit cleanly after 5 seconds; forcing process shutdown.")
             os._exit(0)
+        _clear_crash_sentinel()
     return 0
 
 

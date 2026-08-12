@@ -137,10 +137,18 @@ _AUTOMATION_REQUESTED_MONO: dict[str, float] = {}
 _AUTOMATION_LOCK = threading.RLock()
 _AUTOMATION_STOP = threading.Event()
 _AUTOMATION_THREAD: threading.Thread | None = None
+# #65: GSX automation latches (arrival-service completion state) are persisted
+# to disk so an app restart mid-arrival does NOT wipe the completion gate — the
+# root cause of EWG5EZ finalizing without arrival receipts. Written on every
+# latch change; re-seeded at startup.
+_AUTOMATION_STATE_FILE = "gsx_automation_state.json"
+_AUTOMATION_PERSISTED: dict[str, Any] | None = None
+_AUTOMATION_PERSIST_LOCK = threading.RLock()
 _OPERATOR_OBSERVER_THREAD: threading.Thread | None = None
 _OPERATOR_OBSERVER_STOP = threading.Event()
 _OPERATOR_OBSERVER_CONNECTED = threading.Event()
 _OPERATOR_OBSERVER_LOCK = threading.RLock()
+_OPERATOR_OBSERVER_LAST_CONNECT_FAIL_LOG = 0.0  # monotonic, #70 rate limiter
 _OPERATOR_OBSERVER_SEQUENCE = 0
 _PUSHBACK_KEEPALIVE_THREAD: threading.Thread | None = None
 _PUSHBACK_KEEPALIVE_STOP = threading.Event()
@@ -173,6 +181,8 @@ _FENIX_LOADING_STATE: dict[str, Any] = {
     "menu_open_requested_mono": 0.0,
 }
 _FENIX_SNAPSHOT_REFRESH_AT = 0.0  # monotonic TTL for the Live OFP loadsheet snapshot
+_FENIX_PROBE_THREAD: "threading.Thread | None" = None
+_FENIX_PROBE_STOP = threading.Event()
 _MOCK_STATE: dict[str, Any] = {
     "boarding": 5,
     "deboarding": 1,
@@ -509,10 +519,25 @@ def _official_handler_data_from_state(state: dict[str, Any]) -> dict[str, Any]:
     handler_data = state.get("handlerData")
     return handler_data if isinstance(handler_data, dict) else {}
 
+_OFFICIAL_FAIL_CACHE: tuple[float, str] | None = None  # (monotonic, reason) — #71
+
+
 def _official_ws_exchange(command: dict[str, Any] | None = None, timeout: float = 0.75) -> dict[str, Any]:
-    global _OFFICIAL_STATE, _OFFICIAL_URL
+    global _OFFICIAL_STATE, _OFFICIAL_URL, _OFFICIAL_FAIL_CACHE
+    # #71: a flaky GSX Remote WebSocket made every status call burn 5-20 s
+    # retrying three candidates with cumulative timeouts, and failures were
+    # never cached, so the UI + automation loop re-burned it every call and
+    # saturated the request threadpool. Failures are now memoized for a short
+    # window and the whole exchange is hard-capped (~1.2 s) so a dead GSX
+    # answers in milliseconds instead of seconds.
+    now = time.monotonic()
+    if _OFFICIAL_FAIL_CACHE is not None and now - _OFFICIAL_FAIL_CACHE[0] < 1.5:
+        return {"ok": False, "reason": _OFFICIAL_FAIL_CACHE[1], "cached_failure": True}
+    overall_deadline = now + 1.2
     last_error = ""
     for url in _official_candidates():
+        if time.monotonic() >= overall_deadline:
+            break
         # Fast TCP check avoids a long WebSocket attempt when the server is down.
         parsed = urlparse(url)
         host = parsed.hostname or "127.0.0.1"
@@ -533,7 +558,7 @@ def _official_ws_exchange(command: dict[str, Any] | None = None, timeout: float 
                 ws.send(json.dumps({"type": "subscribe", "channels": ["state", "prompts", "toasts"]}))
                 if command:
                     ws.send(json.dumps(command))
-                deadline = time.monotonic() + timeout
+                deadline = min(time.monotonic() + timeout, overall_deadline)
                 while time.monotonic() < deadline:
                     try:
                         raw = ws.recv(timeout=max(0.02, min(0.18, deadline - time.monotonic())))
@@ -558,10 +583,12 @@ def _official_ws_exchange(command: dict[str, Any] | None = None, timeout: float 
                         result_msg = msg
                 _OFFICIAL_STATE = state
                 _OFFICIAL_URL = url
+                _OFFICIAL_FAIL_CACHE = None  # #71: success clears the failure memo
                 return {"ok": True, "url": url, "ws_url": ws_uri, "hello": hello, "state": state, "result": result_msg}
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             continue
+    _OFFICIAL_FAIL_CACHE = (time.monotonic(), last_error or "GSX official remote is not reachable")
     return {"ok": False, "reason": last_error or "GSX official remote is not reachable"}
 
 
@@ -819,7 +846,9 @@ def _official_menu_from_state(state: dict[str, Any]) -> dict[str, Any]:
 def _official_status(force: bool = False) -> dict[str, Any]:
     global _OFFICIAL_CACHE, _OFFICIAL_CACHE_TIME
     now = time.monotonic()
-    if not force and _OFFICIAL_CACHE is not None and now - _OFFICIAL_CACHE_TIME < 0.8:
+    # #71: 2 s last-known-good window; deeper probes are moved off the request
+    # path, so a flaky WS cannot make every call slow.
+    if not force and _OFFICIAL_CACHE is not None and now - _OFFICIAL_CACHE_TIME < 2.0:
         return dict(_OFFICIAL_CACHE)
     port = _remote_port()
     exchange = _official_ws_exchange(timeout=0.45)
@@ -946,7 +975,9 @@ def status(force: bool = False) -> dict[str, Any]:
         if os.getenv("OPSROOM_GSX_MOCK") == "1":
             return _mock_status()
         now = time.monotonic()
-        if not force and _CACHE is not None and now - _CACHE_TIME < 0.8:
+        # #71: serve the last-known-good status for ~2 s instead of re-probing
+        # the (flaky) Remote API WebSocket on every UI poll and automation cycle.
+        if not force and _CACHE is not None and now - _CACHE_TIME < 2.0:
             return dict(_CACHE)
         root = _configured_root()
         installed = bool(root and (root / "MSFS" / "fsdreamteam-gsx-pro").exists())
@@ -1887,6 +1918,9 @@ def _operator_observer_choice(menu: dict[str, Any], live_simbrief: Any = None) -
                 continue
             norm = _normalized(options[raw_index])
             if "gsx choice" in norm or "gsx selected" in norm or "gsx default" in norm:
+                # #70: fallback picks are recorded so a GSX-choice selection is
+                # never silent (the old first-company bug was invisible).
+                _automation_record("OPERATOR", f"Selected GSX choice: {options[raw_index]}")
                 return {
                     "index": raw_index,
                     "label": str(options[raw_index]),
@@ -1905,6 +1939,7 @@ def _operator_observer_choice(menu: dict[str, Any], live_simbrief: Any = None) -
         for raw_index in company_indices:
             if raw_index >= len(options) or disabled[raw_index]:
                 continue
+            _automation_record("OPERATOR", f"No airline match or GSX choice; selecting first available operator: {options[raw_index]}")
             return {
                 "index": raw_index,
                 "label": str(options[raw_index]),
@@ -2187,6 +2222,14 @@ def _operator_observer_worker(session_generation: int) -> None:
             finally:
                 _OPERATOR_OBSERVER_CONNECTED.clear()
         if not connected:
+            # #70: the observer's connect failures used to be completely silent
+            # (exceptions swallowed, no log line), which hid why the airline-
+            # match path never engaged on 2026-08-11. Log once per 30 s so a
+            # dead observer is diagnosable without spamming the timeline.
+            now_mono = time.monotonic()
+            if now_mono - _OPERATOR_OBSERVER_LAST_CONNECT_FAIL_LOG > 30.0:
+                _OPERATOR_OBSERVER_LAST_CONNECT_FAIL_LOG = now_mono
+                _automation_record("OPERATOR", "Operator observer could not connect to the GSX Remote API; airline-match selection is offline (retrying in background)")
             _OPERATOR_OBSERVER_STOP.wait(0.35)
         else:
             _OPERATOR_OBSERVER_STOP.wait(0.15)
@@ -2281,6 +2324,25 @@ def _automatic_option_index(title: str, options: list[str], service: str = "") -
     operator_index = _preferred_operator_option_index(title, options)
     if operator_index is not None:
         return operator_index
+    # #70: the brand-match must also run when the popup title does not contain
+    # an operator word (GSX titles vary). Detect the menu by SHAPE (>= 2
+    # company-style options, a "[GSX choice]" entry, wide icons) and let
+    # _operator_observer_choice apply airline-match -> GSX choice -> first
+    # company. Without this, the generic "gsx choice" needle below silently
+    # picked the FIRST company (e.g. Aviation Ground Services over Lufthansa)
+    # with no record and no brand check.
+    shape_menu = {
+        "available": True,
+        "title": title,
+        "raw_options": list(options),
+        "raw_disabled": [False] * len(options),
+        "raw_icon_wide": [False] * len(options),
+        "options": list(options),
+    }
+    if _probable_operator_menu(shape_menu):
+        shape_choice = _operator_observer_choice(shape_menu, None)
+        if shape_choice is not None:
+            return int(shape_choice["index"])
     preferred = (
         "automatic", "recommended", "default", "gsx choice", "gsx selected",
         "use gsx", "select automatically", "auto select", "yes", "confirm",
@@ -2576,7 +2638,7 @@ def _keep_pushback_direction_available_once() -> str:
 
 def _pushback_has_started() -> bool:
     try:
-        snapshot = status(force=True)
+        snapshot = status(force=False)
         services = snapshot.get("services") or {}
         pushback_raw = ((services.get("pushback") or {}).get("raw"))
         departure_raw = ((services.get("departure") or {}).get("raw"))
@@ -2680,8 +2742,42 @@ def _refresh_fenix_loading_snapshot() -> None:
         pass
 
 
+def _ensure_fenix_probe_thread() -> None:
+    """#71-followup: one daemon thread owns the Fenix EFB loadsheet probing.
+
+    Runs at most one fetch every few seconds (each probe has its own TTL) and
+    keeps the Live OFP loadsheet cache warm, so NO request path ever blocks on
+    the Fenix portal again (the 5 s TTL inline probe in automation_status used
+    to add up to 2 s to every status call and freeze reloads).
+    """
+    global _FENIX_PROBE_THREAD
+    if _FENIX_PROBE_THREAD is not None and _FENIX_PROBE_THREAD.is_alive():
+        return
+    _FENIX_PROBE_STOP.clear()
+
+    def _loop() -> None:
+        while not _FENIX_PROBE_STOP.wait(4.0):
+            try:
+                _refresh_fenix_loading_snapshot()
+            except Exception:
+                pass
+            try:
+                from .fenix_adapter import loadsheet_final as _loadsheet_final
+                _loadsheet_final(force=False)  # own 30 s TTL decides whether to fetch
+            except Exception:
+                pass
+
+    _FENIX_PROBE_THREAD = threading.Thread(target=_loop, name="OpsRoom-FenixProbe", daemon=True)
+    _FENIX_PROBE_THREAD.start()
+
+
 def automation_status() -> dict[str, Any]:
-    _refresh_fenix_loading_snapshot()
+    # #71-followup (v0.25.77.1): the Fenix loadsheet refresh used to run inline
+    # here — a synchronous EFB fetch (up to 2 s) inside EVERY status request,
+    # TTL 5 s, saturating the request threadpool and freezing reloads / Live
+    # OFP. The request path now serves the cached snapshot only; a background
+    # probe thread keeps it warm (see _ensure_fenix_probe_thread).
+    _ensure_fenix_probe_thread()
     with _AUTOMATION_LOCK:
         payload = {"ok": True, **{key: (list(value) if isinstance(value, list) else value) for key, value in _AUTOMATION.items()}}
         payload["fenix_loading"] = dict(_FENIX_LOADING_STATE)
@@ -2707,7 +2803,7 @@ def _request_once(service: str) -> dict[str, Any]:
     if service == "refuel" and _get_latch("refuel_complete_or_fenix_complete"):
         return {"ok": True, "already_complete": True, "already_requested": True, "service": service}
     try:
-        snap_now = status(force=True)
+        snap_now = status(force=False)
         raw_now = _service_raw(snap_now, service)
         progress_now = snap_now.get("progress") or {}
         current_session_seen = bool(service in set(_AUTOMATION.get("requested") or []) or _get_latch(f"{service}_seen_active"))
@@ -2766,12 +2862,86 @@ def _latches() -> dict[str, Any]:
     return latches
 
 
+def _automation_state_path() -> Path:
+    return app_data_dir() / _AUTOMATION_STATE_FILE
+
+
+def _persist_automation_state() -> None:
+    """#65: persist the GSX automation latches + mode to disk.
+
+    Called on every latch change so an app restart can re-seed the completion
+    gate (deboarding/cleaning/lavatory) and the active mode instead of losing
+    mid-arrival progress to a restart or crash.
+    """
+    try:
+        with _AUTOMATION_LOCK:
+            snapshot = {
+                "latches": dict(_AUTOMATION.get("latches") or {}),
+                "mode": _AUTOMATION.get("mode"),
+                "stage": _AUTOMATION.get("stage"),
+                # #76: persist the Fenix boarding/loading progress so Live OFP
+                # PAX/BAG/PAYLOAD actuals survive a mid-flight app restart
+                # (they were in-memory only and stayed "—" for the whole flight).
+                "fenix_loading": dict(_FENIX_LOADING_STATE.get("last_progress") or {}),
+                "updated_at": _AUTOMATION.get("updated_at") or _utc(),
+            }
+        with _AUTOMATION_PERSIST_LOCK:
+            path = _automation_state_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            tmp.replace(path)
+            _AUTOMATION_PERSISTED = snapshot
+    except Exception as _persist_exc:
+        _record("AUTO", f"Automation state persist failed: {type(_persist_exc).__name__}: {_persist_exc}")
+
+
+def _load_automation_state() -> None:
+    """#65: re-seed the in-memory automation state from disk at startup.
+
+    Merges only keys that exist in the persisted snapshot so a fresh session
+    never inherits stale latches from a previous flight; latches carry an
+    explicit arrival/recording context keyed by flight id where relevant.
+    """
+    try:
+        path = _automation_state_path()
+        if not path.exists():
+            return
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return
+        with _AUTOMATION_LOCK:
+            latches = dict(_AUTOMATION.get("latches") or {})
+            saved = data.get("latches")
+            if isinstance(saved, dict):
+                for key, value in saved.items():
+                    if key not in latches:
+                        latches[key] = value
+                _AUTOMATION["latches"] = latches
+            # #76: re-seed the Fenix loading progress so Live OFP actuals
+            # (PAX/BAG/PAYLOAD) survive a restart even when the GSX automation
+            # loop is already past boarding.
+            saved_loading = data.get("fenix_loading")
+            if isinstance(saved_loading, dict) and saved_loading and not (_FENIX_LOADING_STATE.get("last_progress") or {}):
+                _FENIX_LOADING_STATE["last_progress"] = dict(saved_loading)
+            for key in ("mode", "stage"):
+                if data.get(key) is not None:
+                    _AUTOMATION[key] = data.get(key)
+            _AUTOMATION["updated_at"] = data.get("updated_at") or _AUTOMATION.get("updated_at")
+        with _AUTOMATION_PERSIST_LOCK:
+            _AUTOMATION_PERSISTED = data
+        _record("AUTO", f"Automation state re-seeded from {path.name} (latches={len((data.get('latches') or {}))})")
+    except Exception as _load_exc:
+        _record("AUTO", f"Automation state load skipped: {type(_load_exc).__name__}: {_load_exc}")
+
+
 def _set_latch(name: str, value: Any = True) -> None:
     with _AUTOMATION_LOCK:
         latches = dict(_AUTOMATION.get("latches") or {})
         latches[name] = value
         _AUTOMATION["latches"] = latches
         _AUTOMATION["updated_at"] = _utc()
+    _persist_automation_state()
 
 
 def _get_latch(name: str, default: Any = None) -> Any:
@@ -4284,7 +4454,7 @@ def _finalize_arrival_handling_invoice() -> bool:
     if _get_latch("arrival_invoice_finalization_started"):
         return False
 
-    official = _official_status(force=True)
+    official = _official_status(force=False)
     remote_ready = bool(official.get("reachable") and official.get("ws_connected") and official.get("protocol") == "official-remote-api-v2")
     if not remote_ready:
         _set_latch("arrival_invoice_manual_required", True)
@@ -4419,7 +4589,7 @@ def _automation_cycle(mode: str) -> bool:
     departure_mode = mode in {"DEPARTURE", "FULL_TURNAROUND"}
     if arrival_mode and not _arrival_session_ready(mode):
         return False
-    snap = status(force=True)
+    snap = status(force=False)
     services = snap.get("services") or {}
     progress = snap.get("progress") or {}
     settings = load_settings().get("integrations", {})
@@ -4729,7 +4899,7 @@ def _coordinate_verified_pushback_handoff(snap: dict[str, Any]) -> bool:
     if age >= 5.0 and not _get_latch("pushback_menu_fallback_attempted"):
         _pushback_menu_fallback_once()
         try:
-            snap = status(force=True)
+            snap = status(force=False)
         except Exception:
             pass
         if _pushback_handoff_confirmed(snap):
@@ -4932,7 +5102,7 @@ def stop_automation() -> dict[str, Any]:
 
 
 def release_control() -> dict[str, Any]:
-    official = _official_status(force=True)
+    official = _official_status(force=False)
     if official.get("reachable"):
         _official_command("menu.close", timeout=0.5)
     if os.getenv("OPSROOM_GSX_MOCK") == "1":
@@ -4946,3 +5116,10 @@ def release_control() -> dict[str, Any]:
     _record("RELEASE", "GSX external menu control released")
     _invalidate()
     return {"ok": True}
+
+
+# #65: re-seed the GSX automation completion state (latches + mode) from disk at
+# import so an app restart mid-arrival keeps the post-arrival completion gate
+# working instead of finalizing without arrival receipts. Must run before any
+# automation_status()/_arrival_services_complete_for_record() consumer reads it.
+_load_automation_state()

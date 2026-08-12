@@ -464,6 +464,69 @@ def _takeoff_tier1_a350(profile: dict[str, Any], weight: float, runway_length_m:
     }
 
 
+def _fenix_takeoff_result(
+    profile: dict[str, Any],
+    weight: float,
+    runway_length_m: float,
+    runway_heading: float,
+    wind_dir: float,
+    wind_speed: float,
+    oat_c: float,
+    qnh: float,
+    elevation_ft: float,
+    condition: str,
+    flap: str,
+    recommended_flap: str | None,
+    cg: float | None,
+    anti_ice: bool,
+    packs_on: bool,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """#61: exact Fenix EFB takeoff calculation when a Fenix A320 is active.
+
+    Returns None (built-in engines continue) unless the active aircraft is a
+    detected Fenix A320, the EFB portal is reachable and the engine type is
+    supported by the portal's calculator.
+    """
+    if _norm_key(profile.get("icao")) not in _A320_FAMILY_ICAOS:
+        return None
+    try:
+        from .fenix_adapter import status as _fenix_status
+        if not bool((_fenix_status() or {}).get("fenix_detected")):
+            return None
+    except Exception:
+        return None
+    try:
+        from .fenix_perf import aircraft_type_from_title, fetch_takeoff
+        from .telemetry_provider import read_telemetry
+        tel = read_telemetry(force=False) or {}
+        aircraft = tel.get("aircraft") if isinstance(tel.get("aircraft"), dict) else {}
+        title = aircraft.get("title") or tel.get("aircraft_title") or ""
+        aircraft_type = aircraft_type_from_title(str(title))
+        if not aircraft_type:
+            return None
+        return fetch_takeoff(
+            weight_kg=weight,
+            runway_length_m=runway_length_m,
+            qnh_hpa=qnh,
+            elevation_ft=elevation_ft,
+            oat_c=oat_c,
+            wind_dir=wind_dir,
+            wind_speed=wind_speed,
+            flap=flap or recommended_flap or "",
+            packs_on=packs_on,
+            anti_ice=anti_ice,
+            surface_condition=condition,
+            runway_heading=runway_heading,
+            icao=str(profile.get("icao") or ""),
+            runway=str(payload.get("runway") or ""),
+            aircraft_type=aircraft_type,
+            mac_tow=cg,
+        )
+    except Exception:
+        return None
+
+
 def calculate(payload: dict[str, Any]) -> dict[str, Any]:
     p = _profile(payload.get("aircraft") or payload.get("profile_id"))
     mode = str(payload.get("mode") or "takeoff").lower()
@@ -635,6 +698,47 @@ def calculate(payload: dict[str, Any]) -> dict[str, Any]:
             # Generic pitch-trim approximation from CG % MAC (nose-up units).
             speeds["pitch_trim"] = round(max(0.0, min(9.0, 9.0 - (cg - 15.0) * 0.25)), 1)
         source = "PERF2601-derived sim estimate; cross-check with aircraft EFB"
+
+    # #61: when the Fenix EFB portal is live, its certified takeoff engine is
+    # the exact Tier-1 source for V-speeds / FLEX / trim / retraction speeds.
+    # The required-distance margin keeps our FCOM/PERF2601 distance engine
+    # (the Fenix TOPL unit is undocumented, so it is surfaced as a reference
+    # only and never trusted for the OK/TIGHT/NO-GO margin), keeping the
+    # go/no-go decision honest.
+    fenix = None
+    try:
+        fenix = _fenix_takeoff_result(
+            p, weight, runway_length_m, runway_heading, wind_dir, wind_speed,
+            oat_c, qnh, elevation_ft, condition, flap, recommended_flap,
+            cg, anti_ice, packs_on, payload,
+        )
+    except Exception:
+        fenix = None
+    if fenix and fenix.get("ok"):
+        for speed_key, fenix_key in (("v1_kt", "v1_kt"), ("vr_kt", "vr_kt"), ("v2_kt", "v2_kt"), ("flex_or_assumed_c", "flex_c")):
+            if fenix.get(fenix_key) is not None:
+                speeds[speed_key] = round(float(fenix[fenix_key]), 1)
+        trim_n = None
+        if fenix.get("trim") is not None:
+            trim_n = round(float(fenix["trim"]), 1)
+            # Signed pitch trim: positive = UP, negative = DN (the frontend
+            # renders the direction from the sign).
+            speeds["pitch_trim"] = -trim_n if str(fenix.get("trim_direction") or "").upper() == "DN" else trim_n
+        source = "Fenix EFB (exact aircraft engine)"
+        if fenix.get("flex_c") is not None:
+            warnings.append(f"EFB FLEX {round(float(fenix['flex_c']))} °C")
+        if fenix.get("flap") is not None:
+            warnings.append(f"EFB CONF {fenix['flap']}")
+        if trim_n is not None:
+            warnings.append(f"EFB TRIM {trim_n} {str(fenix.get('trim_direction') or '').upper() or 'UP'}")
+        if fenix.get("green_dot_kt") is not None:
+            warnings.append(f"EFB GREEN DOT {round(float(fenix['green_dot_kt']))} KT")
+        if fenix.get("flap_retraction_kt") is not None:
+            warnings.append(f"EFB FLAP RETRACT {round(float(fenix['flap_retraction_kt']))} KT")
+        if fenix.get("slat_retraction_kt") is not None:
+            warnings.append(f"EFB SLAT RETRACT {round(float(fenix['slat_retraction_kt']))} KT")
+        if fenix.get("corrected_stop_margin") is not None:
+            warnings.append(f"EFB STOP MARGIN {round(float(fenix['corrected_stop_margin']))} M")
 
     if recommended_flap and not flap:
         warnings.append(f"RECOMMENDED FLAP {recommended_flap}")

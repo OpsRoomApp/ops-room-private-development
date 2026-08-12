@@ -430,6 +430,7 @@ def _read_fsuipc_unlocked() -> dict[str, Any]:
             (0x3364, "b"),  # simulator loading/reloading indicator
             (0x3365, "b"),  # menu/dialogue state
             (0x0BC8, "H"),  # parking brake position, 0 off / high value on
+            (0x026D, "b"),  # CAMERA STATE: 2 cockpit, 7 sixdof, 9 showcase/cabin, 3/5/6 external, 4/10/19 drone (#55)
             (0x0894, "H"),  # engine 1 combustion
             (0x092C, "H"),  # engine 2 combustion
             (0x07BC, "u"),  # autopilot master
@@ -487,7 +488,7 @@ def _read_fsuipc_unlocked() -> dict[str, Any]:
             radio_alt_raw, gs_raw, ias_raw, tas_raw, mach_raw, vs_raw,
             hdg_raw, pitch_raw, bank_raw, g_raw, fuel_lb_raw, gross_weight_raw, max_gross_weight_raw, wind_speed_raw,
             wind_dir_raw, ground_raw, rate_raw, pause_raw, slew_raw,
-            sim_elapsed_raw, position_update_raw, loading_raw, menu_raw, parking_raw,
+            sim_elapsed_raw, position_update_raw,            loading_raw, menu_raw, parking_raw, camera_state_raw,
             eng1_raw, eng2_raw, ap_master_raw, ap_nav_raw, ap_hdg_lock_raw,
             ap_hdg_raw, ap_alt_lock_raw, ap_alt_raw, ap_spd_lock_raw, ap_spd_raw,
             ap_mach_lock_raw, ap_mach_raw, ap_vs_lock_raw, ap_vs_raw, ap_at_raw, ap_fd_raw,
@@ -521,6 +522,7 @@ def _read_fsuipc_unlocked() -> dict[str, Any]:
             "0x057C_bank_raw": bank_raw,
             "0x0366_sim_on_ground_raw": ground_raw,
             "0x0BC8_parking_brake_raw": parking_raw,
+            "0x026D_camera_state_raw": camera_state_raw,
             "0x0C1A_sim_rate_raw": rate_raw,
             "0x0264_paused_raw": pause_raw,
             "0x05DC_slew_raw": slew_raw,
@@ -633,9 +635,18 @@ def _read_fsuipc_unlocked() -> dict[str, Any]:
             pass
         airborne_like = bool(max(0.0, radio_altitude_ft) > 1000.0 and (ground_speed_kts > 100.0 or indicated_speed_kts > 100.0))
         altitude_candidates = []
+        # #54: prefer the QNH-independent pressure altitude (0x0570) for the
+        # recorded/positional altitude_ft. The baro indicated altitude (0x3324)
+        # follows the sim's Kollsman/QNH setting, which drifted ~150 ft off true
+        # MSL near the field on the RJA403 flight (recorded MSL went negative
+        # while radio alt stayed ~10 ft), corrupting replay poses and analysis
+        # profiles. Pressure altitude is the sim's own standard-atmosphere MSL
+        # and can never drift with a baro setting. The pilot-facing display is
+        # unaffected: Flight Watch and the logbook read `indicated_altitude_ft`
+        # first, so the altimeter reading stays the QNH-corrected value.
         for source_name, value, confidence in (
-            ("0x3324_indicated_altitude", indicated_alt_ft, "high"),
             ("0x0570_plane_altitude", plane_alt_ft, "high"),
+            ("0x3324_indicated_altitude", indicated_alt_ft, "high"),
             ("0x6020_gps_altitude", gps_altitude_ft, "diagnostic_fallback"),
         ):
             n = _finite(value)
@@ -772,6 +783,9 @@ def _read_fsuipc_unlocked() -> dict[str, Any]:
             # switches) and by the aircraft adapter enrichment (e.g. Fenix apu_master).
             "systems": {"parking_brake": parking_brake, "engines_running": engines_running, "engine1_running": engine_1_running, "engine2_running": engine_2_running, "engine3_running": engine_3_running, "engine4_running": engine_4_running},
             "parking_brake": parking_brake,
+            # #55: FSUIPC 0x026D CAMERA STATE (2 cockpit, 7 sixdof, 9 showcase/
+            # cabin, 3/5/6 external, 4/10/19 drone). Zero when unavailable.
+            "camera_state": int(camera_state_raw or 0),
             "engines_running": engines_running,
             "autopilot": {
                 "master": bool(int(ap_master_raw or 0)),
@@ -1134,7 +1148,22 @@ def _assess_fsuipc_freshness(sample: dict[str, Any], now: float) -> tuple[bool, 
     unchanged = max(0.0, now - (_FSUIPC_LAST_CHANGE or now))
     if paused:
         return True, unchanged, {}, False
-    heartbeat = _sim_heartbeat(now, force=unchanged >= 5.0) if unchanged >= 5.0 else {}
+    # #83: never force a SimConnect heartbeat read into a dead/rebuilding
+    # dispatch session — it can block or serve nothing and stretches the
+    # FSUIPC-freeze recovery past the 8 s STALE window. Hold the FSUIPC
+    # assessment on its own until the session rebuilds.
+    _simconnect_dead = False
+    try:
+        from .simconnect_position import session_dispatch_dead as _session_dead
+        _simconnect_dead = bool(_session_dead())
+    except Exception:
+        _simconnect_dead = False
+    if unchanged >= 5.0 and not _simconnect_dead:
+        heartbeat = _sim_heartbeat(now, force=True)
+    else:
+        # unchanged < 5 s (fresh data) or SimConnect dispatch dead: no forced
+        # heartbeat — identical to the pre-#83 behavior in the fresh case.
+        heartbeat = {}
     expected_motion = _airborne_or_moving(sample) or _airborne_or_moving(_LAST_GOOD_BY_SOURCE.get("fsuipc7") or {}) or _airborne_or_moving(heartbeat)
     contradiction = _contradicts(sample, heartbeat)
     sim_unchanged = float(heartbeat.get("data_unchanged_seconds") or 0.0) if heartbeat else 0.0
@@ -1314,6 +1343,8 @@ _WRITER_PHASE = ""
 _WRITER_RECORDING = False
 _WRITER_LAST_SAMPLE: dict[str, Any] | None = None
 _WRITER_TICK_COUNT = 0
+_WRITER_LAST_STALL_LOG = 0.0  # #84: once-per-30s throttle for stall logging
+_WRITER_TICK_ENTERED = 0.0  # #84: monotonic stamp for the tick-overrun watchdog
 # Consumers fall through to a direct sim read only when the writer has not
 # published for this long (writer thread down / not yet started).
 _WRITER_CACHE_MAX_AGE = 3.0
@@ -1397,7 +1428,8 @@ def _writer_tick() -> None:
     the full stream through the heartbeat cache (display) and the cheap minimal
     stream to the ring (recorder), both at SimConnect-safe rates.
     """
-    global _WRITER_LAST_SAMPLE, _WRITER_TICK_COUNT, _CACHE, _CACHE_TIME
+    global _WRITER_LAST_SAMPLE, _WRITER_TICK_COUNT, _CACHE, _CACHE_TIME, _WRITER_TICK_ENTERED
+    _WRITER_TICK_ENTERED = time.monotonic()
     if _SOURCE_LOCK == "simconnect":
         heartbeat = _sim_heartbeat(time.monotonic(), force=False)
         full_valid, _reason = _complete_snapshot(heartbeat, "simconnect")
@@ -1417,6 +1449,23 @@ def _writer_tick() -> None:
         # FSUIPC locked, or no lock yet (first probe): a single batched
         # FSUIPC read when healthy; SimConnect only if FSUIPC is unavailable.
         sample = read_telemetry(force=True)
+    # #84: writer watchdog — a read/enrich tick that overran (FSUIPC stall,
+    # provider hang) must never hide the gap. Log it once per 30 s and mark
+    # the published sample degraded so the display keeps last-good values and
+    # the recorder/analysis can flatten the hole (telemetry_gap handling).
+    tick_elapsed = time.monotonic() - _WRITER_TICK_ENTERED
+    if tick_elapsed >= 1.5:
+        if time.monotonic() - _WRITER_LAST_STALL_LOG >= 30.0:
+            _WRITER_LAST_STALL_LOG = time.monotonic()
+            print(
+                f"TELEMETRY WRITER: tick took {tick_elapsed:.2f}s (provider stall) — "
+                f"publishing degraded sample; source={_SOURCE_LOCK or 'unlocked'}"
+            )
+        if isinstance(sample, dict):
+            sample = dict(sample)
+            sample["telemetry_degraded"] = True
+            sample["telemetry_gap"] = True
+            sample["degraded_reason"] = "writer tick stall"
     if not isinstance(sample, dict):
         sample = {"ok": False, "reason": "telemetry writer received no sample", "source": _SOURCE_LOCK or "unavailable"}
     _WRITER_LAST_SAMPLE = dict(sample)
@@ -1806,11 +1855,20 @@ def read_telemetry(force: bool = False, stream: str = "full") -> dict[str, Any]:
         # its own cadence (>= 1 Hz idle, up to 30 Hz in flight). A consumer's
         # cache miss here only means the writer has not ticked within the tight
         # 0.18 s window - serve its last published snapshot instead of opening a
-        # new simulator read. Consumers only fall through to a direct read when
-        # the writer is down or has not started yet (_CACHE older than
-        # _WRITER_CACHE_MAX_AGE), preserving pre-Stage-2 behaviour as a fallback.
-        if not force and _CACHE is not None and now - _CACHE_TIME < _WRITER_CACHE_MAX_AGE:
-            return dict(_CACHE)
+        # new simulator read. #71: when the writer's cache has aged past
+        # _WRITER_CACHE_MAX_AGE (writer stalling), consumers still NEVER open a
+        # synchronous direct read from a request path - that 7 s stall saturated
+        # the threadpool and made the whole app feel frozen. They get the last
+        # published snapshot with explicit stale markers; the writer is the only
+        # component allowed to touch the simulator (via force=True).
+        if not force and _CACHE is not None:
+            result = dict(_CACHE)
+            if now - _CACHE_TIME >= _WRITER_CACHE_MAX_AGE:
+                result["ok"] = bool(result.get("ok"))
+                result["stale"] = True
+                result["telemetry_fresh"] = False
+                result["telemetry_stale_reason"] = "telemetry writer stalled; serving last published snapshot"
+            return result
         settings = _telemetry_settings()
         if not _sim_process_running():
             result = _handle_sim_process_lost(settings)

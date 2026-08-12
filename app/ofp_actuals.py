@@ -288,6 +288,7 @@ def _weights_section(
     display_unit: str | None,
     overrides: dict[str, Any] | None = None,
     loading_progress: dict[str, Any] | None = None,
+    fenix_loadsheet: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     flight = recorder.get("flight") if isinstance(recorder.get("flight"), dict) else {}
     snapshots = recorder.get("operational_snapshots") if isinstance(recorder.get("operational_snapshots"), dict) else {}
@@ -409,19 +410,92 @@ def _weights_section(
         source=cargo_source or "no trusted measured source",
     )
     rows["commercial_freight"] = _value_cell(flight.get("commercial_freight_weight"), None, weight_unit, display_unit, availability_note="freight actual requires manual/GSX source")
-    rows["payload"] = _value_cell(flight.get("payload"), None, weight_unit, display_unit, availability_note="planned payload only")
+    # #58: PAYLOAD actual = measured pax block weight + measured cargo. The
+    # per-pax weight is derived from the SimBrief plan's own payload/cargo/pax
+    # split so the result stays consistent with the plan (never invented).
+    # Fills only when BOTH a measured pax count and a measured cargo value
+    # exist (Fenix loading_progress / GSX boarding); otherwise stays "—".
+    live_pax = rows.get("passengers", {}).get("actual")
+    live_pax_n = _num(live_pax)
+    plan_key = weight_unit_key(weight_unit) or "KGS"
+    planned_payload = _num(flight.get("payload"))
+    planned_cargo_plan = _num(flight.get("cargo_hold_total"))
+    planned_pax_plan = _num(flight.get("passengers"))
+    per_pax_plan = None
+    if planned_payload is not None and planned_cargo_plan is not None and planned_pax_plan and planned_pax_plan > 0:
+        per_pax_plan = (planned_payload - planned_cargo_plan) / planned_pax_plan
+    if per_pax_plan is None:
+        per_pax_plan = 84.0 if plan_key == "KGS" else round(84.0 * 2.2046226218, 3)
+    payload_actual = None
+    payload_source = ""
+    payload_note = "planned payload only"
+    if live_pax_n is not None and cargo_actual is not None:
+        pax_block_plan = live_pax_n * per_pax_plan
+        payload_actual = round(pax_block_plan + cargo_actual, 4)
+        payload_source = "gsx/fenix loading"
+        payload_note = "measured pax block + cargo"
+    rows["payload"] = _value_cell(
+        planned_payload,
+        payload_actual,
+        weight_unit,
+        display_unit,
+        availability_note=payload_note if payload_actual is None else "measured from live loading",
+        source=payload_source or "no trusted measured source",
+    )
+    # #60: the Fenix EFB FINAL loadsheet is the exact, trusted source for
+    # TOW/ZFW/LDW (and their maxes) on Fenix -- FSUIPC 0x30C0 is never
+    # populated by the Fenix, so the snapshot path stays blank. Loadsheet
+    # values are in kg; they are converted to the plan unit like every other
+    # actual. Manual overrides still win; the snapshot path remains the
+    # fallback for non-Fenix aircraft.
+    loadsheet = fenix_loadsheet if isinstance(fenix_loadsheet, dict) else {}
+    sheet_ok = bool(loadsheet.get("ok"))
+    plan_key = weight_unit_key(weight_unit) or "KGS"
+
+    def sheet_plan_value(kg_key: str) -> Any:
+        if not sheet_ok:
+            return None
+        kg = _num(loadsheet.get(kg_key))
+        if kg is None:
+            return None
+        converted = convert_weight_value(kg, "KGS", plan_key)
+        return converted.get("converted_value") if converted else None
+
     if "zfw" in manual_weights:
         rows["zfw"] = manual_cell(flight.get("planned_zfw"), manual_weights["zfw"])
     else:
-        rows["zfw"] = snapshot_cell(flight.get("planned_zfw"), actual_for("calculated_zfw_lb", out), out, source_name="out-snapshot calculation")
+        sheet_zfw = sheet_plan_value("zfw_kg")
+        if sheet_zfw is not None:
+            rows["zfw"] = _value_cell(
+                flight.get("planned_zfw"), sheet_zfw, weight_unit, display_unit,
+                max_value=sheet_plan_value("max_zfw_kg"), source="fenix final loadsheet",
+            )
+        else:
+            rows["zfw"] = snapshot_cell(flight.get("planned_zfw"), actual_for("calculated_zfw_lb", out), out, source_name="out-snapshot calculation")
     if "tow" in manual_weights:
         rows["tow"] = manual_cell(flight.get("planned_tow"), manual_weights["tow"], max_value=flight.get("planned_max_tow"))
     else:
-        rows["tow"] = snapshot_cell(flight.get("planned_tow"), actual_for("gross_weight_lb", off), off, max_value=flight.get("planned_max_tow"), source_name="off-snapshot")
+        sheet_tow = sheet_plan_value("tow_kg")
+        if sheet_tow is not None:
+            rows["tow"] = _value_cell(
+                flight.get("planned_tow"), sheet_tow, weight_unit, display_unit,
+                max_value=sheet_plan_value("max_tow_kg") or flight.get("planned_max_tow"),
+                source="fenix final loadsheet",
+            )
+        else:
+            rows["tow"] = snapshot_cell(flight.get("planned_tow"), actual_for("gross_weight_lb", off), off, max_value=flight.get("planned_max_tow"), source_name="off-snapshot")
     if "ldw" in manual_weights:
         rows["ldw"] = manual_cell(flight.get("planned_ldw"), manual_weights["ldw"], max_value=flight.get("planned_max_ldw"))
     else:
-        rows["ldw"] = snapshot_cell(flight.get("planned_ldw"), actual_for("gross_weight_lb", on), on, max_value=flight.get("planned_max_ldw"), source_name="on-snapshot")
+        sheet_ldw = sheet_plan_value("law_kg")
+        if sheet_ldw is not None:
+            rows["ldw"] = _value_cell(
+                flight.get("planned_ldw"), sheet_ldw, weight_unit, display_unit,
+                max_value=sheet_plan_value("max_law_kg") or flight.get("planned_max_ldw"),
+                source="fenix final loadsheet",
+            )
+        else:
+            rows["ldw"] = snapshot_cell(flight.get("planned_ldw"), actual_for("gross_weight_lb", on), on, max_value=flight.get("planned_max_ldw"), source_name="on-snapshot")
     return rows
 
 
@@ -453,6 +527,15 @@ def _fuel_section(plan: dict[str, Any], recorder: dict[str, Any], display_unit: 
         "on": on.get("fuel_lb"),
         "in": inn.get("fuel_lb"),
     }
+    # #74: a mid-flight restart can leave the block-out operational snapshot
+    # empty (the out-snapshot capture never ran for the restarted session).
+    # Backfill the ramp/out fuel from the recorder's fuel accounting, which
+    # always carries the departure baseline regardless of snapshot timing.
+    if actual_lb.get("out") is None:
+        fuel_acct = recorder.get("fuel") if isinstance(recorder.get("fuel"), dict) else {}
+        baseline = _num(fuel_acct.get("departure_baseline_lb")) or _num(fuel_acct.get("start_lb"))
+        if baseline is not None:
+            actual_lb["out"] = baseline
 
     def to_plan_unit(lb_value: Any) -> float | None:
         lb = _num(lb_value)
@@ -629,6 +712,7 @@ def build_live_ofp_actuals(
     telemetry_fresh: bool | None = None,
     overrides: dict[str, Any] | None = None,
     loading_progress: dict[str, Any] | None = None,
+    fenix_loadsheet: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the full live OFP comparison payload (pure).
 
@@ -686,7 +770,7 @@ def build_live_ofp_actuals(
             # must never leak into a fresh plan's sections.
             "manual_overrides": {},
             "times": _times_section(plan, {"flight": flight}, {}),
-            "weights": _weights_section(plan, {"flight": flight, "operational_snapshots": {}}, display_unit, {}, loading_progress=loading_progress),
+            "weights": _weights_section(plan, {"flight": flight, "operational_snapshots": {}}, display_unit, {}, loading_progress=loading_progress, fenix_loadsheet=fenix_loadsheet),
             "fuel": _fuel_section(plan, {"flight": flight, "operational_snapshots": {}}, display_unit, {}),
             "completeness": {},
         }
@@ -731,7 +815,7 @@ def build_live_ofp_actuals(
         "units": {"weight": weight_unit_key(flight.get("weight_units")) or "KGS", "fuel": weight_unit_key(flight.get("fuel_units")) or "KGS", "display": display_unit},
         "manual_overrides": dict(overrides),
         "times": _times_section(plan, source, overrides),
-        "weights": _weights_section(plan, source, display_unit, overrides, loading_progress=loading_progress),
+        "weights": _weights_section(plan, source, display_unit, overrides, loading_progress=loading_progress, fenix_loadsheet=fenix_loadsheet),
         "fuel": _fuel_section(plan, source, display_unit, overrides),
         "completeness": {},
     }

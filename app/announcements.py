@@ -44,6 +44,20 @@ _THREAD: threading.Thread | None = None
 _STOP = threading.Event()
 _CAMERA_DISTANCE: float = 0.0
 _CAMERA_LAST_POLL: float = 0.0
+
+# #55: FSUIPC 0x026D CAMERA STATE -> volume category (Universal Announcer
+# parity). 2 Cockpit, 7 SixDoF, 9 Showcase/Cabin, 3 External/Chase,
+# 5 Fixed on Plane, 6 Environment, 4/10/19 Drone, 8 Gameplay.
+# Non-flight states (0 unknown/menu, 17 replay) hold the last-known category
+# instead of snapping the volume while tabbing out or replaying.
+_CAMERA_STATE_CATEGORY = {
+    2: "cockpit", 7: "cockpit",
+    9: "cabin",
+    3: "external", 4: "external", 5: "external", 6: "external",
+    8: "external", 10: "external", 19: "external",
+}
+_CAMERA_STATE_HOLD = {0, 17}
+_CAMERA_CATEGORY: str | None = None
 _STATE: dict[str, Any] = {
     "running": False,
     "enabled": False,
@@ -684,42 +698,50 @@ def _poll_camera_distance() -> float:
         _CAMERA_DISTANCE = distance
     return _CAMERA_DISTANCE
 
+_LAST_CAMERA_CATEGORY: str = "cockpit"  # #72: re-apply trigger for camera volume
+
+
+def _camera_category() -> str:
+    """Volume category from the shared snapshot's ``camera_state`` (#55).
+
+    The Stage-2 writer already reads FSUIPC 0x026D at its 10-30 Hz cadence, so
+    this is a pure cache read -- zero extra SimConnect/FSUIPC traffic. Non-flight
+    camera states (menus, world map, replay) hold the last-known category so the
+    PA volume does not snap while tabbing out.
+    """
+    global _CAMERA_CATEGORY
+    try:
+        state = int((read_telemetry(force=False) or {}).get("camera_state") or 0)
+    except Exception:
+        state = 0
+    category = _CAMERA_STATE_CATEGORY.get(state)
+    if category:
+        _CAMERA_CATEGORY = category
+        return category
+    # Unknown/menu/replay state: hold the last-known category, defaulting to
+    # the cockpit (the pilot view at startup) before any state has been seen.
+    return _CAMERA_CATEGORY or "cockpit"
+
+
 def _camera_volume_multiplier() -> float:
-    """Continuous camera-distance volume curve modelled on Universal Announcer.
+    """Camera-view volume based on the ACTIVE CAMERA STATE (UA parity, #55).
 
-    Piecewise **smoothstep** (Hermite) blend across three zones:
-
-    * **Cockpit**  (≤ 5 m)        — 100 % by default; PA seats on the panel.
-    * **Cabin**    (5 → 50 m)    — smoothstep ease-in-out from Cockpit to Cabin.
-    * **External** (50 → 200 m)  — smoothstep ease-in-out from Cabin to External.
-    * Beyond 200 m the multiplier clamps at the external floor (40 % by default).
-
-    Smoothstep removes the audible step the previous linear blend produced at the
-    zone boundaries, so the PA feels like a single continuous distance curve instead
-    of three discrete volume tiers — the same shape Universal Announcer's
-    Camera State Volume Multipliers produce. The three sliders
-    (`camera_volume_cockpit`, `camera_volume_cabin`, `camera_volume_external`) keep
-    their existing 0–100 % semantics so existing user configurations carry over
-    unchanged.
+    The category decides which of the three existing sliders applies -- Cockpit
+    (states 2/7), Cabin (9) or External (3/4/5/6/8/10/19). The old world-distance
+    curve is gone: it computed ``sqrt(cx^2+cy^2+cz^2)`` of the camera's WORLD
+    position (~1.4e6 m from the planet origin at a European airport), so the
+    multiplier was pinned to the external floor forever. The three sliders
+    (`camera_volume_cockpit`, `camera_volume_cabin`, `camera_volume_external`)
+    keep their existing 0-100 % semantics so user configurations carry over.
     """
     settings = load_settings().get("integrations", {})
     if not bool(settings.get("camera_volume_enabled", False)):
         return 1.0
-    distance = _poll_camera_distance()
     cockpit_pct = max(0.0, min(int(settings.get("camera_volume_cockpit", 100)) / 100.0, 1.0))
     cabin_pct = max(0.0, min(int(settings.get("camera_volume_cabin", 70)) / 100.0, 1.0))
     external_pct = max(0.0, min(int(settings.get("camera_volume_external", 40)) / 100.0, 1.0))
-    if distance <= 5.0:
-        return cockpit_pct
-    if distance <= 50.0:
-        t = (distance - 5.0) / 45.0
-        smooth = t * t * (3.0 - 2.0 * t)
-        return max(0.0, min(cockpit_pct + smooth * (cabin_pct - cockpit_pct), 1.0))
-    if distance <= 200.0:
-        t = (distance - 50.0) / 150.0
-        smooth = t * t * (3.0 - 2.0 * t)
-        return max(0.0, min(cabin_pct + smooth * (external_pct - cabin_pct), 1.0))
-    return external_pct
+    pct = {"cockpit": cockpit_pct, "cabin": cabin_pct, "external": external_pct}.get(_camera_category(), external_pct)
+    return max(0.0, min(pct, 1.0))
 
 def _mixer_volume() -> tuple[float, bool]:
     volume = int(load_settings().get("integrations", {}).get("announcements_volume", 80)) / 100.0
@@ -1701,6 +1723,23 @@ def _loop() -> None:
                 _trigger_from_telemetry(read_telemetry(force=False))
             if audio_ready:
                 _dequeue_audio_event()
+            # #72: re-apply the camera-aware mixer volume whenever the camera
+            # category changes, even mid-playback (Universal Announcer parity).
+            # Previously the volume was only applied at play start / settings
+            # save, so switching cockpit -> external did nothing while an
+            # announcement or boarding music was playing.
+            try:
+                category = _camera_category()
+                if category != _LAST_CAMERA_CATEGORY:
+                    _LAST_CAMERA_CATEGORY = category
+                    applied = apply_runtime_settings()
+                    # #80: one line per actual category transition so the log
+                    # shows the camera -> volume mapping working (or not).
+                    raw_setting = int(load_settings().get("integrations", {}).get("announcements_volume", 80) or 80)
+                    applied_vol = applied.get("volume") if isinstance(applied, dict) else _STATE.get("volume")
+                    print(f"CAMERA VOLUME: category={category} applied={applied_vol}% raw={raw_setting}%")
+            except Exception:
+                pass
             try:
                 import pygame  # type: ignore
                 if pygame.mixer.get_init() and not pygame.mixer.music.get_busy() and not _pa_busy() and not _STATE.get("paused"):
@@ -1781,6 +1820,14 @@ def status() -> dict[str, Any]:
         "audio_circuit_breaker_seconds": int(max(0, _AUDIO_CIRCUIT_OPEN_UNTIL - now)),
         "camera_volume_enabled": bool(load_settings().get("integrations", {}).get("camera_volume_enabled", False)),
         "camera_distance_m": round(_CAMERA_DISTANCE, 1),
+        # #80: expose the ACTUAL applied mixer volume (camera-aware) and the
+        # current camera category so the camera-volume path is verifiable via
+        # the API — previously only the raw setting was visible, so a camera
+        # switch that failed to re-apply was indistinguishable from a working
+        # one. Both are cheap cache reads; never a blocking probe.
+        "camera_category": _camera_category(),
+        "applied_volume": int(round(_mixer_volume()[0] * 100.0)),
+        "raw_volume": int(state.get("volume") or 80),
     }
     return {
         "ok": True,

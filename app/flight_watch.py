@@ -5,6 +5,7 @@ from typing import Any
 import time
 
 from .data_loader import haversine_nm, load_airports, nearest_airport
+from .phase_machine import holding_phase, transition_allowed
 from .settings_store import load_settings
 from .simbrief_client import cached_plan
 from .telemetry_provider import read_telemetry
@@ -18,6 +19,7 @@ _LAST_LIVE_TIME = 0.0
 # or parking brakes set. Fenix exposes no body-vx and mirrors heading into
 # track, so the dedicated GSX/backward-motion signals stay blind.
 _FW_PHASE_STATE: dict[str, Any] = {"phase": None, "pushback": False}
+_FW_LOADING_RESET_WINDOW = 8.0  # #85: sim-reload stale window before state reset
 
 
 def _number(value: Any) -> float | None:
@@ -128,13 +130,30 @@ def _phase(telemetry: dict[str, Any], plan: dict[str, Any] | None) -> str:
             _FW_PHASE_STATE["pushback"] = True
             _FW_PHASE_STATE["phase"] = "PUSHBACK"
             return "PUSHBACK"
+        if gs < 2.0:
+            _FW_PHASE_STATE["phase"] = "PARKED"
+            # #85: once parked at the gate after arrival, drop the airborne
+            # latch so the NEXT departure classifies normally again. A 90 s
+            # stop with the brake set is the "arrived" signature.
+            if _FW_PHASE_STATE.get("airborne_seen"):
+                _FW_PHASE_STATE["gate_parked_at"] = _FW_PHASE_STATE.get("gate_parked_at") or time.time()
+                if telemetry.get("parking_brake") is True and time.time() - _FW_PHASE_STATE["gate_parked_at"] >= 90.0:
+                    _FW_PHASE_STATE["airborne_seen"] = False
+                    _FW_PHASE_STATE.pop("gate_parked_at", None)
+            return "PARKED"
+        _FW_PHASE_STATE.pop("gate_parked_at", None)
+        # #85: after the aircraft has been airborne, on-ground movement is the
+        # landing roll / taxi-in — NEVER TAKEOFF ROLL (FFT1011 showed the
+        # display calling the landing rollout TAKEOFF ROLL because this machine
+        # had no LANDING concept).
+        if _FW_PHASE_STATE.get("airborne_seen"):
+            phase = "LANDING ROLL" if gs >= 40 else "TAXI IN"
+            _FW_PHASE_STATE["phase"] = phase
+            return phase
         if gs > 5.0:
             phase = "TAXI" if gs < 35 else "TAKEOFF ROLL"
             _FW_PHASE_STATE["phase"] = phase
             return phase
-        if gs < 2:
-            _FW_PHASE_STATE["phase"] = "PARKED"
-            return "PARKED"
         if gs < 35:
             _FW_PHASE_STATE["phase"] = "TAXI"
             return "TAXI"
@@ -143,19 +162,30 @@ def _phase(telemetry: dict[str, Any], plan: dict[str, Any] | None) -> str:
     # Airborne: the departure latch must not leak into arrival taxi-in.
     _FW_PHASE_STATE["pushback"] = False
     _FW_PHASE_STATE["high_gs_polls"] = 0
+    _FW_PHASE_STATE["airborne_seen"] = True
+    # #66: once ENROUTE/CRUISE is settled, never bounce back to CLIMB. The
+    # climb detector keeps firing for minutes after a slow top-of-climb (vs
+    # stays >250 while the aircraft slowly approaches cruise) which produced a
+    # stream of rejected ENROUTE -> CLIMB transitions on EWG5EZ. Only a genuine
+    # climb excursion (strong sustained climb well below cruise) may re-propose.
+    settled_upper = prev_phase in ("ENROUTE", "CRUISE")
     if agl is not None and agl < 1500 and vs > 150:
-        return "INITIAL CLIMB"
-    if agl is not None and agl < 2500 and vs < -150:
-        return "APPROACH"
-    if cruise and altitude < cruise - 1500 and vs > 250:
-        return "CLIMB"
-    if vs < -300:
-        return "DESCENT" if agl is None or agl > 3500 else "APPROACH"
-    if altitude > 10000 and abs(vs) < 350:
-        return "CRUISE"
-    if vs > 250:
-        return "CLIMB"
-    return "ENROUTE"
+        proposal = "INITIAL CLIMB"
+    elif agl is not None and agl < 2500 and vs < -150:
+        proposal = "APPROACH"
+    elif cruise and altitude < cruise - 1500 and vs > 250:
+        proposal = (prev_phase or "ENROUTE") if (settled_upper and not (vs > 900 and altitude < cruise - 3000)) else "CLIMB"
+    elif vs < -300:
+        proposal = "DESCENT" if agl is None or agl > 3500 else "APPROACH"
+    elif altitude > 10000 and abs(vs) < 350:
+        proposal = "CRUISE"
+    elif vs > 250:
+        proposal = (prev_phase or "ENROUTE") if (settled_upper and not (vs > 900 and altitude < cruise - 3000)) else "CLIMB"
+    else:
+        proposal = "ENROUTE"
+    # #85: acceptance layer — only legal transitions update the displayed
+    # phase (kills the ENROUTE-on-short-final and post-descent CLIMB flickers).
+    return holding_phase(prev_phase, proposal, _FW_PHASE_STATE)
 
 
 def build_flight_watch(force: bool = False) -> dict[str, Any]:
@@ -165,6 +195,13 @@ def build_flight_watch(force: bool = False) -> dict[str, Any]:
     user_ref = str(settings.get("identity", {}).get("simbrief_user_id") or "")
     plan = cached_plan(user_ref) if user_ref else None
     if not telemetry.get("ok"):
+        # #85: a sim reload (loading screen / menu state) is a fresh-flight
+        # boundary — drop the airborne latch so the NEXT departure is not
+        # misread as a landing roll. Brief stale blips (stale-hold below)
+        # intentionally do NOT reset.
+        if telemetry.get("simulator_loading") or int(telemetry.get("simulator_menu_state") or 0):
+            _FW_PHASE_STATE.clear()
+            _FW_PHASE_STATE.update({"phase": None, "pushback": False})
         age = time.monotonic() - _LAST_LIVE_TIME if _LAST_LIVE_TIME else 999.0
         if _LAST_LIVE is not None and age <= 8.0:
             held = dict(_LAST_LIVE)

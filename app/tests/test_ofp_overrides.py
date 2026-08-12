@@ -241,6 +241,29 @@ def test_loading_progress_pax_and_cargo() -> None:
     check("PAX availability", pax.get("availability") == "available" and pax.get("source") == "gsx/fenix loading", str(pax))
     # 1325 kg cargo -> plan unit LBS (1 kg = 2.20462 lb) ~ 2921 lb
     check("Fenix cargo kg converted to plan lbs", bags.get("actual") is not None and 2900 < bags["actual"] < 2945, str(bags.get("actual")))
+    # #58: PAYLOAD actual = pax block + cargo. Plan split: payload 14500 - cargo
+    # 4500 = 10000 lb over 120 pax -> 83.33 lb/pax. 91 pax * 83.33 + 2921 cargo
+    # ~ 10504 lb.
+    pl = payload["weights"]["payload"]
+    check("PAYLOAD auto-fill from pax block + cargo", pl.get("actual") is not None and 10400 < pl["actual"] < 10600, str(pl.get("actual")))
+    check("PAYLOAD availability", pl.get("availability") == "available" and pl.get("source") == "gsx/fenix loading", str(pl))
+
+
+def test_loading_progress_payload_requires_both_sources() -> None:
+    # Only pax measured, no cargo -> payload stays unavailable (never fabricate).
+    loading = {"passengers": 87, "fenix": {"ok": True, "pax_loaded": 91}}
+    payload = build_live_ofp_actuals(_plan(), _recorder(), loading_progress=loading)
+    pl = payload["weights"]["payload"]
+    check("PAYLOAD stays unavailable when cargo missing", pl.get("actual") is None and pl.get("availability") == "unavailable", str(pl))
+    # Only cargo measured, no pax -> payload stays unavailable.
+    loading2 = {"fenix": {"ok": True, "cargo_loaded_kg": 1000.0}}
+    payload2 = build_live_ofp_actuals(_plan(), _recorder(), loading_progress=loading2)
+    pl2 = payload2["weights"]["payload"]
+    check("PAYLOAD stays unavailable when pax missing", pl2.get("actual") is None and pl2.get("availability") == "unavailable", str(pl2))
+    # No loading at all -> stays unavailable.
+    payload3 = build_live_ofp_actuals(_plan(), _recorder())
+    pl3 = payload3["weights"]["payload"]
+    check("PAYLOAD unavailable without loading source", pl3.get("actual") is None and pl3.get("availability") == "unavailable", str(pl3))
 
 
 def test_loading_progress_gsx_fallback() -> None:
@@ -401,7 +424,7 @@ def test_exports_attach_manual_overrides() -> None:
     store.set_overrides("FLT-EXPORT-1", {"times:out": "1017", "weights:zfw": 108.7})
 
     from app.briefing_data import _app_version as _bd_version
-    _expected_version = str(_bd_version() or "0.25.75")
+    _expected_version = str(_bd_version() or "0.25.77")
     payload = json.loads(logbook.export_json())
     check("export_json stamps real app version", str(payload.get("version")) == _expected_version, str(payload.get("version")))
     entry = next((e for e in payload["entries"] if e.get("id") == "FLT-EXPORT-1"), None)
@@ -434,6 +457,45 @@ def test_prune_orphaned() -> None:
     store._store.clear()
 
 
+def test_fenix_loadsheet_fills_tow_zfw_ldw() -> None:
+    """#60: the Fenix EFB FINAL loadsheet fills TOW/ZFW/LDW actuals + maxes."""
+    sheet = {
+        "ok": True,
+        "tow_kg": 52800.0,
+        "zfw_kg": 49350.0,
+        "law_kg": 51650.0,
+        "max_tow_kg": 73500.0,
+        "max_zfw_kg": 61000.0,
+        "max_law_kg": 64500.0,
+        "mac_tow": 30.6,
+        "mac_zfw": 32.5,
+    }
+    payload = build_live_ofp_actuals(_plan(), _recorder(), loading_progress=None, fenix_loadsheet=sheet)
+    weights = payload.get("weights") or {}
+    tow = weights.get("tow") or {}
+    zfw = weights.get("zfw") or {}
+    ldw = weights.get("ldw") or {}
+    # 52800 kg = 116,404 lb; 49350 kg = 108,798 lb; 51650 kg = 113,869 lb
+    check("fenix TOW actual filled", tow.get("actual") is not None and abs(tow["actual"] - 116404.0) < 2.0, str(tow))
+    check("fenix ZFW actual filled", zfw.get("actual") is not None and abs(zfw["actual"] - 108798.0) < 2.0, str(zfw))
+    check("fenix LDW actual filled", ldw.get("actual") is not None and abs(ldw["actual"] - 113869.0) < 2.0, str(ldw))
+    check("fenix TOW source", tow.get("source") == "fenix final loadsheet", str(tow))
+    check("fenix TOW max from loadsheet", tow.get("max") is not None and abs(tow["max"] - 162040.0) < 2.0, str(tow))
+    check("fenix ZFW max from loadsheet", zfw.get("max") is not None and abs(zfw["max"] - 134482.0) < 2.0, str(zfw))
+    check("fenix LDW max from loadsheet", ldw.get("max") is not None and abs(ldw["max"] - 142198.0) < 2.0, str(ldw))
+
+
+def test_fenix_loadsheet_absent_falls_back_to_snapshots() -> None:
+    """#60: without the loadsheet the snapshot path still fills TOW/ZFW/LDW."""
+    payload = build_live_ofp_actuals(_plan(), _recorder())
+    weights = payload.get("weights") or {}
+    tow = weights.get("tow") or {}
+    zfw = weights.get("zfw") or {}
+    check("snapshot TOW fallback kept", abs((tow.get("actual") or 0) - 116400.0) < 2.0, str(tow))
+    check("snapshot ZFW fallback kept", abs((zfw.get("actual") or 0) - 108700.0) < 2.0, str(zfw))
+    check("snapshot TOW source", tow.get("source") == "off-snapshot", str(tow))
+
+
 def main() -> None:
     test_store_validation()
     test_store_persistence()
@@ -452,6 +514,8 @@ def main() -> None:
     test_completed_entry_builder_merges_overrides()
     test_exports_attach_manual_overrides()
     test_prune_orphaned()
+    test_fenix_loadsheet_fills_tow_zfw_ldw()
+    test_fenix_loadsheet_absent_falls_back_to_snapshots()
 
     print("=" * 60)
     total = PASS + FAIL

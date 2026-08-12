@@ -223,5 +223,18 @@ $('hostFetchOfp').addEventListener('click',()=>fetchOfp([$('hostFetchOfp'),$('ho
 $('hostInstallVpilot').addEventListener('click',installVpilotBridge);
 $('hostRemoveVpilot').addEventListener('click',removeVpilotBridge); if($('hostSurfaceRescan'))$('hostSurfaceRescan').addEventListener('click',()=>refreshSurfaceStatus(true));
 $('copyUrl').addEventListener('click',async()=>{if(!preferredUrl)return;try{await navigator.clipboard.writeText(preferredUrl);$('copyUrl').textContent='COPIED'}catch{window.prompt('Copy OPS ROOM address',preferredUrl)}setTimeout(()=>$('copyUrl').textContent='COPY LAN ADDRESS',1400)});if($('hostAirlineThemeIntensity'))$('hostAirlineThemeIntensity').addEventListener('input',()=>{if($('hostAirlineThemeIntensityLabel'))$('hostAirlineThemeIntensityLabel').textContent=`${$('hostAirlineThemeIntensity').value}%`});
-async function boot(){applyAirlineTheme();tick();setInterval(tick,1000);showHostPage(location.hash==='#settings'?'settings':'status');try{await loadSettings()}catch(error){$('hostSaveState').textContent=`LOAD FAILED: ${friendlyError(error.message)}`}await Promise.all([refresh(false),refreshVpilotInstall(),refreshSecurity(),refreshSurfaceStatus(false)]);setInterval(()=>refresh(false),10000);setInterval(refreshVpilotInstall,15000);setInterval(refreshSecurity,15000)}
+const HOST_COLLAPSED_KEY='opsroom-host-collapsed-v1';
+function setupCollapsiblePanels(){
+  let saved={};try{saved=JSON.parse(localStorage.getItem(HOST_COLLAPSED_KEY)||'{}')}catch{}
+  document.querySelectorAll('#hostSettingsForm .host-panel.form-panel').forEach(panel=>{
+    const header=panel.querySelector('header');if(!header)return;
+    const key=String(header.firstChild?.textContent||'').trim()||panel.id;
+    if(saved[key])panel.classList.add('collapsed');
+    header.addEventListener('click',()=>{
+      const collapsed=panel.classList.toggle('collapsed');
+      try{const next=JSON.parse(localStorage.getItem(HOST_COLLAPSED_KEY)||'{}');if(collapsed)next[key]=true;else delete next[key];localStorage.setItem(HOST_COLLAPSED_KEY,JSON.stringify(next))}catch{}
+    });
+  });
+}
+async function boot(){applyAirlineTheme();tick();setInterval(tick,1000);showHostPage(location.hash==='#settings'?'settings':'status');setupCollapsiblePanels();try{await loadSettings()}catch(error){$('hostSaveState').textContent=`LOAD FAILED: ${friendlyError(error.message)}`}await Promise.all([refresh(false),refreshVpilotInstall(),refreshSecurity(),refreshSurfaceStatus(false)]);setInterval(()=>refresh(false),10000);setInterval(refreshVpilotInstall,15000);setInterval(refreshSecurity,15000)}
 boot();

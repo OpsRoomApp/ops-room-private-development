@@ -23,7 +23,7 @@ FALLBACK_MANIFEST_URL = "https://raw.githubusercontent.com/OpsRoomApp/ops-room-r
 DEFAULT_MANIFEST_URL = PRIMARY_MANIFEST_URL
 STATE_FILE = "update_state.json"
 DOWNLOAD_TIMEOUT = 25
-DEFAULT_VERSION = "0.25.75"
+DEFAULT_VERSION = "0.25.77"
 
 
 @dataclass(frozen=True)
@@ -149,6 +149,13 @@ def clear_state(reason: str = "") -> None:
                 pass
 
 
+def _hex64(value: Any) -> str:
+    text = str(value or "").strip()
+    if len(text) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in text):
+        raise ValueError("SHA256 must be 64 hexadecimal characters.")
+    return text
+
+
 def _validate_manifest(data: dict[str, Any]) -> dict[str, Any]:
     latest = str(data.get("latest_version") or data.get("version") or "").strip()
     download_url = str(data.get("download_url") or data.get("url") or "").strip()
@@ -156,12 +163,25 @@ def _validate_manifest(data: dict[str, Any]) -> dict[str, Any]:
     checksum = str(data.get("sha256") or "").strip()
     if not latest:
         raise ValueError("Update manifest has no version.")
-    if not download_url.lower().startswith("https://") or not download_url.lower().endswith(".zip"):
-        raise ValueError("Update manifest download URL must be an HTTPS ZIP.")
-    if fallback_url and (not fallback_url.lower().startswith("https://") or not fallback_url.lower().endswith(".zip")):
-        raise ValueError("Update manifest fallback download URL must be an HTTPS ZIP.")
-    if len(checksum) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in checksum):
-        raise ValueError("Update manifest SHA256 is missing or invalid.")
+    # #78 bridge: the primary download may now be a ZIP (legacy/loose-folder
+    # path, kept exactly as before) or an EXE (installer era). SHA256 is
+    # mandatory for both; old updaters ignore the additive installer_* fields.
+    is_zip = download_url.lower().endswith(".zip")
+    is_exe = download_url.lower().endswith(".exe")
+    if not download_url.lower().startswith("https://") or not (is_zip or is_exe):
+        raise ValueError("Update manifest download URL must be an HTTPS ZIP or EXE.")
+    if fallback_url and (not fallback_url.lower().startswith("https://") or not (fallback_url.lower().endswith(".zip") or fallback_url.lower().endswith(".exe"))):
+        raise ValueError("Update manifest fallback download URL must be an HTTPS ZIP or EXE.")
+    _hex64(checksum)
+    # #78: optional additive installer path (installer-managed installs).
+    installer_url = str(data.get("installer_url") or "").strip()
+    installer_sha = str(data.get("installer_sha256") or "").strip()
+    if installer_url:
+        if not installer_url.lower().startswith("https://") or not installer_url.lower().endswith(".exe"):
+            raise ValueError("Update manifest installer_url must be an HTTPS EXE.")
+        _hex64(installer_sha)
+        data["installer_url"] = installer_url
+        data["installer_sha256"] = installer_sha
     # v0.25.60: Normalise optional fields for downstream consumers
     if fallback_url:
         data["fallback_download_url"] = fallback_url
@@ -221,6 +241,13 @@ def fetch_manifest(force: bool = False) -> dict[str, Any]:
 
 
 def check_for_update(force: bool = False) -> dict[str, Any]:
+    # #78: if a silent installer run closed the app before post-install
+    # verification could complete, confirm the new build here on the next start
+    # (the installer writes its expected target/version into update_state.json).
+    try:
+        verify_pending_install()
+    except Exception:
+        pass
     cfg = _update_settings()
     state = read_state()
     installed = current_version()
@@ -252,6 +279,18 @@ def check_for_update(force: bool = False) -> dict[str, Any]:
         clear_state("remote version is not newer than installed")
         state = {}
     download_url = str(manifest.get("download_url") or manifest.get("url") or "").strip()
+    installer_url = str(manifest.get("installer_url") or "").strip()
+    installer_sha = str(manifest.get("installer_sha256") or "").strip()
+    # #78: decide which path this install takes. Installer-managed installs
+    # (Inno registry key present) use the installer when the manifest offers
+    # one; loose-folder/zip installs keep the zip path exactly as before. The
+    # installer era (download_url itself is an .exe) uses the installer for
+    # everyone.
+    install_mode = "zip"
+    if download_url.lower().endswith(".exe"):
+        install_mode = "installer"
+    elif installer_url and _installer_managed_target() is not None:
+        install_mode = "installer"
     result.update({
         "ok": True,
         "manifest": manifest,
@@ -259,6 +298,9 @@ def check_for_update(force: bool = False) -> dict[str, Any]:
         "remote_version": latest,
         "installed_version": installed,
         "download_url": download_url,
+        "installer_url": installer_url,
+        "installer_sha256": installer_sha,
+        "install_mode": install_mode,
         "update_available": available,
         "mandatory": bool(manifest.get("mandatory", False)),
         "release_notes_url": manifest.get("release_notes_url") or "",
@@ -420,6 +462,172 @@ def _stage_updater_runtime(updater_source: Path, staging: Path) -> Path:
     return updater_run
 
 
+# ── #78: installer bridge (installer-managed installs) ─────────────────────
+# Loose-folder/zip installs keep the historical zip path exactly as before.
+# Installer-managed installs (detected via the Inno uninstall registry key,
+# never by assuming Program Files) download the Setup.exe, verify its SHA256,
+# run it silently and verify the result before reporting success. Verification
+# is deferred to the next start when the installer closes the app mid-run.
+
+
+def _installer_managed_target() -> Path | None:
+    """Return the install folder recorded by the Inno Setup uninstall entry.
+
+    ``None`` means a loose-folder/zip install (or non-Windows) -- those keep
+    the zip update path.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+    except Exception:
+        return None
+    # Inno Setup registers its uninstall entry as ``{AppName}_is1`` (the AppId
+    # suffix), under both HKLM and HKCU with a WOW6432Node mirror on 64-bit.
+    names = ("OPS ROOM", "OPS ROOM_is1")
+    subkeys = []
+    for name in names:
+        base = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + name
+        wow = base.replace("SOFTWARE\\", "SOFTWARE\\WOW6432Node\\", 1)
+        subkeys.append((winreg.HKEY_LOCAL_MACHINE, base))
+        subkeys.append((winreg.HKEY_LOCAL_MACHINE, wow))
+        subkeys.append((winreg.HKEY_CURRENT_USER, base))
+        subkeys.append((winreg.HKEY_CURRENT_USER, wow))
+    for hive, subkey in subkeys:
+        try:
+            with winreg.OpenKey(hive, subkey) as key:
+                value, _ = winreg.QueryValueEx(key, "InstallLocation")
+            if isinstance(value, str) and value.strip() and os.path.isdir(value.strip()):
+                return Path(value.strip())
+        except OSError:
+            continue
+    return None
+
+
+def _run_installer_silent(installer: Path, version: str) -> dict[str, Any]:
+    """Run an Inno Setup installer with the silent-install contract.
+
+    Flags: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- ("don't show the
+    'This will install...' prompt"). UAC, if any, is triggered by the
+    installer itself -- the only prompt a silent install may show. A nonzero
+    exit code or a timeout is a failure; the old install is left untouched.
+    """
+    args = [str(installer), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"]
+    write_state({"stage": "installing", "version": version, "installer": str(installer)})
+    try:
+        proc = subprocess.run(args, timeout=900, check=False, cwd=str(installer.parent))
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "reason": "Installer timed out after 15 minutes."}
+    except Exception as exc:
+        return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+    if proc.returncode != 0:
+        return {"ok": False, "reason": f"Installer exited with code {proc.returncode}."}
+    return {"ok": True, "returncode": proc.returncode}
+
+
+def _verify_target_version(target: Path, version: str) -> dict[str, Any]:
+    """Confirm the new build actually landed (exe present + version matches)."""
+    exe = target / "OPS ROOM.exe"
+    if not exe.is_file():
+        return {"ok": False, "reason": "OPS ROOM.exe was not found in the install folder after the update."}
+    vfile = target / "version.json"
+    if vfile.is_file():
+        try:
+            data = json.loads(vfile.read_text(encoding="utf-8"))
+            actual = normalize_version(data.get("version") or "")
+        except Exception:
+            actual = ""
+        if actual and actual != version:
+            return {"ok": False, "reason": f"Installed version v{actual} does not match target v{version}."}
+    return {"ok": True, "exe": str(exe), "version": version}
+
+
+def verify_pending_install() -> dict[str, Any]:
+    """Confirm a silent installer update on the next start.
+
+    Inno's CloseApplications can terminate the running app before
+    ``subprocess.run`` returns; in that case prepare_update cannot verify
+    inline. The state written before install carries the expected target and
+    version, so the verification happens here -- success clears the state,
+    failure is recorded but never touches the (unmodified) old install.
+    """
+    state = read_state()
+    stage = str(state.get("stage") or "")
+    if stage not in ("installing", "install_pending_verify"):
+        return {"ok": True, "pending": False}
+    version = str(state.get("version") or "")
+    target = str(state.get("target") or "")
+    if not version or not target:
+        return {"ok": True, "pending": False}
+    result = _verify_target_version(Path(target), version)
+    if result.get("ok"):
+        clear_state("installer verified")
+        logging.getLogger(__name__).info("Installer update verified after restart (v%s).", version)
+    else:
+        write_state({**state, "stage": "failed", "reason": result.get("reason") or "Post-install verification failed"})
+    return {"ok": True, "pending": True, "verified": bool(result.get("ok")), "reason": result.get("reason")}
+
+
+def _prepare_installer_update(manifest: dict[str, Any], download_url: str, expected_sha: str, latest: str) -> dict[str, Any]:
+    """Download, verify and silently run the Setup.exe for this update."""
+    installer_url = str(manifest.get("installer_url") or "").strip()
+    if not installer_url:
+        installer_url = download_url if download_url.lower().endswith(".exe") else ""
+    installer_sha = str(manifest.get("installer_sha256") or "").strip().lower() or expected_sha
+    if not installer_url:
+        raise ValueError("The update manifest does not provide an installer URL for this install.")
+    if not installer_sha or len(installer_sha) != 64:
+        raise ValueError("The update manifest does not provide a valid installer SHA256 checksum.")
+    target = _installer_managed_target()
+    staging = app_data_dir() / "updates" / f"v{latest or int(time.time())}"
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    installer_path = staging / f"OPS_ROOM_Setup_{latest}_Windows_x64.exe"
+    write_state({"stage": "downloading", "version": latest, "installer": str(installer_path), "target": str(target) if target else ""})
+    _download(installer_url, installer_path, latest)
+    actual_sha = _sha256(installer_path).lower()
+    if not secrets.compare_digest(actual_sha, installer_sha):
+        write_state({"stage": "failed", "version": latest, "reason": "Installer SHA256 mismatch", "expected": installer_sha, "actual": actual_sha, "installer": str(installer_path)})
+        raise ValueError("Downloaded installer failed SHA256 verification.")
+    # Post-install verification targets the folder the installer manages. For
+    # the installer era (no registry entry yet on a loose-folder install) fall
+    # back to the current install dir -- the nudge phase converts those.
+    verify_target = target if target is not None else _install_dir()
+    write_state({
+        "stage": "installing",
+        "version": latest,
+        "installer": str(installer_path),
+        "target": str(verify_target),
+    })
+    run = _run_installer_silent(installer_path, latest)
+    if not run.get("ok"):
+        write_state({"stage": "failed", "version": latest, "reason": run.get("reason") or "Installer failed", "installer": str(installer_path)})
+        raise ValueError(run.get("reason") or "Installer failed")
+    # The installer just created the registry entry, so re-probe for the
+    # authoritative install folder (an exe-era install onto a loose folder
+    # lands in the installer's folder, not the old one).
+    verify_target = _installer_managed_target() or verify_target
+    write_state({"stage": "installing", "version": latest, "installer": str(installer_path), "target": str(verify_target)})
+    # The installer may have closed this app (Inno CloseApplications); if we
+    # are still alive, verify inline. Otherwise verify_pending_install()
+    # confirms on the next start keyed by the state above.
+    result = _verify_target_version(verify_target, latest)
+    if result.get("ok"):
+        clear_state("installer verified")
+    else:
+        write_state({"stage": "install_pending_verify", "version": latest, "target": str(verify_target), "installer": str(installer_path), "reason": result.get("reason")})
+    return {
+        "ok": True,
+        "mode": "installer",
+        "version": latest,
+        "installer": str(installer_path),
+        "target": str(verify_target),
+        "verified": bool(result.get("ok")),
+        "staging": str(staging),
+    }
+
+
 def prepare_update(manifest: dict[str, Any]) -> dict[str, Any]:
     download_url = str(manifest.get("download_url") or manifest.get("url") or "").strip()
     expected_sha = str(manifest.get("sha256") or "").strip().lower()
@@ -431,6 +639,11 @@ def prepare_update(manifest: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("The update manifest does not provide a download_url or url.")
     if not expected_sha:
         raise ValueError("The update manifest does not provide a SHA256 checksum.")
+    # #78 bridge: installer path for installer-managed installs (or the
+    # installer era where download_url itself is the .exe); zip path otherwise.
+    installer_url = str(manifest.get("installer_url") or "").strip()
+    if download_url.lower().endswith(".exe") or (installer_url and _installer_managed_target() is not None):
+        return _prepare_installer_update(manifest, download_url, expected_sha, latest)
     staging = app_data_dir() / "updates" / f"v{latest or int(time.time())}"
     if staging.exists():
         shutil.rmtree(staging, ignore_errors=True)

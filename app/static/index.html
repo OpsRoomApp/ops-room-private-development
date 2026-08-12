@@ -16,9 +16,9 @@
   <link rel="icon" href="/static/icons/opsroom-192.png" />
   <link rel="apple-touch-icon" href="/static/icons/opsroom-192.png" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.9.0/ol.css" />
-  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-75" />
-  <script src="/static/pdf.min.js?v=0-25-75"></script>
-  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js?v=0-25-75';</script>
+  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-77" />
+  <script src="/static/pdf.min.js?v=0-25-77"></script>
+  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js?v=0-25-77';</script>
 </head>
 <body>
   <div id="raasGlobalAlert" class="raas-global-alert" aria-live="assertive" hidden></div>
@@ -44,7 +44,7 @@
       <button class="efb-app" type="button" data-page="briefing"><span class="efb-icon"><img src="/static/efb-icons/briefing.png" alt="" loading="lazy" decoding="async" /></span><b>Briefing</b></button>
       <button class="efb-app" type="button" data-page="scratchpad"><span class="efb-icon"><img src="/static/efb-icons/scratchpad.png" alt="" loading="lazy" decoding="async" /></span><b>Scratchpad</b></button>
       <button class="efb-app" type="button" data-page="watch"><span class="efb-icon"><img src="/static/efb-icons/watch.png" alt="" loading="lazy" decoding="async" /></span><b>Flight Watch</b></button>
-      <button class="efb-app" type="button" data-page="performance"><span class="efb-icon"><img src="/static/efb-icons/performance.png" alt="" loading="lazy" decoding="async" /></span><b>Performance <small class="efb-beta-chip">WIP</small></b></button>
+      <button class="efb-app" type="button" data-page="performance"><span class="efb-icon"><img src="/static/efb-icons/performance.png" alt="" loading="lazy" decoding="async" /></span><b>Performance</b></button>
       <button class="efb-app" type="button" data-page="raas"><span class="efb-icon"><img src="/static/efb-icons/raas.png" alt="" loading="lazy" decoding="async" /></span><b>Runway Awareness</b></button>
       <button class="efb-app efb-app-network" type="button" data-page="network"><span class="efb-icon"><img src="/static/efb-icons/network.png" alt="" loading="lazy" decoding="async" /></span><b>Network</b></button>
       <button class="efb-app" type="button" data-page="map"><span class="efb-icon"><img src="/static/efb-icons/map.png" alt="" loading="lazy" decoding="async" /></span><b>Live Map</b></button>
@@ -117,7 +117,7 @@
         <button class="nav-item" data-page="system" aria-label="SYSTEM">SYSTEM</button>
       </nav>
       <div class="rail-footer">
-        <span>OPS ROOM 0.25.75 PUBLIC RELEASE</span>
+        <span>OPS ROOM 0.25.77 PUBLIC RELEASE</span>
         <span>LAN CONSOLE</span>
         <span>SIMULATION USE ONLY</span>
       </div>
@@ -131,24 +131,25 @@
           <span class="page-readout">Choose a module</span>
         </div>
         <div class="module-grid" id="moduleGrid">
-          <button class="module-tile" data-page="status"><span class="module-number">01</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/status.png" alt="" loading="lazy" decoding="async" /></span><b>STATUS BOARD</b></button>
-          <button class="module-tile" data-page="fids"><span class="module-number">02</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/fids.png" alt="" loading="lazy" decoding="async" /></span><b>VATSIM FIDS</b></button>
-          <button class="module-tile" data-page="dispatch"><span class="module-number">03</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/dispatch.png" alt="" loading="lazy" decoding="async" /></span><b>DISPATCH</b></button>
-          <button class="module-tile" data-page="briefing"><span class="module-number">04</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/briefing.png" alt="" loading="lazy" decoding="async" /></span><b>BRIEFING</b></button>
-          <button class="module-tile" data-page="performance"><span class="module-number">05A</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/performance.png" alt="" loading="lazy" decoding="async" /></span><b>PERFORMANCE</b></button>
-          <button class="module-tile" data-page="raas"><span class="module-number">05B</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/raas.png" alt="" loading="lazy" decoding="async" /></span><b>RUNWAY AWARENESS</b></button>
-          <button class="module-tile" data-page="watch"><span class="module-number">05</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/watch.png" alt="" loading="lazy" decoding="async" /></span><b>FLIGHT WATCH</b></button>
-          <button class="module-tile" data-page="network"><span class="module-number">06</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/network.png" alt="" loading="lazy" decoding="async" /></span><b>NETWORK / COMMS</b></button>
-          <button class="module-tile" data-page="map"><span class="module-number">07</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/map.png" alt="" loading="lazy" decoding="async" /></span><b>MAP</b></button>
-          <button class="module-tile" data-page="datalink"><span class="module-number">08</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/datalink.png" alt="" loading="lazy" decoding="async" /></span><b>DATALINK</b></button>
-          <button class="module-tile" data-page="ground"><span class="module-number">09</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/ground.png" alt="" loading="lazy" decoding="async" /></span><b>GROUND CONTROL</b></button>
-          <button class="module-tile" data-page="announcer"><span class="module-number">10</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/announcer.png" alt="" loading="lazy" decoding="async" /></span><b>ANNOUNCER</b></button>
-          <button class="module-tile" data-page="procedures"><span class="module-number">11</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/procedures.png" alt="" loading="lazy" decoding="async" /></span><b>PROCEDURES</b></button>
-          <button class="module-tile" data-page="logbook"><span class="module-number">12</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/logbook.png" alt="" loading="lazy" decoding="async" /></span><b>LOGBOOK</b></button>
-          <button class="module-tile" data-page="blackbox"><span class="module-number">12B</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/watch.png" alt="" loading="lazy" decoding="async" /></span><b>BLACK BOX</b></button>
-          <button class="module-tile" data-page="finances"><span class="module-number">12A</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/logbook.png" alt="" loading="lazy" decoding="async" /></span><b>FINANCES</b></button>
-          <button class="module-tile" data-page="obs"><span class="module-number">13</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/obs.png" alt="" loading="lazy" decoding="async" /></span><b>OBS TOOLS</b></button>
-          <button class="module-tile" data-page="system"><span class="module-number">14</span><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/system.png" alt="" loading="lazy" decoding="async" /></span><b>SYSTEM</b></button>
+          <button class="module-tile" data-page="status"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/status.png" alt="" loading="lazy" decoding="async" /></span><b>STATUS BOARD</b></button>
+          <button class="module-tile" data-page="fids"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/fids.png" alt="" loading="lazy" decoding="async" /></span><b>VATSIM FIDS</b></button>
+          <button class="module-tile" data-page="dispatch"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/dispatch.png" alt="" loading="lazy" decoding="async" /></span><b>DISPATCH</b></button>
+          <button class="module-tile" data-page="briefing"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/briefing.png" alt="" loading="lazy" decoding="async" /></span><b>BRIEFING</b></button>
+          <button class="module-tile" data-page="scratchpad"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/scratchpad.png" alt="" loading="lazy" decoding="async" /></span><b>SCRATCHPAD</b></button>
+          <button class="module-tile" data-page="watch"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/watch.png" alt="" loading="lazy" decoding="async" /></span><b>FLIGHT WATCH</b></button>
+          <button class="module-tile" data-page="performance"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/performance.png" alt="" loading="lazy" decoding="async" /></span><b>PERFORMANCE</b></button>
+          <button class="module-tile" data-page="raas"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/raas.png" alt="" loading="lazy" decoding="async" /></span><b>RUNWAY AWARENESS</b></button>
+          <button class="module-tile" data-page="network"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/network.png" alt="" loading="lazy" decoding="async" /></span><b>NETWORK / COMMS</b></button>
+          <button class="module-tile" data-page="map"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/map.png" alt="" loading="lazy" decoding="async" /></span><b>MAP</b></button>
+          <button class="module-tile" data-page="datalink"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/datalink.png" alt="" loading="lazy" decoding="async" /></span><b>DATALINK</b></button>
+          <button class="module-tile" data-page="ground"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/ground.png" alt="" loading="lazy" decoding="async" /></span><b>GROUND CONTROL</b></button>
+          <button class="module-tile" data-page="announcer"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/announcer.png" alt="" loading="lazy" decoding="async" /></span><b>ANNOUNCER</b></button>
+          <button class="module-tile" data-page="procedures"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/procedures.png" alt="" loading="lazy" decoding="async" /></span><b>PROCEDURES</b></button>
+          <button class="module-tile" data-page="logbook"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/logbook.png" alt="" loading="lazy" decoding="async" /></span><b>LOGBOOK</b></button>
+          <button class="module-tile" data-page="blackbox"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/watch.png" alt="" loading="lazy" decoding="async" /></span><b>BLACK BOX</b></button>
+          <button class="module-tile" data-page="finances"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/logbook.png" alt="" loading="lazy" decoding="async" /></span><b>FINANCES</b></button>
+          <button class="module-tile" data-page="obs"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/obs.png" alt="" loading="lazy" decoding="async" /></span><b>OBS TOOLS</b></button>
+          <button class="module-tile" data-page="system"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/system.png" alt="" loading="lazy" decoding="async" /></span><b>SYSTEM</b></button>
         </div>
       </section>
 
@@ -242,11 +243,11 @@
 
       <section id="page-performance" class="page performance-page">
         <div class="page-heading">
-          <div><span class="kicker">SIMULATION PERFORMANCE ASSISTANT <b class="module-beta-chip">WIP</b></span><h1>PERFORMANCE</h1></div>
+          <div><span class="kicker">SIMULATION PERFORMANCE ASSISTANT</span><h1>PERFORMANCE</h1></div>
           <span id="performanceState" class="page-readout">PROFILE DATA READY</span>
         </div>
         <section class="panel performance-panel">
-          <header><span>TAKEOFF / LANDING</span><span>EXPERIMENTAL · SIM-ONLY</span></header>
+          <header><span>TAKEOFF / LANDING</span><span>LIVE SIM SYNC</span></header>
           <div class="performance-sections">
             <section class="perf-section">
               <header class="perf-section-title">AIRCRAFT / WEIGHTS</header>
@@ -353,7 +354,7 @@
 
       <section id="page-briefing" class="page">
         <div class="page-heading">
-          <div><span class="kicker">Flight package</span><h1>Briefing</h1></div>
+          <div><span class="kicker">FLIGHT PACKAGE</span><h1>BRIEFING</h1></div>
           <button id="briefingRefresh" class="control-button">REFRESH OFP</button>
         </div>
         <div id="briefingContent" class="briefing-layout">
@@ -419,7 +420,7 @@
 
       <section id="page-raas" class="page">
         <div class="page-heading raas-page-heading">
-          <div><span class="kicker">SIM-ONLY RUNWAY AWARENESS</span><h1>RUNWAY AWARENESS</h1></div>
+          <div><span class="kicker">SURFACE AWARENESS SYSTEM</span><h1>RUNWAY AWARENESS</h1></div>
           <div class="heading-actions raas-control-row">
             <button id="raasToggle" class="control-button" type="button">DISABLE</button>
             <div class="raas-unit-toggle" role="group" aria-label="Runway Awareness units">
@@ -490,7 +491,7 @@
             <div class="fcu-readonly-note">DISPLAY ONLY. AIRCRAFT CONTROL BUTTONS HAVE BEEN REMOVED.</div>
           </section>
           <section class="panel watch-advisories-panel">
-            <header><span>Flight watch</span><span>Live</span></header>
+            <header><span>Advisories</span><span>Live</span></header>
             <div id="watchNotes" class="watch-notes"></div>
           </section>
         </div>
@@ -552,7 +553,7 @@
                 <label><input id="mapLayerAirports" type="checkbox" checked /> AIRPORTS</label><label><input id="mapLayerRunways" type="checkbox" checked /> RUNWAYS</label><label><input id="mapLayerSurface" type="checkbox" checked /> TAXIWAYS / APRONS / STANDS</label>
                 <label><input id="mapLayerTaxiLabels" type="checkbox" checked /> TAXIWAY LABELS</label><label><input id="mapLayerStandLabels" type="checkbox" checked /> STAND LABELS</label>
                 <label><input id="mapLayerNavaids" type="checkbox" /> NAVAIDS</label><label><input id="mapLayerWaypoints" type="checkbox" /> WAYPOINTS</label><label><input id="mapLayerAirways" type="checkbox" /> AIRWAYS</label><label><input id="mapLayerBoundaries" type="checkbox" /> BOUNDARIES</label>
-                <label><input id="mapLayerNotams" type="checkbox" /> NOTAMS <small>FAA NMS</small></label>
+                <label><input id="mapLayerNotams" type="checkbox" /> NOTAMS <small>FAA NMS</small></label><label><input id="mapLayerWeather" type="checkbox" /> PRECIPITATION <small>RainViewer</small></label>
               </div></details>
               <div class="map-notam-filters" id="mapNotamFilters" hidden aria-label="NOTAM classification filters"><span>NOTAMS</span><button type="button" data-notam-filter="all" class="active">ALL</button><button type="button" data-notam-filter="fdc">FDC/TFR</button><button type="button" data-notam-filter="rwy">RWY</button><button type="button" data-notam-filter="obst">OBST</button><button type="button" data-notam-filter="nav">NAV</button><button type="button" data-notam-filter="airspace">AIRSPACE</button></div>
             </div>
@@ -598,7 +599,7 @@
 
       <section id="page-ground" class="page">
         <div class="page-heading">
-          <div><span class="kicker">Ground operations</span><h1>Ground control</h1></div>
+          <div><span class="kicker">GROUND OPERATIONS</span><h1>GROUND CONTROL</h1></div>
           <div class="heading-actions"><span id="groundLiveState" class="page-readout">GSX STANDBY</span><button id="groundRefresh" class="control-button" type="button">Refresh</button><button id="groundRelease" class="control-button" type="button">RELEASE GSX</button></div>
         </div>
         <div id="groundLayout" class="ground-layout">
@@ -633,18 +634,18 @@
             <div id="groundReceipts" class="ground-receipts"><div class="network-empty">No service receipts yet</div></div>
           </section>
           <section class="panel ground-log-panel">
-            <header><span>Recent ground activity</span><span id="groundEventCount">0 events</span></header>
+            <header><span>Recent ground activity</span><span id="groundEventCount">—</span></header>
             <div id="groundEvents" class="ground-events"><div class="network-empty">No recent ground activity</div></div>
           </section>
         </div>
       </section>
 
       <section id="page-announcer" class="page">
-        <div class="page-heading"><div><span class="kicker">Cabin audio</span><h1>Announcer</h1></div><div class="heading-actions"><a class="control-button" href="https://discord.gg/ZqZSSfeW9W" target="_blank" rel="noreferrer">Cabin audio packs</a><button id="announcerRefresh" class="control-button" type="button">Refresh</button><button id="announcerPause" class="control-button" type="button">Pause</button><button id="announcerMute" class="control-button" type="button">Mute</button><button id="announcerStop" class="control-button" type="button">Stop</button></div></div>
+        <div class="page-heading"><div><span class="kicker">CABIN AUDIO</span><h1>ANNOUNCER</h1></div><div class="heading-actions"><a class="control-button" href="https://discord.gg/ZqZSSfeW9W" target="_blank" rel="noreferrer">Cabin audio packs</a><button id="announcerRefresh" class="control-button" type="button">Refresh</button><button id="announcerPause" class="control-button" type="button">Pause</button><button id="announcerMute" class="control-button" type="button">Mute</button><button id="announcerStop" class="control-button" type="button">Stop</button></div></div>
         <div class="announcer-layout">
           <section class="panel announcer-status-panel"><header><span>Cabin announcements</span><span id="announcerState">Standby</span></header><div id="announcerAirlineIdentity" class="module-airline-identity compact"></div><div id="announcerStatus" class="announcer-status"></div><div id="announcerHotkeys" class="announcer-hotkeys">Shortcuts · Pause Ctrl+Alt+P · Mute Ctrl+Alt+M</div><div class="announcer-airline-control"><label for="announcerAirlineOverride">Airline</label><input id="announcerAirlineOverride" autocomplete="off" inputmode="text" maxlength="4" placeholder="AUTO" /><button id="announcerAirlineApply" class="control-button" type="button">Use</button><button id="announcerAirlineClear" class="control-button" type="button">Automatic</button><span id="announcerAirlineState">Automatic from flight plan</span></div><div class="announcer-volume-control"><label for="announcerVolume">Volume</label><input id="announcerVolume" type="range" min="0" max="100" step="1" value="80" /><b id="announcerVolumeValue">80%</b></div></section>
           <section class="panel announcer-manual-panel"><header><span>Play an announcement</span><span>Manual</span></header><div class="announcement-buttons"><button data-boarding-audio="1">Boarding music</button><button data-announcement="BoardingWelcome">Welcome aboard</button><button data-announcement="SafetyBriefing">Safety briefing</button><button data-announcement="CrewSeatsTakeoff">Cabin crew for takeoff</button><button data-announcement="CabinDimTakeoff">Cabin lights for takeoff</button><button data-announcement="AfterTakeoff">After takeoff</button><button data-announcement="FastenSeatbelt">Fasten seat belts</button><button data-announcement="CrewSeatsLanding">Cabin crew for landing</button><button data-announcement="AfterLanding">After landing</button><button data-announcement="DisembarkStarted">Disembarkation</button></div></section>
-          <section class="panel announcer-log-panel"><header><span>Recent announcements</span><span id="announcerEventCount">0 events</span></header><div id="announcerEvents" class="announcer-events"></div></section>
+          <section class="panel announcer-log-panel"><header><span>Recent announcements</span><span id="announcerEventCount">—</span></header><div id="announcerEvents" class="announcer-events"><div class="network-empty">No recent announcements</div></div></section>
         </div>
       </section>
 
@@ -719,7 +720,7 @@
               <article><span>LANDING G-FORCE</span><canvas id="chartLandingG"></canvas></article>
               <article class="wide"><span>TOUCHDOWN / BOUNCE DETAIL</span><canvas id="chartTouchdown"></canvas></article>
             </div>
-            <div id="logbookEditor" class="logbook-editor" hidden><label>PERSONAL RATING<select id="logbookRating"><option value="0">NOT RATED</option><option value="1">1 / 5</option><option value="2">2 / 5</option><option value="3">3 / 5</option><option value="4">4 / 5</option><option value="5">5 / 5</option></select></label><label>NOTES<textarea id="logbookNotes" rows="4" maxlength="4000" placeholder="Add debrief notes, errors, lessons or dispatch remarks"></textarea></label><div class="inline-actions"><button id="logbookSave" class="control-button primary-control" type="button">SAVE DEBRIEF</button><a id="logbookOpenPirep" class="control-button primary-control" href="#" target="_blank" rel="noreferrer">OPEN FULL PIREP</a><a id="logbookSelectedPdf" class="control-button" href="#" target="_blank" rel="noreferrer">DOWNLOAD PDF</a><button id="logbookBlackBox" class="control-button" type="button">BLACK BOX REPLAY</button><button id="logbookDelete" class="control-button" type="button">DELETE RECORD</button></div></div>
+            <div id="logbookEditor" class="logbook-editor" hidden><label>PERSONAL RATING<select id="logbookRating"><option value="0">NOT RATED</option><option value="1">1 / 5</option><option value="2">2 / 5</option><option value="3">3 / 5</option><option value="4">4 / 5</option><option value="5">5 / 5</option></select></label><label>NOTES<textarea id="logbookNotes" rows="4" maxlength="4000" placeholder="Add debrief notes, errors, lessons or dispatch remarks"></textarea></label><div class="inline-actions"><button id="logbookSave" class="control-button primary-control" type="button">SAVE DEBRIEF</button><a id="logbookOpenPirep" class="control-button primary-control" href="#" target="_blank" rel="noreferrer">OPEN FULL PIREP</a><a id="logbookSelectedPdf" class="control-button" href="#" target="_blank" rel="noreferrer">DOWNLOAD PDF</a><button id="logbookBlackBox" class="control-button" type="button">BLACK BOX REPLAY</button><button id="logbookDelete" class="control-button danger-control" type="button">DELETE RECORD</button></div></div>
           </section>
         </div>
       </section>
@@ -751,7 +752,7 @@
             </div>
           </section>
           <section class="panel blackbox-library-panel">
-            <header><span>Recordings</span><span id="blackBoxCount">0 flights</span></header>
+            <header><span>Recordings</span><span id="blackBoxCount">—</span></header>
             <div id="blackBoxRecordings" class="blackbox-recordings"><div class="network-empty">No Black Box recordings yet.</div></div>
           </section>
           <section class="panel blackbox-replay-panel">
@@ -814,7 +815,7 @@
               <label>Commercial freight<input id="financeCommercialFreight" type="number" min="0" step="1" placeholder="AUTO" /></label>
             </div>
             <p class="field-note">Automatic fares use route distance, cabin mix and payload. GSX receipts are used when available; missing departure or arrival costs are clearly marked as estimates. Existing pilot pay remains unchanged.</p>
-            <div class="inline-actions"><button id="financeSaveSetup" class="control-button primary-control" type="button">Save assumptions</button><button id="financeResetCareer" class="control-button" type="button">Reset career</button></div>
+            <div class="inline-actions"><button id="financeSaveSetup" class="control-button primary-control" type="button">SAVE ASSUMPTIONS</button><button id="financeResetCareer" class="control-button danger-control" type="button">Reset career</button></div>
           </section>
           <section class="panel finance-rank-panel">
             <header><span>Pilot record</span><span>Sectors and block hours</span></header>
@@ -1010,6 +1011,6 @@
   <!-- v0.25.60: Thermal receipt preview modal -->
   <div id="printerPreviewModal"><div class="printer-preview-dialog"><div class="printer-preview-header"><span>80MM RECEIPT PREVIEW</span><button id="printerPreviewClose" type="button" aria-label="Close preview">&times;</button></div><div class="printer-preview-body" id="printerPreviewBody"></div><div class="printer-preview-footer"><button id="printerPreviewCopyBtn" class="printer-preview-btn-copy" type="button">COPY RAW TEXT</button><button id="printerPreviewCloseBtn" class="printer-preview-btn-close" type="button">CLOSE</button></div></div></div>
   <script src="https://cdn.jsdelivr.net/npm/ol@10.9.0/dist/ol.js"></script>
-  <script src="/static/opsroom.js?v=0-25-75"></script>
+  <script src="/static/opsroom.js?v=0-25-77"></script>
 </body>
 </html>

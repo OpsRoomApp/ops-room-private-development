@@ -85,8 +85,21 @@ def compute(meta, pirep, weights=None):
         expl_pos.append("Schedule within tolerance")
 
     landing = pirep.get("landing") or {}
-    touchdown_vspeed = _num(landing.get("vertical_speed_fpm"))
+    # #63: the analysis emits touchdown_rate_fpm / touchdown_g (not
+    # vertical_speed_fpm / comfort.peak_g) and reports approach stability via
+    # approach.stability_500. Read the real shape first, keep the old keys as
+    # fallbacks for any other caller, and never fabricate a missing value.
+    touchdown_vspeed = _num(landing.get("touchdown_rate_fpm"))
+    if touchdown_vspeed is None:
+        touchdown_vspeed = _num(landing.get("vertical_speed_fpm"))
+    if touchdown_vspeed is not None:
+        touchdown_vspeed = abs(touchdown_vspeed)
     unstable = bool(landing.get("unstable_approach"))
+    if not unstable:
+        approach = pirep.get("approach") if isinstance(pirep.get("approach"), dict) else {}
+        stability = approach.get("stability_500") if isinstance(approach.get("stability_500"), dict) else {}
+        if stability.get("available") is True and stability.get("stable") is False:
+            unstable = True
     go_arounds = int(landing.get("go_around_count") or 0)
     approach_overspeed = _num(landing.get("approach_overspeed_kts_above"))
     landing_deduction = 0.0
@@ -113,7 +126,17 @@ def compute(meta, pirep, weights=None):
     comfort = pirep.get("comfort") or {}
     comfort_deduction = 0.0
     g_val = _num(comfort.get("peak_g"))
+    if g_val is None:
+        g_val = _num(landing.get("touchdown_g"))  # #63: real analysis shape
     bank = _num(comfort.get("max_bank_deg"))
+    if bank is None:
+        approach = pirep.get("approach") if isinstance(pirep.get("approach"), dict) else {}
+        stability = approach.get("stability_500") if isinstance(approach.get("stability_500"), dict) else {}
+        for chk in (stability.get("checks") or []):
+            if isinstance(chk, dict) and str(chk.get("key") or "").lower() == "bank":
+                bank = _num(str(chk.get("value") or "").replace("deg", "").replace("°", "").strip())
+                if bank is not None:
+                    break
     turb = _num(comfort.get("turbulence_peak_fpm"))
     if g_val is not None and g_val > float(w["excess_g_threshold"]):
         comfort_deduction += float(w["excess_g_penalty"])
@@ -132,6 +155,27 @@ def compute(meta, pirep, weights=None):
     ops_deduction = 0.0
     taxi_out = _num(ops.get("taxi_out_minutes"))
     taxi_in = _num(ops.get("taxi_in_minutes"))
+    if taxi_out is None and taxi_in is None:
+        # #63: derive taxi durations from recorded event times (block_out ->
+        # takeoff, landing -> block_in) when the analysis has no ops block.
+        times = meta.get("times") if isinstance(meta.get("times"), dict) else {}
+        try:
+            from datetime import datetime, timezone
+            def _ep(v):
+                if not v:
+                    return None
+                s = str(v)
+                if s.endswith("Z"):
+                    s = s[:-1] + "+00:00"
+                return datetime.fromisoformat(s).timestamp()
+            bo, to = _ep(times.get("block_out")), _ep(times.get("takeoff"))
+            ln, bi = _ep(times.get("landing")), _ep(times.get("block_in"))
+            if bo is not None and to is not None and to > bo:
+                taxi_out = (to - bo) / 60.0
+            if ln is not None and bi is not None and bi > ln:
+                taxi_in = (bi - ln) / 60.0
+        except Exception:
+            pass
     if taxi_out is not None and taxi_out > float(w["long_taxi_out_min"]):
         ops_deduction += float(w["long_taxi_penalty"])
         expl_neg.append(f"Long taxi out ({taxi_out:.0f} min)")

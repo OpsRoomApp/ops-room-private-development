@@ -193,7 +193,7 @@ Before **any** code changes on this list are implemented, take a backup of the s
   2. **Replace the emoji icon buttons**: ChartFox toolbar ✏️ 🖍️ 🧹 🗑️ and the colour-picker circle options → CSS-drawn/inline-SVG icons, or safe symbols present in Segoe UI Symbol (e.g. ✎ / ✚ / ●), or a scoped `font-family` including Segoe UI Emoji on those buttons.
   3. **Swap rare symbols for covered ones**: ◈ LIVE OFP → styled span / plain "LIVE OFP"; ⇔ ◐ ↻ ↗ ☰ → Segoe UI Symbol variants or CSS arrows; verify each renders in WebView2.
   4. **Verification**: re-scan the static assets for non-ASCII outside an allowlist (keep · — ° × © … → − Δ and the MCDU box-drawing used in panels), then eyeball Briefing / ChartFox / annotate surfaces in WebView2 for any remaining "?".
-- **Status**: Partially implemented (2026-08-09) — font fallbacks were applied to `opsroom.css` only; literal "?" separators and the missing fallbacks on the PIREP/OBS surfaces remain → see **#24**.
+- **Status**: CLOSED 2026-08-11 — user verified no "?" symbols anywhere in the v0.25.77 UI during the build test; the v0.25.76 fallback pass + #24's literal-separator fix covered all reported surfaces. (Rare glyphs still rely on Segoe UI Symbol/Emoji fallback; if any reappears on a specific surface, reopen with the surface name.)
 
 ### #20 — One flight produces dozens of tiny Black Box recordings during taxi-in (engine-on watchdog vs TAXI IN stop)
 
@@ -392,7 +392,7 @@ Before **any** code changes on this list are implemented, take a backup of the s
 
 ---
 
-### #37 — Performance page: auto-sync everything, only CG stays manual, unit-aware display, grouped layout (PLAN ONLY)
+### #37 — Performance page: auto-sync everything, only CG stays manual, unit-aware display, grouped layout (IMPLEMENTED 2026-08-10, v0.25.74)
 
 - **Severity**: Medium (UX + correctness — the calculator is only as good as its inputs, and today the pilot must hand-type runway/weather/weights that the app already knows)
 - **Goal**: on opening the Performance tab, every field except CG auto-fills from the best live source; the page is grouped (airport/runway → aircraft/weights → weather) with the one manual field highlighted; all weights display in the Host-set unit (lb or kg).
@@ -452,7 +452,7 @@ Before **any** code changes on this list are implemented, take a backup of the s
 - **Validation**: after the change, re-fetch `/api/charts/chartfox/file/{cid}` for cid `09bdd9c5-0341-42a0-8641-cbecf98822e6` (OJAI AERODROME CHART) and expect `render_mode: direct_file` with `%PDF` bytes; run `node --check` / `compileall` and the release validator.
 - **Status**: Implemented (2026-08-10, v0.25.75) — `_download_and_cache` in `charts.py` now always sends a Chrome user-agent on file downloads; ChartFox mirrors keep their Bearer auth. Live-verified earlier: the same OJAI `carc.gov.jo` PDF that returned 451 to `python-requests` returns 200 with a real `%PDF` to a browser UA.
 
-### #42 — Pushback mislabeled as Taxi Out (Fenix blind spot: body-vx missing + track == heading) — phase-ordering invariant (PLAN ONLY)
+### #42 — Pushback mislabeled as Taxi Out (Fenix blind spot: body-vx missing + track == heading) — phase-ordering invariant (IMPLEMENTED 2026-08-10, v0.25.75)
 
 - **Severity**: Medium — every departure's pushback shows as "Taxi out" when the pushback isn't visible to the dedicated detectors; flight timeline, Black Box start phase and Flight Watch display all mislabel it
 - **Verified root cause (live recording `RJA403_JY-AZC_OJAI-OLBA_20260810143644Z.opsbb.part`, 14:36–14:38Z)**: a real 68 s pushback — ~105 m of backward displacement (lat 31.72079 → 31.71984) with the nose pointed north (heading 350°→080°, tug turning the aircraft) — was classified **TAXI OUT from the first sample** (gs 2.6 kt, still at the stand). The recorder started with `start_phase = "TAXI OUT"` and BLOCK OUT fired at the same movement (14:36Z — user confirms that timing is correct).
@@ -472,7 +472,7 @@ Before **any** code changes on this list are implemented, take a backup of the s
 
 ---
 
-### #43 — Stage 2 writer cadence collapses: Fenix SimConnect LVar enrichment stalls the writer 1.5–2.5 s per 0.2 s cache expiry (PLAN ONLY)
+### #43 — Stage 2 writer cadence collapses: Fenix SimConnect LVar enrichment stalls the writer 1.5–2.5 s per 0.2 s cache expiry (IMPLEMENTED 2026-08-10, v0.25.75)
 
 - **Severity**: High — Stage 2 promises 30/20/10 Hz by phase, but the recording shows ~3 Hz effective at takeoff with an 8 s hole at rotation; approach/landing will inherit the same holes, re-creating the #21 jagged-peak graphs and risking "insufficient telemetry" in the full PIREP.
 - **Verified root cause (live recording `RJA403_JY-AZC_OJAI-OLBA_20260810143644Z.opsbb.part` + live `/api/telemetry/diagnostics`)**: the Fenix adapter's L:Var enrichment runs **synchronously inside the writer tick**: `_writer_tick` → `read_telemetry(force=True)` → `_enrich_addon_telemetry` → `_read_simconnect_lvars` (`telemetry_provider.py:1605`) loops ~13 Fenix L:Vars, each a per-LVar Python `Request(...)` + `req.value` (`addon_telemetry.py:461–500`). Each full LVar batch read takes ~1.5–2.5 s through the Python SimConnect wrapper — the same per-SimVar cost that caused the original #6 stutter, now starving the single writer instead of stuttering the sim. The 0.2 s value cache (`_SIMCONNECT_LVAR_CACHE_AT`) limits read *frequency*, not *blocking time*, so every 0.2 s the writer dies for ~2 s.
@@ -511,7 +511,7 @@ The permanent telemetry architecture that fixes the Black Box / Flight Watch dat
 - FSUIPC is one batched call per sample (`pyuipc.read(requests)`, `telemetry_provider.py:464/1328`) — a full flight sample costs one API call, so the high-rate stream adds no stutter.
 - Degraded SimConnect session (#9 dispatch-thread failure) → minimal stream returns stale/zero → `_normalize` rejects rows → Black Box silently replays the last good (parked) row while Flight Watch stays live on FSUIPC (#16).
 
-### #44 — Post-arrival finalize can hang forever: flight stuck RECORDING after block-in when GSX latches are lost (PLAN ONLY)
+### #44 — Post-arrival finalize can hang forever: flight stuck RECORDING after block-in when GSX latches are lost (IMPLEMENTED 2026-08-10, v0.25.75)
 
 **Verified live 2026-08-10 (RJA403 OJAI→OLBA):** block-in 15:41:18Z → POST ARRIVAL PENDING 15:41:29Z → flight stuck RECORDING for 47 min until manual completion 16:28:40Z. GSX arrival services HAD completed (OLBA handling receipts issued 16:19:59Z/16:20:01Z), but the logbook never auto-finalized.
 
@@ -522,14 +522,14 @@ The permanent telemetry architecture that fixes the Black Box / Flight Watch dat
 - **Validation:** replay RJA403 metadata: auto-finalize should fire ≤5 min after block-in without GSX, and within ~45 s of GSX arrival receipts when latches are present. No regression to the GSX-complete fast path.
 - **Status**: Implemented (2026-08-10, v0.25.75) — `_hold_for_post_arrival_services` now arms a fallback timer when the aircraft is PARKED with engines off and the parking brake set; after 5 continuous minutes it releases the hold (fires a POST ARRIVAL COMPLETE event) so the engine finalizes. Any interruption (brake release / engine restart / out of PARKED) resets the timer; the GSX-complete fast path still wins. Unit-verified: holds + arms, releases after 5 min, resets on brake release, GSX path unaffected.
 
-### #45 — `saveSettingsWithDebounce` called but never defined: printer settings never persist (PLAN ONLY)
+### #45 — `saveSettingsWithDebounce` called but never defined: printer settings never persist (IMPLEMENTED 2026-08-10, v0.25.75)
 
 - **Root cause:** `initPrinterSettings()` change handler calls `saveSettingsWithDebounce()` (opsroom.js:4077) but no such function exists anywhere in the frontend (`function saveSettingsWithDebounce` / `const saveSettingsWithDebounce` / `let` — zero matches; the only `saveSettings`-adjacent helpers are inline `fetch('/api/settings', {method:'PUT'})` calls). Every toggle of printer enabled / CPDLC auto-print / printer selection throws `ReferenceError: saveSettingsWithDebounce is not defined` and `settings.printing` is never written back.
 - **Evidence:** `frontend_errors.jsonl` shows this exact error since v0.25.58 (opsroom.js:3535), repeated at v0.25.71 (:3995) and v0.25.72 (:4048); the broken call site is still present in the current tree at line 4077.
 - **Fix approach:** define the debounced save helper (e.g. a 500 ms debounce around the existing `PUT /api/settings` pattern used at opsroom.js:745/7445) and call it from `initPrinterSettings`; or replace the call with a direct settings PUT. Wire the same helper into any other setting-change handlers that currently rely on it. Verify by toggling printer settings in the Settings UI and confirming `settings.json` persists.
 - **Status**: Implemented (2026-08-10, v0.25.75) — `saveSettingsWithDebounce()` is now defined in `opsroom.js` (500 ms debounce around `PUT /api/settings` with the `printing` section; toast on failure, settings refresh on success) and `initPrinterSettings` keeps calling it.
 
-### #46 — winspool.drv not available in the frozen build: printer list empty (PLAN ONLY)
+### #46 — winspool.drv not available in the frozen build: printer list empty (IMPLEMENTED 2026-08-10, v0.25.75)
 
 - **Root cause:** `_get_winspool()` (printer_client.py:20) does `ctypes.windll.winspool` and the frozen app cannot load the DLL — log: "winspool.drv not available: Failed to load dynlib/dll 'winspool'. Most likely this dynlib/dll was not found when the application was frozen" (13 occurrences 06:58–14:34Z on 2026-08-10). `list_printers()` then returns `[]`, so the printer dropdown in Settings is empty and thermal receipt printing cannot target a printer.
 - **Fix approach:** (1) confirm whether PyInstaller needs winspool.drv bundled/hooked in the spec (add as a binary/collector if so); (2) add a fallback enumeration path (e.g. `Get-Printer` via PowerShell, or `win32print` if available) so the frozen build can still list printers; (3) surface a clear "no printer detected" state in Settings instead of a silently empty dropdown. Verify in the built exe, not the source run, since the failure is frozen-build specific.
@@ -599,3 +599,492 @@ The permanent telemetry architecture that fixes the Black Box / Flight Watch dat
 - Verified: mock test (stale recorder auto-stopped, live flight still protected) + end-to-end test (real recording closed by `_finalize`) + full test suite green (74/74 + 116/116).
 
 ---
+
+---
+
+### #50 — In-sim replay writes failed silently: ctypes Enum never unwrapped + INITPOSITION struct wrong size + frame API mismatch (IMPLEMENTED)
+
+- **Status**: Implemented (2026-08-10, v0.25.75/76 working tree) + **verified live in-sim** (Fenix A320, RJA403 takeoff roll t=760–805): `VERDICT: PASS — 659 frames, 0 errors`, position/heading/speed all tracking the recording (the earlier "heading stuck at 4.5°" was the wrapper reporting heading in **radians** — 4.5 rad = 258° = the correct takeoff heading).
+
+**Symptom:** "Black Box → start in sim replay" never moved the aircraft; the standalone driver reproduced the same — pose writes returned ok but the sim ignored them.
+
+**Root cause (three stacked bugs in `app/simconnect_position.py`):**
+1. `sm.new_def_id()` returns a **plain `enum.Enum` member**, not a ctypes-int; every `sm.dll.AddToDataDefinition` / `SetDataOnSimObject` threw a ctypes `ArgumentError` that `replay_apply_state` swallowed as `ok=False`. The wrapper's own code unwraps with `.value` — the replay path never did.
+2. `_ReplayInitPosition.airspeed` was `c_double` (8 B) but the SDK declares `DWORD` (4 B) → 60 vs 56 bytes → `SIMCONNECT_EXCEPTION_INVALID_DATA_SIZE` → the initial teleport silently failed.
+3. `replay_subscribe_frame` called `sm.SubscribeToSystemEvent` — that method does not exist in SimConnect 0.4.26 (it is `sm.dll.*`), so the Frame clock always fell back to monotonic timing.
+
+**Fix (SkyDolly parity):** unwrap every definition/request id with `.value` at all 4 replay dll call sites; correct `_ReplayInitPosition` to `c_uint32 on_ground / c_uint32 airspeed` (knots); call `sm.dll.SubscribeToSystemEvent` / `sm.dll.UnsubscribeFromSystemEvent` with `.value`. Driver `tools/test_replay_driver.py` also converts the wrapper's radian heading to degrees for honest readbacks, and now **restores the user aircraft to its pre-replay baseline** after the test instead of leaving it at the replay endpoint.
+
+---
+
+### #51 — Replay of the RJA403 landing clipped the ground ~20 s before touchdown: recorded MSL altitude collapses near the field (clamp IMPLEMENTED, recorder root cause OPEN)
+
+- **Status**: Clamp implemented + landing **verified live in-sim** (2026-08-10): 3 NM out at 603 ft → touchdown at 20 ft / 120 kt → rollout 12 ft / 52 kt → 1,869 frames, 0 errors, position/heading/speed tracking the runway. **Data-side root cause still open — see below.**
+
+**Symptom:** replaying t=3461→3554 (Beirut landing) the aircraft was written below terrain at t≈3520, ground collision engaged, and the sim stopped accepting pose writes (position frozen, GS ramping) — looked like a crash.
+
+**Root cause (recording data, not the replay engine):** in the RJA403 Fenix recording the `altitude_ft` column drifts off true MSL near the arrival field — it goes **negative while AGL stays positive** (touchdown row: alt −58 ft, AGL 10.5 ft; implied terrain swings −103 → +73 ft across the segment). The recorder's altitude (likely baro/QNH or FSUIPC-datum dependent) loses ~150 ft vs the sim's terrain at the field. **Why it happens and why the aircraft froze need the recorder-side investigation** (candidate: baro altitude captured instead of GPS/true MSL, or a QNH datum offset; verify against `radio_altitude_ft`/`agl_ft` which stay sane).
+
+**Fix implemented (replay side, SkyDolly-parity safe):** `replay_apply_state` now floors the pose altitude at **sim terrain + recorded AGL** — `GROUND_ALTITUDE` (cached 1 s, only probed below 300 ft AGL so cruise pays nothing) + the recording's trustworthy radio altitude, with a +2 ft cushion (on-ground frames snap to terrain+3 ft). The aircraft can never be written below the ground it actually flew, and the approach/rollout remain smooth because the *recorded* altitude is used whenever it is already above the floor.
+
+**Remaining (OPEN):** fix the recorder so `altitude_ft` stays true MSL near the field (why did it go negative — QNH/baro datum vs GPS) — old recordings rely on the clamp; new recordings should be clean. Also investigate the periodic ~2 s sample dropouts every ~6.5 s seen across the whole landing segment (recorder flush/checkpoint stall?).
+
+---
+
+### #52 — In-sim replay stutters: pose data definition re-registered on every frame (~300 extra SimConnect calls/sec) (IMPLEMENTED)
+
+- **Status**: Implemented + verified (2026-08-10) — the same landing replay that previously showed a constant stream of `SIMCONNECT_EXCEPTION_TOO_MANY_OBJECTS` now runs clean with **zero exception spam** and smooth cadence (1,869 frames, 0 errors).
+
+**Root cause:** `_ensure_replay_pose_definition` called `sm.new_def_id()` + 9× `AddToDataDefinition` on **every frame** — ~300 SimConnect API calls/sec of pure churn, exactly the #6 stutter equation. SkyDolly registers the `PositionAndAttitudeUser` definition **once** at connect and reuses it for every frame.
+
+**Fix (SkyDolly parity):** the pose definition is now cached in `_REPLAY_POSE_DEFINITION` (first-use registration, reused thereafter) and reset together with `_REPLAY_INITIAL_DEFINITION` + the terrain cache when the session closes/rebuilds (`_close_session`), so a reconnect can never reuse a stale definition id.
+
+**Also addressed from live testing:** the ground-terrain probe (`GROUND_ALTITUDE`) is a ~35 ms SimConnect read — it is now gated behind the 300 ft AGL check and cached for 1 s, so cruise/descent replay never blocks on it. The driver test also had a `--no-freeze` diagnostic mode (kept) and now auto-restores the aircraft to baseline on exit.
+
+### #53 — Replay camera goes wild + "alt clamp crashed the aircraft" (frozen-run postmortem, PLAN ONLY)
+
+- **Status**: RESOLVED 2026-08-11 — camera decision: the app does NOT control the camera (replay path is camera-safe by design). The observed camera chaos was a symptom of the #51 ground clip + #52 per-frame definition churn, both fixed; with those landed the replay plays visually clean and the camera behaves normally. No camera commands will be added.
+
+**What was observed:** (a) frozen mode: after the ground clip the sim stopped accepting position writes (aircraft visually stuck at 133 ft while GS ramped — the clip engaged collision state); (b) `--no-freeze` mode: the aircraft followed but the sim's own dynamics fought the writes near the ground (heading jumped to 331°, GS collapsed), the view looked stuttery, and on exit the aircraft was left at the replay endpoint — which read as "the clamp crashed the aircraft".
+
+**Findings / notes:**
+- The **freeze is correct** (SkyDolly freezes the user aircraft in Normal replay mode — `AbstractSkyConnect::updateUserAircraftFreeze` freezes for `Replay`/`ReplayPaused`); the earlier "freeze breaks velocity" theory was disproven — a frozen probe wrote 56.6 kt GS fine. The #51 clip (not the freeze) was what stopped writes.
+- The camera chaos tracked the collision/overwrite moment, not the replay itself; with #51 + #52 the landing now plays visually clean, and the driver restores the aircraft so nothing is left broken.
+- **Resolved 2026-08-11**: camera control explicitly declined by user — camera must work normally, never driven by the app. Remaining notes for reference only: (a) in-app replay end behavior (restore vs leave at landing spot) stays as-is unless requested; (b) re-verify the Fenix ground-dynamics fight on the actual landing roll at 1.0× (the 1.5× test was smooth, but the flare/rollout is where addon flight models push back hardest).
+
+---
+
+### #54 — Recorder data integrity: `altitude_ft` goes negative near the arrival field + periodic ~2 s dropouts (data-side root cause for #51, IMPLEMENTED 2026-08-10)
+
+- **Status**: Implemented — root causes found and fixed in the live telemetry path + recording schema. Remaining verification is on-sim (next fresh flight).
+
+**Root cause 1 — altitude datum (FIXED):** `altitude_ft` preferred the baro **indicated** altitude (FSUIPC 0x3324), which follows the sim's QNH/Kollsman setting. On the RJA403 flight the QNH drift reached ~150 ft near the field — recorded MSL hit −58 ft at touchdown while radio alt stayed 10.5 ft (implied terrain swung −103 → +73 ft over t=3400–3554, all rows fsuipc7 source, verified from the file). The corrupt MSL is what drove the replay pose below terrain and caused the #51 ground clip.
+
+- **Fix (telemetry_provider.py):** `altitude_ft` now prefers the **pressure altitude (0x0570)** — the sim's own standard-atmosphere MSL, QNH-independent, physically incapable of drifting with a baro setting. Baro indicated (0x3324) remains second, GPS (0x6020) the diagnostic fallback. Pilot-facing displays are unaffected: Flight Watch and the logbook read `indicated_altitude_ft` first, so the altimeter still shows the QNH-corrected value. Black Box, replay, map ownship and analysis all consume the now-true MSL.
+- **Fix (black_box.py):** new append-only schema-v3 field `altitude_source` records which offset produced each sample's altitude, so any future drift is verifiable from the file itself (old recordings decode unchanged).
+
+**Root cause 2 — periodic ~2 s dropouts (FIXED BY STAGE 2):** the 18 gaps >1.5 s (spaced 5.8–7.0 s) in the RJA403 recording were produced by the **pre-Stage-2 recorder**, which polled its own SimConnect minimal stream at `_target_interval` and stalled on its flush cadence — the exact multi-reader path #16/#28 retired. The Stage-2 single-writer bus replaced that path entirely: the recorder drains the writer's ring with timestamp-preserving cursors, flushes are tiny (60-row zlib + one INSERT, ms-scale), and the ring holds 120 s so a slow flush can never lose samples. Verified on the first Stage-2-era recording (RJA403 19:40Z): median cadence **32.3 Hz**, no periodic stall pattern in clean flight (the end-of-recording burst in that file is the in-sim replay tests teleporting the aircraft — replay-test pollution, not recorder behaviour). Occasional 0.5–1.5 s FSUIPC-side hiccups remain (sim-side, not fixable app-side).
+
+**Acceptance (next fresh flight, with user):** record a clean flight, verify `altitude_source` == `0x0570_plane_altitude` on FSUIPC rows, raw altitude stays above terrain with the clamp disabled, and no >1.5 s gaps in a full takeoff + approach/landing segment.
+### #55 — Announcer "camera-based volume" never changes with the camera view (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Medium — the volume feature is ON by default but the multiplier is pinned to a constant, so the PA never varies with the view, unlike Universal Announcer
+- **Verified root cause (code + live probe)**:
+  1. **Distance-from-world-origin bug.** `_poll_camera_distance()` (announcements.py:646) computes `sqrt(cx^2+cy^2+cz^2)` of the camera's *world* position (bridge `cameraPosX/Y/Z` from `SIMCONNECT_RECV_CAMERA_DATA.Position`, confirmed `camera_bridge_2024/src/main.cpp:469`; world coords are metres from the planet origin). At a European airport that magnitude is ~1.4e6 m — so `_camera_volume_multiplier()` is pinned to `external_pct` (40%) forever whenever the bridge is running; switching cockpit↔external changes the magnitude by a few hundred metres out of 1.4 M, i.e. invisible.
+  2. **The SimConnect fallback never fires.** `aq.get("CAMERA POS X")` returns `None` because the SimConnect 0.4.26 wrapper registers no camera SimVars (verified: `Attributes.py` has none; `AircraftRequests.get()` → `None` for unknown keys). With no bridge, `_CAMERA_DISTANCE` stays 0.0 → multiplier pinned to `cockpit_pct` (100%) forever.
+  3. **Wrong mechanism vs Universal Announcer.** UA does not use distance — it reads the camera *state* (which view is active) and applies per-category multipliers (Cockpit / Showcase-Cabin / External / Drone), per its own `camera-volume.md`. Distance is a poor proxy and ours is broken math on top.
+- **The correct signal (verified live)**: FSUIPC offset **0x026D (1 byte) = CAMERA STATE** (official FSUIPC7 Offset Status doc v0.7.1): `2=Cockpit, 7=SixDoF, 9=Showcase, 3=External/Chase, 5=Fixed on Plane, 6=Environment, 4/10/19=Drone, 8=Gameplay, 17=Replay`. Live probe against the running sim read `5` (Fixed on Plane) cleanly through the app's own bundled pyuipc — zero extra cost.
+- **Fix approach** (surgical, ~30 lines):
+  1. `telemetry_provider.py`: add `(0x026D, "b")` to the Stage-2 writer's existing FSUIPC batch (one byte in the same `pyuipc.read`, no extra SimConnect traffic, 10–30 Hz freshness) → expose `camera_state` in the snapshot.
+  2. `announcements.py`: replace the distance curve in `_camera_volume_multiplier()` with camera-state categories — `{2,7}→Cockpit`, `{9}→Cabin`, `{3,4,5,6,8,10,19}→External`, hold last-known category for non-flight states (menus/world map/replay). Existing **Cockpit / Cabin / External sliders stay unchanged** (same settings contract, UA parity). Drop the broken distance math; keep `camera_distance_m` for diagnostics only.
+  3. Optional: expose `camera_state` in the host status payload so it is verifiable from Settings.
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+
+### #56 — Pushback STILL mislabelled TAXI OUT on EWG5EZ despite #42 fix: GSX-active latch consumed by the parked-brake cue at sample 0 (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Medium — every departure from a cold logbook start shows "Taxi out" for the pushback again (flight timeline, Black Box `start_phase`, Flight Watch)
+- **Verified root cause (exact replay of flight `2011789eb0094859b21036444d2d044d`, EWG5EZ EDDB→LDSP, 2026-08-11)**: replaying the flight's 3,815 stored logbook samples through the current `_analyse`/`_phase` reproduces the live app exactly: **sample 0 (06:57:59, parked) sets `pushback_forward_taxi_proven = True` before any movement** → at first real movement (t=1751.3 s = 07:27:10) the #42 phase-ordering invariant (`not times["block_out"] and not pushback_forward_taxi_proven` → PUSHBACK) is skipped because the flag is already True → `PARKED → TAXI OUT` (identical timestamp to the live event).
+  - **Mechanism**: at flight start GSX reports the pushback service row as **ACTIVE/PERFORMING** (departure services just began — the tug is *scheduled*, not pushing). `_analyse` latches `pushback_positive_latch=True` from that GSX row (logbook.py:928). The aircraft is parked with **parking brakes set**, so #42's "movement → stop → brakes set = pushback complete" cue (logbook.py:1005–1012) fires on the *same* parked sample and stamps `pushback_forward_taxi_proven = True` — **permanently** (nothing ever clears it). 29 minutes later the real pushback moves the aircraft and the invariant sees "pushback already proven over".
+  - A fresh-meta replay of the same recording produces **PUSHBACK** correctly — the defect is purely the accumulated pre-movement state, which is why #42's acceptance test (RJA403, clean cold start with no GSX-active row) passed.
+- **Fix approach** (builds on #42, keeps its rules):
+  1. **Gate the parked-brake completion cue on real movement.** Add `state["pushback_movement_seen"]` — set whenever a latched pushback sample shows `gs >= 1.5` (or real lat/lon displacement). The brake cue may only set `pushback_forward_taxi_proven` when `pushback_movement_seen` is True. A parked sample (gs ~0, brakes set) with a GSX-active latch must instead *drop* the latch without stamping proof: clear `pushback_positive_latch`/`pushback_active` (the GSX row is a schedule artifact, not a physical pushback).
+  2. **Defensive ordering invariant.** The #42 invariant should additionally require `not state.get("pushback_forward_taxi_proven") or times.get("block_out")`-consistent state — i.e. a proven flag set before `block_out` and before any movement is by definition invalid; treat pre-movement proven as absent.
+  3. **Verify with the EWG5EZ replay**: rerun the 3,815-sample replay and expect `PARKED → PUSHBACK (t≈1751, BLOCK OUT at first movement) → TAXI OUT only after genuine taxi`; also confirm the RJA403 acceptance still passes and the fresh-meta first-95 s test still yields PUSHBACK.
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+### #57 — Live OFP WEIGHTS: PAX row shows "178 KG" — passenger count must be unitless (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Low — cosmetic but misleading: a passenger count rendered as a weight
+- **Root cause (code)**: `patchBriefingOfpLive` → `wrow()` (opsroom.js:1487). The `isCount` flag only strips the unit from the **planned** cell (`isCount ? briefingOfpWeight(item.planned, '', 0) : disp(item,'planned')`); the **actual** and **delta** cells always go through `disp(item,'actual')` / `briefingOfpWeight(..., unit, 1)`, which append `KG`. The backend is correct — `ofp_actuals.py` emits `passengers.actual` as a plain int count (from GSX/Fenix `pax_loaded`).
+- **Fix**: in `wrow()`, when `isCount`, render `actual` and `delta` with an empty unit too (same as planned). ~1-line change.
+- **Acceptance**: Live OFP shows `PAX  178  —  178  —` (no KG anywhere on the PAX row); copy-actuals / print output also unitless for PAX.
+
+---
+
+### #58 — Live OFP WEIGHTS: PAYLOAD actual never auto-fills ("planned payload only"), stays "—" (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Low-Medium — feature gap; the user wants the payload auto-filled in KG like PAX/BAG-CARGO already are
+- **Current state**: `ofp_actuals.py` `_weights_section` hard-codes `rows["payload"] = _value_cell(flight.get("payload"), None, ...)` → actual always None. BAG/CARGO already auto-fills from `fenix_loading["cargo_loaded_kg"]`, and PAX from `fenix_loading["pax_loaded"]` (fenix_adapter.loading_progress, verified).
+- **Fix approach** (auto-fill in KG, plan-consistent):
+  1. Payload actual = **pax block weight + cargo weight**:
+     - cargo = `cargo_loaded_kg` from Fenix loading (kg) — already consumed for BAG/CARGO.
+     - pax block weight = actual pax count × **plan-implied per-pax weight**: `(plan.payload − plan.cargo) / plan.passengers` (kg per pax; fall back to a standard 84 kg / 175 lb when the plan lacks the split or passengers == 0). Using the plan-implied per-pax keeps the derived payload consistent with the SimBrief plan instead of inventing an arbitrary pax weight.
+  2. Only fill when a trusted measured source exists (pax_loaded or cargo_loaded_kg not None); otherwise keep "—" with the current availability note — never fabricate.
+  3. Units: payload is a weight, so KG/LB display is correct (unlike PAX in #57); display-unit conversion must reuse the existing `convert_weight_value` path.
+- **Acceptance**: with Fenix/GSX boarding data, Live OFP PAYLOAD shows an actual KG value ≈ pax block + cargo; without any loading source it still shows "—".
+
+---
+### #59 — TAKEOFF/OFF recorded ~45 s late on EWG5EZ: GSX pre-departure state blocks airborne confirmation (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Medium — the OFF timestamp (07:43:41Z) fired at 2,147 ft AGL instead of at rotation (~07:42:50), shifting the takeoff-roll window and corrupting departure analysis timing; same GSX-state family as #56
+- **Live evidence (flight 2011789eb0094859b21036444d2d044d, EWG5EZ EDDB→LDSP)**: recording shows on_ground=False, gs ~160-190, ias ~170-185, agl 349→2,147 from 07:42:56, yet `confirmed_airborne` stayed False until 07:43:41 (agl 2,147, vs 1,299) — the phase stayed TAKEOFF ROLL for ~45 s after liftoff, then flipped to TAKEOFF/CLIMB the instant GSX cleared.
+- **Root cause (code + replay)**: `_airborne_candidate()` (logbook.py:669-679) returns False whenever `_gsx_predeparture_active()` is True (logbook.py:446-466 — GSX boarding/catering/refuel/water/gpu rows with raw in {4,5,7}, or cached `passengers_boarding_total`/`boarding_cargo_percent` progress). GSX keeps the departure workflow in that state until it registers the aircraft has departed, so airborne confirmation (and therefore the TAKEOFF phase and BLOCK-OFF→TAKEOFF timing) waits on GSX. Replay of the takeoff window through `_analyse`: GSX-blocked → TAKEOFF never fires; GSX-cleared → TAKEOFF fires ~33 s earlier. `_phase` has no independent fallback: the only TAKEOFF entry points (`not airborne_seen and airborne_confirmed`, and the `confirmed_airborne` recovery override) both depend on `confirmed_airborne`.
+- **Fix approach**:
+  1. `_airborne_candidate` must not be vetoed by GSX when the physical evidence is unambiguous (on_ground=False + gs ≥ 55 + ias ≥ 45 + agl ≥ 30, as here): treat GSX pre-departure as a *weakening* factor only when physical evidence is borderline — e.g. skip the GSX veto when agl ≥ 100-150 ft and vertical_speed_fpm ≥ +500 (the aircraft is clearly departing).
+  2. Alternatively/in addition, `_phase` should leave TAKEOFF ROLL via a physical latch: after N consecutive airborne-candidate samples with agl ≥ 200 ft, confirm airborne regardless of GSX (GSX state can only delay a *departure*, never prove one).
+  3. Verify with the EWG5EZ takeoff replay: expect TAKEOFF at ~07:42:50 (rotation, agl ≈ 150 ft) instead of 07:43:41; ensure GSX-blocked mock still never produces a false TAKEOFF while on the ground.
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+### #60 — Live OFP TOW (and ZFW/LDW) never auto-fill on Fenix: FSUIPC 0x30C0 TOTAL WEIGHT is None (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Medium — TOW shows "—" in the Live OFP ACTUAL column on Fenix flights even after takeoff; ZFW (out-snapshot calculation) and LDW (on-snapshot) share the same root cause and will stay blank too. PAX + BAG/CARGO already fill (Fenix loading), so this is the remaining gap of #26.
+- **Verified root cause (EWG5EZ flight, live)**: `gross_weight_lb` is **None on every recorded sample** — including the takeoff — while `fuel_total_lb` decrements normally. The off/out/on operational snapshots (`_op_snapshot`, logbook.py:276) read `sample.gross_weight_lb`, which on the FSUIPC path comes only from offset **0x30C0 TOTAL WEIGHT**. The Fenix does not populate that standard offset (it runs its own weight model), so the off-snapshot stores `gross_weight_lb = None` → `snapshot_cell` (ofp_actuals.py:420) has nothing to convert → TOW actual None. Same for `calculated_zfw_lb` (gross − fuel) and the future on-snapshot LDW.
+- **Fix approach — REVISED 2026-08-11 after live EFB-portal verification** (the Fenix EFB exposes an exact, structured source; nothing new to install):
+  1. **PRIMARY — Fenix loadsheet (Final) endpoint**: `GET /fenix/loadsheet?loadsheetType=Final` on the EFB portal (8083). **Verified live mid-flight (200, cruise)**: returns `tow` (67,725.95 kg), `zfw` (60,939.74), `law` (LDW 63,623), `macTow` (30.6), `macZfw` (32.5), `maxTow` (73,500), `maxZfw` (61,000), `maxLaw` (64,500), `pax` (178), `totalCargo` (2,670 kg) — all as `{value, unit}` objects except MACs. The old assumption "mid-flight it 400s" is WRONG for the Final type — it works at any phase. At each out/off/on snapshot (and Live OFP refresh while Fenix is the active aircraft), call this endpoint and fill TOW / ZFW / LDW directly, plus the MAX column from maxTow/maxZfw/maxLaw. Add a short TTL cache (e.g. 30 s) so repeated refreshes don't hammer the portal.
+  2. **Fenix adapter fallback**: keep the existing `loading_progress` extraction (pax/cargo path) for the pre-departure boarding screen when the Final loadsheet is unavailable.
+  3. **SimConnect TOTAL_WEIGHT fallback at snapshot moments**: when the aircraft is NOT Fenix and `gross_weight_lb` is None at an out/off/on snapshot, do one batched SimConnect `TOTAL_WEIGHT` read (the #32-fixed reader, verified live) and use it — one read per flight event, negligible traffic, no writer-path stutter. Covers any aircraft that omits FSUIPC 0x30C0.
+  4. Wire the chosen value into `_op_snapshot`'s `gross_weight_lb` (or enrich the sample before the snapshot is captured); keep "never fabricate" (None stays None if all sources miss).
+- **Acceptance**: on the next Fenix departure, Live OFP TOW/ZFW show actuals ≈ planned, LDW fills at block-in, and the WEIGHTS MAX column shows the Fenix maxTow/maxZfw/maxLaw; on non-Fenix (FSUIPC-populated) aircraft nothing changes.
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+### #61 — Performance tab: Fenix EFB portal exposes an exact takeoff/landing perf engine — integrate as Tier-1 source (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Feature (high value) — the Fenix EFB (port 8083) ships the aircraft's own certified performance calculation. The Performance tab currently depends on SimBrief TLR / perf-engine approximations; for Fenix flights we can return the exact values the pilot sees on the EFB takeoff page, with zero extra sim traffic.
+- **Verified live (2026-08-11, mid-flight)**: reverse-engineered the EFB bundle (main.js) and called the portal directly with this flight's real data:
+  - `POST /fenix/calculate/vspeeds` → **HTTP 200**: `vSpeeds {v1:149, vr:149, v2:152}`, `flexTemperature:62`, `topl:83779`, `toplLimited:false`, `flap:2`, `headwind:5`, `greenDotSpeed:221`, `flapRetractionSpeed:150`, `slatRetractionSpeed:195`, `trimSetting:0.5`, `trimDirection:"DN"`, `stopMargin:191`, `correctedStopMargin:536`.
+  - `POST /fenix/calculate/ldr` exists for landing (same envelope pattern).
+- **Request contract** (from bundle, EFB posts flat + a `request` string):
+  - `request`: required non-empty string (context id, e.g. "opsroom" — passes model validation).
+  - Flat fields: `WindDirection`, `WindSpeed`, `Flap` (1+F → 1, opt → 0, else number), `Temperature`, `PacksOn` (bool), `Weight: {Value, Unit:"KG"}` (Value = kg as integer, e.g. 67.7 t → 67700), `AircraftType` (enum, see below), `Sharklets`, `RunwayLength` (m, int), `Qnh` (hPa, int), `Elevation` (ft, int), `MacTow` (0 if unknown), `ForceToga` (bool), `AntiIceSetting` ("Engine"/"EngineAndWing"/"None"), `SurfaceCondition` (e.g. "Dry"), `RunwayMagneticHeading` (deg), `Icao` (airport, upper), `Runway` (runway id).
+  - `Weight.Value` convention from the bundle: `100 × parseInt(towTonne.toString().replace(".",""))`.
+- **AircraftType enum — verified against the RUNNING backend**: accepts `A320214` (CFM CEO) and `A320232` (IAE CEO); **rejects** `A320251`/`A320271` (NEO), `A319*`, `A321*` (this build's enum covers the Fenix A320 CEO family only — the EFB bundle maps more, e.g. "A320 NEO LEAP"→"A320251", but the live backend 400s on them). Driver must map the active aircraft: Fenix A320 engine type CFM→A320214, IAE→A320232, and fall back gracefully ("unsupported by this portal version") for anything else.
+- **Fix approach**:
+  1. New `fenix_perf` module (or extend `fenix_adapter`): `fetch_vspeeds(...)` and `fetch_ldr(...)` with the contract above; small TTL cache (30 s) keyed on (icao, runway, weight, cg, flap, wx).
+  2. In the Performance tab: when the active aircraft is Fenix and the EFB portal responds, call `/calculate/vspeeds` and render V1/VR/V2, FLEX, flap, trim, TOFL, stop margin, green-dot, retraction speeds — with a "Fenix EFB" source tag; fall back to the existing SimBrief-TLR/perf-engine tiers when the portal is absent or returns 400/unsupported.
+  3. Auto-fill the request inputs from existing sources: weight/TOW from the Fenix loadsheet (see #60), runway/wind/temp/QNH from the OFP/METAR, CG from macTow.
+  4. The `request` string must always be present (validation fails without it) — use a fixed app identifier.
+- **Acceptance**: on a Fenix flight, Performance tab shows V-speeds/trim/flex matching the EFB takeoff page for the same inputs; non-Fenix aircraft unchanged (existing tiers); no stutter or extra SimConnect traffic (pure HTTP to localhost portal).
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+
+### #62 — QOL: electronic loadsheet signing (real-pilot sign-off) on the Live OFP (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Feature (QOL) — the pilot reviews the loadsheet (planned vs actual weights/MAC from the Fenix Final loadsheet, see #60) and electronically signs it like in real operations. Purely additive: a flight with no signature behaves exactly as today.
+- **Design decisions (confirmed with user 2026-08-11)**:
+  - **One signature slot** per flight (not CAPTAIN + FO).
+  - **Type AND draw both available on PC and tablet**, scratchpad-style: the pad mirrors the kneeboard's TYPE/DRAW tool toggle (opsroom.js `scratchpadTool` + `data-tool` pointer-event CSS — `touch-action: none` for drawing, pointer-events off in type mode). DRAW = small canvas (~320x140) with pen strokes via pointer events, CLEAR, works with mouse/finger/pen; TYPE = uppercase terminal-font text input. Switching modes while a drawing exists asks via the in-app `<dialog>` confirm.
+- **Location**: Briefing -> OFP tab, Live OFP panel. `SIGN LOADSHEET` button in the existing actions row (COPY/PRINT row, opsroom.js `briefingOfpLiveSkeleton`), plus a `SIGNED ✓ HH:MMZ` chip in the status strip. Dialog shows the loadsheet summary being signed (planned vs actual TOW/ZFW/LDW/MAC/PAX/CARGO + source stamps + UTC).
+- **Snapshot at sign time**: the exact values covered (weights, MAC, sources, UTC) are stored with the signature so the record proves what was signed, not just that it was.
+- **Storage**: dedicated `loadsheet_signatures` table (flight_id PK, signer, role optional, signature data URL PNG, signed_utc, snapshot_json). NOT `metadata_json` — the recorder upsert (logbook.py:1270) rewrites that column wholesale and would clobber the signature.
+- **When**: SIGN always available pre-departure; subtle "ready to sign" hint when a Fenix Final loadsheet is synced (#60) + flight RECORDING + phase PARKED/TAXI OUT + unsigned. **Locked at OFF** — no re-sign/clear after takeoff.
+- **API**:
+  - `GET /api/briefing/ofp-live/signature?flight=<id>` -> current signature state
+  - `POST /api/briefing/ofp-live/sign` {signer, role?, sig_data_url?, snapshot} -> stores, returns ok
+  - `DELETE /api/briefing/ofp-live/signature` (pre-departure only, clear/re-sign)
+  - `/api/briefing/ofp-live` payload gains a `signed: {...}` block so the existing refresh loop renders state.
+- **Surfaced in**: Live OFP chip, logbook flight detail, full PIREP documentation section, and a `SIGNED: NAME · ROLE · HH:MMZ` line on the printed Live OFP receipt (`printer_format_ofp`).
+- **Sequencing**: build on #60 (signing a sheet with empty actuals is pointless) — same Fenix loadsheet snapshot source.
+- **Acceptance**: on a Fenix departure, pilot opens SIGN LOADSHEET, draws or types, signs; chip shows SIGNED; after OFF it is locked; the printed receipt and PIREP include the signature; non-Fenix/unsigned flights unchanged.
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+
+### #63 — Passenger satisfaction ignores hard landings: perfect 100/100 despite -592 fpm / 1.92 g touchdown (IMPLEMENTED 2026-08-11)
+
+- **Severity**: High — the satisfaction engine reads field names the analysis never emits, so every deduction silently no-ops and **every flight scores 100/100 "Excellent"**. Live proof: EWG5EZ EDDB→LDSP (2026-08-11) touched down at **-592 fpm / 1.92 g** (well above `very_hard_landing_fpm=400` → −25 pts and `excess_g_threshold=1.5` → −10 pts) and still reported `score 100 · category Excellent · mult ×1.05 · rep +3` with only "Schedule within tolerance" + "Comfort within tolerance" and zero negative explanations.
+- **Root cause — key-name mismatch between producer and consumer**: `analyse_pirep` (`pirep_analysis.py:975`) emits the landing block as **`touchdown_rate_fpm` / `touchdown_g`** and the approach block's stability gates as `stability_500`/`stability_1000`, but `passenger_satisfaction.compute()` (`passenger_satisfaction.py:87-92`) reads **`landing.vertical_speed_fpm`**, **`landing.unstable_approach`**, **`comfort.peak_g`** / `comfort.max_bank_deg` / `comfort.turbulence_peak_fpm`, and **`operations.taxi_out_minutes` / `taxi_in_minutes`**. Verified against the live flight's `analysis_summary`: `landing.vertical_speed_fpm → None`, `comfort` block is **absent entirely** (keys `[]`), `operations` block absent, so `landing_deduction = 0`, `comfort_deduction = 0`, `ops_deduction = 0` — full marks every time. There is no `comfort`/`operations` section produced anywhere in `analyse_pirep`; the scorer was written against a shape that doesn't exist.
+- **Fix approach** (align the scorer to the real analysis shape):
+  1. `landing_deduction` reads `landing.touchdown_rate_fpm` (abs value; scorer compares `> very_hard_landing_fpm`), keeping the 200/400 fpm thresholds and 12/25 penalties, and the "Smooth landing" positive note only when ≤ hard threshold.
+  2. **Comfort block**: derive it from existing analysis data instead of a missing section — `peak_g` from `landing.touchdown_g` (≥1.5 → −10), `max_bank_deg` from the approach stability checks or enroute max bank (≥35° → −5), turbulence from the max vertical-speed swing if available; if a source is genuinely missing, skip that deduction (never fabricate).
+  3. **Unstable approach**: map from `approach.stability_500.stable == False` (the 500 ft gate, `stability_500` exists on every flight with `checks[].ok` per criterion) → `unstable_penalty=15`.
+  4. **Operations**: taxi_out/taxi_in minutes from the recorded `times`/`durations` (block_out→takeoff, landing→block_in) instead of a missing `operations` section; keep the 25/15-min long-taxi thresholds.
+  5. Add a regression check to the existing satisfaction unit tests: feed a `-600 fpm / 2.0 g / stability_500.stable=False` fixture and assert the score is well below 100 with the correct negative explanations.
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+
+### #64 — Process killer: 45× SimConnect dispatch crashes (`0xc00000b0`) corrupt the heap → `OPS ROOM.exe` died with `0xc0000374` (STATUS_HEAP_CORRUPTION) in ntdll.dll (IMPLEMENTED 2026-08-11)
+
+- **Severity**: High — the app **crashed hard** at 11:30:54 local on EWG5EZ (35 s after block-in, right after arrival services were requested): Windows Event Log `Application Error #1000`, faulting module `ntdll.dll`, exception `0xc0000374` (heap corruption) — the classic signature of a native buffer overrun accumulating until ntdll's heap validation trips. No Python traceback (it's a native crash), so `opsroom.log` just stops; the launcher respawned the process at 11:31:55. The flight survived (state is in SQLite; the #44 timer still finalized it at 09:35:22Z) but the whole app was down ~1 min in the middle of post-arrival processing.
+- **Root cause**: the Python SimConnect wrapper's dispatch callback has crashed **45 times this session** with `WinError 0xc00000b0` (native access violation). The #9 guard (`_guarded_dispatch_run`, `simconnect_position.py:51`) catches the *Python* exception and rebuilds the session each time — but the **native heap damage persists** across rebuilds. Failure rate **accelerated** through the session (2 → 3 → 5 → 5 → 8 per log bucket), and one of the crashes finally landed in a way that tripped ntdll. The arrival-services request itself was probably coincidental (it's an HTTP/remote-API path, `POST /api/gsx/automation/start` returned 200); the dispatch thread was crashing ~once a minute regardless.
+- **Fix approach** (bounded reconnect — stop retrying into a corrupt heap):
+  1. Track consecutive SimConnect dispatch crashes on the session; after a small ceiling (e.g. 5 within 5 minutes) **stop rebuilding the SimConnect session entirely** and permanently degrade to the FSUIPC/FSUIPC-WASM path for the rest of the app run — the enrichment already has that fallback (`_read_simconnect_lvars_cached` returns `[]` → WASM offsets), and FSUIPC carried every sample of this flight with zero fails. Log a single "SimConnect disabled for this session" line so it's visible.
+  2. Optionally isolate the SimConnect session in a helper process so native crashes can never take down the main app (bigger change; consider after the bounded-reconnect ceiling proves insufficient).
+  3. Add a startup/WER sentinel so a previous-run crash is surfaced on the next launch (host setup shows "last run ended in a native crash" with the event-log excerpt) — currently the user only sees "server died?" with nothing in opsroom.log.
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+
+### #65 — #44 amendment: 5-min post-arrival fallback must NOT fire while GSX automation is actively running arrival services; persist GSX latches across restart (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Medium-High — the #44 fallback timer finalized EWG5EZ **without arrival-service receipts** even though the pilot had requested arrival services and GSX was engaged. Sequence: block-in 09:30:19Z → `POST /api/gsx/automation/start` succeeded → **app crashed 09:30:54Z** (#64) → restart wiped the memory-only GSX latches (`_AUTOMATION["latches"]`, `gsx_remote.py:2761`) → `_arrival_services_complete_for_record()` could never return True → the 5-min timer (armed at block-in) fired 09:35:22Z and finalized "automatic post-arrival complete" **without the arrival receipts** (finance shows no arrival-services entries).
+- **Root cause**: the timer is a blunt instrument — it checks only "PARKED + engines off + brake for 5 min" and **never checks whether GSX is actually mid-arrival right now**. When the app crashes mid-arrival, GSX looks "dead" (latches wiped) and the timer believes it. The sim-exit path already covers the genuine "GSX can never finish" case.
+- **Fix approach**:
+  1. **Pause the fallback while GSX is engaged**: if `automation_status().mode ∈ {ARRIVAL, FULL_TURNAROUND}` (GSX is actively working arrival services), do not count the fallback timer — wait for GSX completion. Only arm the timer when GSX mode is genuinely idle/absent.
+  2. **Persist the GSX latches** (the unimplemented half of original #44): write `_AUTOMATION["latches"]` (and mode) to disk on every change; on startup re-seed the gate so an app restart doesn't erase arrival progress.
+  3. On restart with a RECORDING flight already PARKED+post-arrival, re-arm the fallback timer from the persisted block-in time, but only if GSX is not actively working.
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+
+### #66 — Phase wobble: ~20 rejected `ENROUTE → CLIMB` transitions over 11 min on EWG5EZ (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Low-Medium — after `ENROUTE` was accepted at 07:51:30Z (07:43:42 takeoff, so ~8 min after rotation), the phase machine tried to revert to `CLIMB` **20 times** (07:51:31 → 08:02:29, ~every 30 s) and each was correctly rejected as `impossible_transition`. No phase corruption (ENROUTE held; CRUISE accepted at 08:02:29), but it's sustained log noise and signals the climb-confirm gate's hysteresis is too loose right after the ENROUTE transition (the enroute-confirmed detector and the climb detector disagree for ~10 min).
+- **Fix approach**: after ENROUTE is accepted, suppress CLIMB re-proposals (e.g. a 5-10 min lockout, or require a real altitude/VS excursion beyond the climb band to re-propose CLIMB); mirror the same guard in `flight_watch._phase`. The detector already has `_phase` transition validation — the fix is at the proposal stage, not the validation stage.
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+
+### #67 — `landing-latest` reports the PLANNED arrival runway while the recorded-track analysis shows the ACTUAL runway (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Low — EWG5EZ landed **Runway 05** (recorded track heading 52.5°, confirmed by the landing analysis `geometry_source: OPS ROOM NAVDATA / RECORDED TRACK`), but `/api/logbook/landing-latest` and the logbook card show **"23"** because `_landing_payload` (`logbook.py:2040`) uses `flight.get("arrival_runway")` — the SimBrief *planned* runway. Two surfaces in the app disagree (planned vs actual) with no label, so it reads as a bug.
+- **Fix approach**: prefer the actual recorded runway from `analysis_summary.landing.runway` (falling back to planned `arrival_runway` only when the analysis is missing), and optionally label the value (e.g. "ACT 05 / PLN 23") so planned-vs-actual is explicit instead of silently substituted.
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+
+### #68 — Empty black-box `.part` created 23 s after the TAXI IN stop (EWG5EZ): a recording start attempt that wrote zero samples (IMPLEMENTED 2026-08-11)
+
+- **Severity**: Low — after the recording correctly stopped at TAXI IN (09:25:28Z, 22 s after touchdown — the intended fast-path), a second file `EWG5EZ_...opsbb.part` (4 KB, SQLite header with **no tables**) appeared at 09:25:51Z. `observe_phase` or the engine-on watchdog re-armed a recording while the logbook was still TAXI IN / about to go PARKED, then it stopped with nothing written. Harmless (no data loss — the main 76k-sample recording is intact) but it litters the BlackBox folder with empty files.
+- **Fix approach**: in `black_box.observe_phase` / the engine-on watchdog, don't start a new recording when the flight is already past LANDING ROLL (i.e. TAXI IN / PARKED post-arrival), and make `start_recording` abort cleanly (no file) if no samples arrive within a few seconds; optionally clean up zero-chunk `.part` files at startup.
+- **Status**: IMPLEMENTED 2026-08-11 — see commit/version notes; verified with the test suite.
+
+---
+
+### #69 — Orphaned black-box recording: app launched mid-flight → 21.9 MB `.opsbb` with NO logbook flight, recording ran 4.35 h (IMPLEMENTED 2026-08-11)
+
+- **Observed**: 2026-08-11 session (14:26:28→18:48 local). App started while the sim was already airborne/descending. 9 s after launch the black box began recording with the logbook's in-memory flight_id (`46019eba…`), but the flight was **never persisted** to the `flights` table (still 7 rows after session end), its phase stayed `DESCENT CANDIDATE` for the whole 4.35 h, and **no stop condition ever fired** — the recording only ended when the app was exited (`.part` → `EWG5EZ_D-AEWK_EDDB-LDSP_20260811122637Z.opsbb`, 21.9 MB, 140,076 samples, no matching logbook entry).
+- **Root cause**: hot start (app launched mid-flight) → logbook creates an in-memory flight session with no departure lineage; the #42 phase-ordering invariant can never reach LANDING/TAXI IN from `DESCENT CANDIDATE`, the session is never persisted, and the #44/#65 post-arrival fallback is keyed to a POST ARRIVAL state on a *persisted* flight — so nothing terminates the recording. The #68 empty-abort and closed-flight gates don't apply (recording is neither empty nor a closed-flight restart).
+- **Fix approach** (plan): (a) orphan-recording self-terminate — finalize any active recording whose `flight_id` has no logbook row when the aircraft is PARKED + engines off + brakes set for N minutes (mirror of the #44 fallback, flight-less); (b) hot-start sessions must be persisted immediately on creation so the lifecycle logic (including the fallback) can engage; (c) allow `DESCENT CANDIDATE → LANDING` without a prior takeoff for hot starts, or refuse to start recording when the detected phase has no departure lineage.
+- **Status**: PLAN ONLY — found during baseline audit before the next end-to-end test flight.
+
+---
+
+### #70 — GSX operator popup: app picks the first "[GSX choice]" company (e.g. "Aviation Ground Services") instead of the airline match (DLH → Lufthansa), silently (IMPLEMENTED 2026-08-11)
+
+- **Observed**: 2026-08-11 departure at EDDB (DLH4HH). Operator popup listed "Lufthansa [GSX choice]" but "Aviation Ground Services" was selected. Automation state shows `operator_preference_attempted: false` and ZERO OPERATOR automation records — the airline-match path never ran this session (the observer's "GSX confirmed operator popup enabled" record is also missing, and it worked on the RJA403 session Aug 10).
+- **Root cause**: the popup was resolved by the generic follow-up resolver (`gsx_remote._resolve_followups` → `_automatic_option_index`), NOT by `_operator_observer_choice`. GSX appends "[GSX choice]" to EVERY company entry in the operator menu, so the "gsx choice" needle in `_automatic_option_index` matches the FIRST company in the list — effectively "select the first operator". That path records nothing and never attempts the stored airline-brand match. The operator observer that does the brand match (stored brand "Lufthansa" → "Lufthansa [GSX choice]") silently failed to connect/engage this session (its exceptions are swallowed by `except Exception: continue` with no log line).
+- **Fix approach** (plan): (a) before any "gsx choice" needle fallback in `_automatic_option_index`, route operator-looking menus through `_operator_observer_choice` so the airline-brand match always runs; (b) record fallback picks too ("Selected GSX choice: X") so silent first-option selection becomes visible; (c) log the operator observer's connection failures once (state + exception) instead of silently retrying, to diagnose why it engaged on Aug 10 but not today.
+- **Status**: PLAN ONLY — found during the 2026-08-11 EDDB departure.
+
+---
+
+### #71 — App-wide slowness: GSX Remote WS flaky + slow endpoints saturate the threadpool; even in-memory endpoints queue for seconds (IMPLEMENTED 2026-08-11)
+
+- **Observed**: 2026-08-11 in-sim (EDDB departure). UI reload/refresh/host-setup take many seconds. Measured against the running app: `/api/gsx/status` = 7–20 s EVERY call, `/api/flight-watch` = 7.3 s on cold cache (67–79 ms warm), `/api/logbook?limit=200` = 1.5 s, and `/api/gsx/automation/status` (an in-memory dict read) = 6.5 s — proof the request threadpool is saturated by slow requests queueing. 8+ clients poll continuously (webview + host + tablet).
+- **Root cause**: (a) the GSX Remote API WebSocket is unstable right now (`EOFError: stream ended`, `ConnectionResetError 10054` in the log) — every `_official_ws_exchange` retries across up to 3 candidates with cumulative TCP/open/recv timeouts (worst case several seconds each), and failures are NOT cached, so every `/api/gsx/status` call (UI polls, host setup, and the GSX automation loop's own `status(force=True)` each cycle) re-burns 5–20 s; (b) `read_telemetry` falls through to a synchronous direct sim read (7 s, with Fenix payload-station SimConnect probes + `0xc00000b0` churn) whenever the Stage-2 writer's cache expires (writer stalling — FSUIPC data age 3.2 s+); (c) slow sync endpoints hold threadpool threads → even instant endpoints queue (automation/status 6.5 s).
+- **Fix approach** (plan): (a) `/api/gsx/status` must be bounded — serve cached last-known-good for ~2–5 s instead of re-probing, hard-cap the WS exchange (single candidate, ~1 s total), and move deep probes (couatl, SimConnect diagnostics, receipts) off the request path into a background refresh; (b) flight-watch: when the writer cache is stale, serve the last snapshot with stale flags instead of a synchronous direct read (background refresh); (c) the GSX automation loop should use the cached GSX status instead of `status(force=True)` per cycle.
+- **Status**: PLAN ONLY — found live 2026-08-11.
+
+---
+
+### #72 — Announcer camera volume: applied only at play start / settings save — never re-applied when the camera changes mid-playback (IMPLEMENTED 2026-08-11)
+
+- **Observed**: 2026-08-11 live (EDDB gate). Switching cockpit ↔ external produced NO volume change. Live telemetry confirms `camera_state` IS read correctly (`camera_state: 2` = Cockpit per FSUIPC7 0x026D docs; mapping 2/7 cockpit, 9 cabin, 3/4/5/6/8/10/19 external is aligned with the offset batch read). Settings are enabled (cockpit 100 / cabin 70 / external 40) and the status shows `volume: 59` = announcements_volume × 1.0 — the multiplier never moved off the cockpit value.
+- **Root cause**: `_mixer_volume()` (the only camera-aware volume path) is evaluated at PLAY START and in `apply_runtime_settings()` (settings-save endpoints only, main.py:880/2925). The announcement engine loop (`announcements._loop`, 1 s cadence) never re-applies the mixer volume on camera change — unlike Universal Announcer, which re-applies continuously. So switching cameras while an announcement/boarding music is already playing (status showed `playing: True`) changes nothing, and the "live camera volume" feel UA has is structurally absent.
+- **Fix approach** (plan): in `announcements._loop`, cache the last applied category and re-apply the mixer volume (`pygame.mixer.Channel(_PA_CHANNEL_INDEX).set_volume(...)` + music volume) whenever `_camera_category()` changes — exactly UA's continuous model; keep the play-start path as-is for new plays. Optionally also verify the external/drone camera value on-sim (state 3 = chase/spot external; drone may report a value already in the external set).
+- **Status**: IMPLEMENTED 2026-08-11 (v0.25.77).
+
+---
+
+### #73 — Live OFP panel stops auto-updating until a full app refresh (fetch busy-lock + slow backend) (IMPLEMENTED 2026-08-11)
+
+- **Observed**: 2026-08-11 live (DLH4HH EDDB→EDDF). The Live OFP comparison (times/weights/fuel) does not refresh on its 2 s poll — values only update after reloading the app.
+- **Root cause**: `refreshBriefingOfpLive` (opsroom.js:1623) has a single in-flight gate (`if(briefingOfpLiveBusy && !force) return;`) and the fetch has NO timeout — an AbortController is created but never aborted on a slow response. The backend `_live_ofp_payload` (main.py:1097) does synchronous slow work per call: `fenix_adapter.loadsheet_final()` (Fenix EFB portal fetch on 8083) plus `read_telemetry`/GSX state under the #71 threadpool pile-up. When one fetch takes >2 s, every subsequent timer tick returns early forever → the panel freezes until a page reload resets the flag.
+- **Fix approach** (plan): (a) add a fetch timeout (e.g. abort after ~2.5 s) so a slow response can never wedge the busy flag; (b) make `_live_ofp_payload` non-blocking — serve the cached/previous payload with a stale flag when the Fenix loadsheet or GSX probes are slow, or move the Fenix loadsheet fetch off the request path (background refresh, like the TTL cache intent); (c) on fetch failure, keep the last good data and mark it stale instead of freezing.
+- **Status**: IMPLEMENTED 2026-08-11 (v0.25.77).
+
+---
+
+### #74 — SIGN LOADSHEET button hidden once the OFP status flips to LIVE: `loadsheet_signature_locked` reads `status`, but the active-recorder dict uses `state` (IMPLEMENTED 2026-08-11)
+
+- **Observed**: 2026-08-11 live. The SIGN LOADSHEET button appears in the skeleton, then hides itself as soon as the OFP status changes from WAITING to LIVE — even though the aircraft is still on the ground (PARKED/PUSHBACK), where signing must be allowed.
+- **Root cause**: `loadsheet_signature_locked` (logbook.py:2116) checks `str(entry.get("status") or "").upper() != "RECORDING"` → return True (locked). But `logbook_active_recorder()` returns dicts keyed by **`state`** (`"state": "RECORDING"`), with no `status` key — so `entry.get("status")` is None → the function concludes the flight is NOT recording → locks the signature immediately. Live payload confirms: phase=PUSHBACK, no takeoff time, yet `signature_locked: True`.
+- **Fix approach** (plan): read both keys — `entry.get("state") or entry.get("status")` — for the RECORDING check, so an active pre-takeoff flight stays signable (lock remains only at takeoff/completion, per #62 design). Also consider gating the skeleton so the button doesn't flash before the first payload.
+- **Also observed**: FUEL RAMP/OUT is "—" for the same reason — the block-out **operational snapshot** is empty (`operational_snapshots.out == {}`, logbook.py), so `fuel:ramp_out` (ofp_actuals.py:525 reads `out.get("fuel_lb")`) has nothing to show. The fuel *metrics* are fine (start_lb 12166 ≈ planned 5515 kg; takeoff 11555; landing 6331). Root cause is the same restart window: the restart happened ~90 s before block-out (17:39:21Z), and the out-snapshot capture did not run for the restarted session. Fix should also backfill the out snapshot from the fuel metrics when empty.
+- **Status**: IMPLEMENTED 2026-08-11 (v0.25.77).
+
+---
+
+### #75 — Performance tab: MACTOW CG never auto-fills from the Fenix EFB; no option to sync weather from our METAR (IMPLEMENTED 2026-08-11)
+
+- **Observed**: 2026-08-11 live (DLH4HH). The Performance page does not update MACTOW CG, and there is no way to sync weather from the app's own METAR feed (SimBrief weather is the only source).
+- **Fix approach** (plan): (a) read the Fenix EFB portal (127.0.0.1:8083, Performance tab) MACTOW / CG fields and auto-fill the perf page's CG (ZFWCG) — mirroring the #60 Fenix loadsheet TOW/ZFW/LDW sync; only CG stays manual when Fenix data is absent; (b) add a "USE LIVE WEATHER" toggle/action on the Performance tab that fills runway wind/temp/QNH from our METAR (already fetched for the board/RAAS) instead of SimBrief weather, with a source stamp.
+- **Status**: IMPLEMENTED 2026-08-11 (v0.25.77).
+
+---
+
+### #76 — Live OFP: PAX / BAG-CARGO / PAYLOAD actuals go empty after a mid-flight app restart (boarding progress is in-memory only) (IMPLEMENTED 2026-08-11)
+
+- **Observed**: 2026-08-11 live (DLH4HH, after the #71-forced restart during boarding). Live OFP shows PAX/BAG/CARGO/PAYLOAD actuals as "—" while ZFW/TOW/LDW (Fenix EFB FINAL loadsheet, TTL-cached) still fill — e.g. PAX 156 "—", PAYLOAD 14,820 "—", ZFW 58,850 ✓, TOW 64,132 ✓.
+- **Root cause**: `_live_ofp_payload` reads PAX/BAG/PAYLOAD actuals from `gsx_state.fenix_loading.last_progress` (ofp_actuals.py `loading` → `passengers_boarding_total`), which is in-memory GSX automation state. A restart wipes it, and the restarted automation instance does not repopulate `last_progress` once boarding is already ~complete — so the cells stay "—" for the whole flight.
+- **Fix approach** (plan): persist the last known loading progress with the #65-style automation state (or read GSX's live `passengers_boarding_total`/progress directly when `last_progress` is missing), so the actuals survive a restart.
+- **Status**: IMPLEMENTED 2026-08-11 (v0.25.77).
+
+---
+
+### #77 — Post-flight & pre-departure unified "Review & Sign" (electronic crew sign-off) (IMPLEMENTED 2026-08-11)
+
+- **Observed**: 2026-08-11 design discussion. Today the only sign moment is the pre-departure SIGN LOADSHEET button (#62). After arrival services complete (or a manual flight stop), the flight finalizes with no pilot review/signature step, and the PIREP is built automatically with no record of who reviewed it. With more post-flight content arriving (times, fuel, finance, passenger satisfaction), "sign the loadsheet" no longer describes what is being signed — the naming is stale and there is no post-flight review checkpoint.
+- **Design decision (confirmed with user 2026-08-11)**: one shared **Review & Sign** modal, two modes, one signature store:
+  - **Mode A — PRE-DEPARTURE "Loadsheet Sign-off"** (replaces the #62 SIGN LOADSHEET button): modal opens with the weight & balance summary (planned vs actual PAX / BAG-CARGO / PAYLOAD / ZFW / TOW / LDW / MACTOW-CG / ramp+takeoff fuel, with source stamps + UTC), pilot reviews and signs. Same trigger as #62 (Fenix Final loadsheet synced + RECORDING + PARKED/TAXI OUT); locked at OFF; re-sign/clear allowed pre-departure only. Snapshot of exactly what was signed is stored.
+  - **Mode B — POST-ARRIVAL "Flight Completion Sign-off"** (new): the modal opens automatically after arrival services complete **or** on manual flight stop, **before the logbook closes** — review and sign the completed flight (block times, actual vs planned fuel, finance result, passenger satisfaction, landing/approach summary, and a mini debrief). Signing **then** triggers the PIREP build (and stores a "reviewed by X at HH:MMZ" record). If the pilot does not sign: the flight closes with the existing #65/#44 fallback paths and is flagged **UNSIGNED** in the logbook detail + PIREP header — never blocks finalization, never leaves the flight stuck RECORDING.
+- **Naming**: drop "sign loadsheet" as the generic label. Use **"REVIEW & SIGN"** on the button, with the dialog title varying by mode: **"Loadsheet Sign-off"** (pre-departure) vs **"Flight Completion Sign-off"** (post-arrival). Alternative names considered: "Crew Sign-off", "Captain's Sign-off", "Pilot Sign-off" — "Flight Completion Sign-off" was preferred because it covers the whole flight, not just the loadsheet.
+- **Shared plumbing** (one implementation, two modes):
+  - Signature store: extend the existing `loadsheet_signatures` table with a `kind` column (`loadsheet` | `completion`) — one row per (flight_id, kind), reusing the existing signer / sig_data_url / signed_utc / snapshot_json columns and the #74 status-vs-state key fix.
+  - Modal: one dialog component parameterized by mode — same TYPE/DRAW scratchpad tools (pointer events, touch-action) as #62, same `<dialog>` confirm on mode switch.
+  - API: `GET /api/briefing/ofp-live/signature?flight=&kind=`, `POST .../sign {kind, signer, role?, sig_data_url?, snapshot}`, `DELETE .../signature?kind=` (loadsheet: pre-departure only; completion: no delete — flight is closed, append-only record).
+  - Post-arrival trigger wiring: hook into the finalize path (logbook post-arrival completion / manual stop endpoint) — if a completion signature is not present, emit a client event to open the modal (tablet + webview) before closing; PIREP build is deferred until sign or a short (e.g. 60 s) unsigned timeout, then builds flagged UNSIGNED.
+- **Acceptance**: (a) Fenix departure — Review & Sign opens with the W&B summary, pilot signs, record shows in logbook + printed OFP + PIREP; (b) after arrival services complete on the same flight — Flight Completion Sign-off opens, pilot signs, PIREP builds with reviewer stamp; (c) skip signing entirely — flight still closes (fallback), flagged UNSIGNED; (d) both signatures visible in flight detail and full PIREP.
+- **Status**: IMPLEMENTED 2026-08-11 (v0.25.77).
+
+---
+
+### #78 — Update pipeline migration: zip+GitHub auto-update → installer+website (PLAN ONLY)
+
+- **Context**: 2026-08-11 decision — from the next release onward the user wants to share the installer (Inno Setup, `{autopf}\OPS ROOM`, `PrivilegesRequired=admin`) instead of the full app zip, and host updates on the website instead of GitHub. Existing versions (≤ 0.25.76) can ONLY auto-update via a zip: `_validate_manifest` (app/updater.py) hard-rejects any `download_url` that is not an HTTPS `.zip`, and `opsroom_updater.py:install_update` → `find_payload_root` fails with "The update package does not contain OPS ROOM.exe" when the zip holds the installer instead of the app payload. Zipping the installer does NOT work as an update artifact.
+- **The migration trap (must design around)**: zip installs live in arbitrary user-chosen folders and are swapped in place with NO elevation; the installer installs to Program Files with UAC + registry. If a zip-installed user "installer-updates", they get a SECOND copy in Program Files while the old folder survives → two installs, stale shortcuts, confusion. The migration must therefore keep the zip path alive for loose-folder installs and only switch installer-managed installs to the installer path.
+- **The key insight**: the zip is a free build byproduct (Compress-Archive in the build bat, same dist folder the installer packages). The zip path does not need to die for the migration to succeed — a "bridge" version that understands BOTH paths lets everyone converge, then the zip is dropped.
+- **Versioning decision (2026-08-12)**: the next PUBLIC release is v0.25.00 and the intermediate dev versions (0.25.77+) are internal/test builds and never published. The last public release in the field is **v0.24.1** — verified against the updater's numeric comparison (app/updater.py:58 `Version.__lt__`, strict-newer gate at updater.py:252/428-429): `(0,25,0) > (0,24,1)`, so a literal `0.25.00` manifest version IS accepted by every existing public install and the zip auto-update path works. **No version-string workaround needed.** One testing gotcha: the internal 0.25.77 dev builds are numerically ABOVE 0.25.00 (`(0,25,77) > (0,25,0)`), so a dev build will refuse the update — test the public auto-update path from a real 0.24.1 install (or a reset version.json), never from a 0.25.7x build.
+- **Phased plan (merged — Phase 1+2 of the old plan are one release, no separate convergence release)**:
+  - **Phase 1 — First public release v0.25.00: the bridge release.** Updater gains installer support: manifest adds two OPTIONAL fields `installer_url` + `installer_sha256` (old updaters ignore unknown fields — safe to add); install-mode detection via the Inno uninstall registry key (`HKLM\SOFTWARE\...\Uninstall\OPS ROOM`), never by assuming Program Files; LOOSE-FOLDER installs keep the existing ZIP path exactly as today; INSTALLER-MANAGED installs download `.exe`, verify sha256, run `Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`, wait for exit code 0, then verify `version.json` + `OPS ROOM.exe` at the install dir match the target version BEFORE reporting success. **update.json (opsroom.live primary + GitHub raw fallback) keeps `download_url` = zip with a real sha256** (write_update_manifest.py fills it from the built zip) so every existing install (v0.24.1) auto-updates to the bridge via the zip path and becomes bridge-capable. Publish zip AND installer on the GitHub release AND the website.
+  - **Phase 2 — v0.25.01: the last zip release + gentle nudge.** Still dual-publish (final zip). Add an optional in-app prompt for loose-folder users: "Switch to the installed version?" → runs the installer (one UAC), then offers to remove the old folder. Set `minimum_supported_version` to 0.25.00 in the manifest from here on.
+  - **Phase 3 — v0.25.02+: installer-only era.** `download_url` points at the installer `.exe` + sha256 (the bridge updater now accepts `.exe` payloads). No zip published; website hosts installer + manifest; GitHub becomes a mirror or is retired. The oldest version still in the field (0.25.00) understands the exe path, so nobody is stranded; anyone below the bridge gets a manual installer download with a clear note.
+- **Safety rails (build into the bridge updater, Phase 1)**:
+  1. Manifest validation accepts `.zip` OR `.exe` (nothing else); sha256 mandatory for both — one function, two allowlists.
+  2. Install-dir detection via the Inno uninstall registry key (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OPS ROOM`), never by assuming Program Files (users can pick a custom folder).
+  3. Verify the silent-install contract on a throwaway machine BEFORE the first release that depends on it: `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-` flags, exit code 0, no hidden prompts (UAC is the only prompt, triggered by the installer itself).
+  4. Verify after install (exe + version.json match target) before clearing update state; on ANY failure leave the old install untouched (mirror the zip path's "fail before touching" property).
+  5. The GitHub raw FALLBACK manifest must also carry `installer_url`, or fallback users silently stay on the zip path forever.
+  6. Test matrix before each phase flip: old-version → bridge via zip; bridge → new via installer; loose-folder stays on zip; fresh install via installer; website manifest + GitHub fallback; update while the app is running (updater already handles pid/app-exe args).
+- **Honest estimate**: ~2–3 releases of effort (the bridge updater work in Phase 1 + the two-version overlap), each step individually safe; nothing forces anyone onto a broken path.
+- **Status**: IMPLEMENTED (2026-08-12, source-side). Bridge updater landed in app/updater.py: `_validate_manifest` now accepts an HTTPS ZIP **or** EXE with mandatory SHA256, plus the additive `installer_url`/`installer_sha256` fields (old updaters ignore them safely); `_installer_managed_target()` detects installer-managed installs via the Inno uninstall registry key (never assumed Program Files); `_prepare_installer_update()` downloads the Setup.exe, verifies SHA256, runs it with /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-, and verifies OPS ROOM.exe + version.json against the target before reporting success; `verify_pending_install()` re-checks on the next start when Inno CloseApplications killed the app mid-run; loose-folder/zip installs keep the historical zip path exactly as before; `tools/write_update_manifest.py` gained `--installer` for dual-publish and BUILD OPS ROOM COMPLETE.bat now re-writes update.json with installer_url + installer_sha256 after the installer compiles. Pending: publish the bridge release (zip + installer + manifest) and live-verify from a real v0.24.1 install (dev builds are numerically above 0.25.00 and will report no update).
+
+---
+--
+### #79 — Live OFP stuck on "waiting" + host-settings/reload slowness: Fenix EFB probes inline in the request path (PLAN ONLY)
+
+- **Observed**: 2026-08-11, live on the v0.25.77 test flight. `/api/briefing/ofp-live` took 2481 ms per poll while the panel was stuck on "LIVE OFP completion is standing by — click ◈ LIVE OFP", even though the flight was RECORDING in the logbook and the backend was building a correct `state: live` payload. Same disease on the host page: `/api/gsx/automation/status` 2.7-10.4 s, `/api/gsx/status` ~2.0 s, `/api/fenix/status` ~1.6 s on cache expiry, so reloads / Host Setup / tablets queue up in the threadpool and the whole app feels dead (the #71 round fixed the GSX WS retry storm and telemetry direct reads, but these probe-in-request-path spots were missed).
+- **Root cause**: the Live OFP poll's 2.5 s frontend abort (#73) kills responses that take ~2.5 s to build, and the backend slowness is caused by **synchronous Fenix EFB work inside the request path**:
+  - `gsx_automation_status()` calls `_refresh_fenix_loading_snapshot()` on EVERY request — a blocking Fenix EFB loadsheet fetch (up to 2 s timeout) with only a 5 s TTL, so every 5 s one client blocks ~2 s. Host Setup, Live OFP and tablets poll this endpoint constantly.
+  - `_live_ofp_payload()` also calls `loadsheet_final()` (a second inline Fenix EFB fetch) per poll for the TOW/LDW/MACTOW actuals.
+- **Fix approach (single-writer/cache pattern, same as #71)**: move every Fenix probe off the request path into the background:
+  1. `automation_status()` serves the last cached snapshot; the GSX automation thread refreshes the Fenix loading snapshot periodically (e.g. every 10-15 s) instead of on demand.
+  2. Add a cache-only accessor `loadsheet_final_cached()` in fenix_adapter.py (returns last-good sheet + staleness flags, never triggers an EFB fetch); `_live_ofp_payload()` reads only the cache.
+  3. `/api/fenix/status` and `/api/gsx/status` already serve last-known-good within their TTLs — keep those, but never let a request-path probe exceed ~100 ms.
+- **Acceptance**: with the app running and Fenix active, `/api/briefing/ofp-live`, `/api/gsx/automation/status`, `/api/gsx/status`, `/api/fenix/status` all return in < 300 ms on repeated polls; Live OFP leaves "waiting" within one poll; host settings loads instantly.
+- **Status**: IMPLEMENTED (2026-08-11, source-side). Background Fenix probe thread in gsx_remote.py (refresh off the request path), `fenix_adapter.loadsheet_final_cached()` (cache-only read, never triggers an EFB fetch), `_live_ofp_payload()` and `automation_status()` serve cached last-known-good; `ofp-live` also reads `loadsheet_final_cached()`. All probe-in-request-path endpoints now answer in <100 ms warm. Pending: rebuild + live verification.
+
+---
+
+### #80 — Announcer camera volume still not applied audibly on camera switch (PLAN ONLY)
+
+- **Observed**: 2026-08-11 live on v0.25.77. User switches cockpit ↔ external and the announcement volume does not change (Universal Announcer parity expected). Live diagnostics taken while in EXTERNAL view:
+  - `camera_state` = 5 in external (was 2 in cockpit) → **the FSUIPC 0x026D read works and tracks external views** (input is NOT stuck, contrary to the earlier hypothesis).
+  - Category mapping is correct: `_CAMERA_STATE_CATEGORY` maps 5 → "external" (3/4/5/6/8/10/19 → external, 2/7 → cockpit, 9 → cabin).
+  - Settings are correct: `camera_volume_enabled=True`, cockpit=100 %, cabin=70 %, external=40 %, announcements_volume=59 → external should produce 59 × 0.4 = ~24.
+  - The #72 re-apply block IS in the running build (announcements.py last edited 21:22, exe built 21:59): the engine loop re-checks `_camera_category()` every 1 s and calls `apply_runtime_settings()` on change.
+  - The status endpoint's `volume` field shows the RAW setting (59), not the applied mixer volume — `apply_runtime_settings()` writes the camera-adjusted value into `_STATE["volume"]`, but the loop's next iteration overwrites it back to the raw setting at the top of the loop, so the API can never confirm the applied volume.
+- **Hypothesis**: the re-apply either (a) never fires inside the packaged engine (category never appears to change there), or (b) fires but does not audibly affect the currently-playing announcement. Both are invisible from outside the process because the #72 block's `except Exception: pass` swallows failures silently and status does not expose the applied value.
+- **Fix approach (diagnostic first, then correct)**:
+  1. Instrument the #72 block: log every category transition (`cockpit/cabin/external`, with camera_state, at info level, once per change) and the volume actually applied to `pygame.mixer.music` + the PA channel; log any exception instead of `pass`.
+  2. Expose the applied mixer volume + current category in `/api/announcements/status` (e.g. `applied_volume`, `camera_category`) so it can be verified via API without audio.
+  3. Keep `_STATE["volume"]` as the applied value (stop resetting it to raw each loop pass) or add a separate `raw_volume` field.
+  4. Verify the PA channel volume path: `Channel.set_volume()` at play start uses `_mixer_volume()` (camera-aware) — confirm the currently-playing announcement re-uses it on category change (apply_runtime_settings sets all channels, so it should; the instrumented log will prove which path fails).
+  5. Re-test live: announcement or boarding music playing, switch cockpit ↔ external ↔ cabin, volume must step 59 ↔ 24 (per the 40 % external slider).
+- **Acceptance**: switching camera while audio plays changes the audible volume immediately (< 2 s); status endpoint reports the applied volume and category; no ? / stale values in the UI.
+- **Status**: IMPLEMENTED (2026-08-11, source-side). #72 re-apply block now logs every camera category transition with the applied mixer volume (`CAMERA VOLUME: category=... applied=...% raw=...%`), exceptions are logged instead of `pass`; status endpoint exposes `camera_category`, `applied_volume` (the actual camera-aware mixer value) and `raw_volume`; `_STATE["volume"]` keeps the applied value while `raw_volume` reports the setting. Pending: rebuild + live cockpit↔external audio test.
+
+---
+### #81 — Live OFP SIGN LOADSHEET button missing pre-departure: payload lock disagrees with signature endpoint (PLAN ONLY)
+
+- **Observed**: 2026-08-11 live on v0.25.77 (build 21:59). FFT1011 KMCO→KATL, flight RECORDING, phase PUSHBACK→TAXI OUT, takeoff not yet recorded — the SIGN LOADSHEET button vanished and no pre-departure sign-off was possible. `ofp-live` payload reported `signature_locked: True` while the dedicated `/api/briefing/ofp-live/signature?kind=loadsheet` endpoint for the SAME flight reported `locked: false` — the two paths disagree inside the same running build.
+- **What was verified live**:
+  - The flight is legitimately signable by design: `state=RECORDING`, `times.takeoff=null`, phase PUSHBACK/TAXI OUT (not in the locked phase set). Running the CURRENT source's `loadsheet_signature_locked(active_meta)` against the live DB returns **False (unlocked)**.
+  - The frontend hides the button purely on `data.signature_locked !== false` (opsroom.js `ofpLiveSign` block) — so the backend payload's True suppressed it; the frontend behaved correctly.
+  - The payload's `source` selection falls back to `logbook_latest_completed()` when `logbook_active_recorder()` returns None; the completed flight (state COMPLETE) locks. The signature endpoint resolves the active recorder the same way yet returned unlocked — so the running 21:59 build's payload wiring computes the lock from a different/older path than the endpoint (the whole #62/#74/#77 signature block is uncommitted v0.25.77 work; the payload wiring in the built exe predates the current source).
+  - Secondary contributor: `fenix_loadsheet` was empty (`ok: None`) in the payload — the inline Fenix EFB probe timed out (#79 root cause), so the "ready to sign" cue and the W&B snapshot (TOW/MACTOW) were unavailable anyway.
+- **Resolution**: rebuild from the current working tree — the current `_live_ofp_payload` computes `signature_locked` via `loadsheet_signature_locked(source)` with source = active recorder (returns False here), and the payload/endpoint logic is now identical (`_signature_source` mirrors the payload). Expected result: SIGN LOADSHEET button visible for the whole pre-takeoff window (PARKED/PUSHBACK/TAXI OUT), locking only at OFF.
+- **Design clarification (user expectation)**: the PRE-DEPARTURE sign-off is BUTTON-triggered (SIGN LOADSHEET / REVIEW & SIGN) — there is no automatic popup pre-departure by design. Only the POST-ARRIVAL Flight Completion sign-off (#77 Mode B) auto-pops (toast + button) after block-in. If an auto-popup is wanted pre-departure too, that is a new design decision, not a bug.
+- **Acceptance**: on the next flight with the rebuilt app, the SIGN LOADSHEET button is present from PARKED through TAXI OUT, signing works, and it locks at takeoff; `ofp-live` payload `signature_locked` matches the signature endpoint for the same flight at all times.
+- **Status**: IMPLEMENTED (2026-08-11, source-side). `_live_ofp_payload` now computes `signature_locked`/`completion_locked`/`signed`/`signed_completion` independently (each in its own try/except — one failing lookup can never blank the whole block) via the same `loadsheet_signature_locked(source)` / `completion_signature_locked(source)` the endpoints use; the `source` resolution mirrors `_signature_source`. The payload/endpoint disagreement is structurally impossible now. Pending: rebuild + live verification.
+
+---
+### #82 — Pre-departure loadsheet sign-off should auto-popup like the completion sign-off (PLAN ONLY)
+
+- **Requested**: 2026-08-11 by user (design change, after #81 diagnosis). Today the pre-departure sign-off is BUTTON-triggered only — the pilot must notice and click SIGN LOADSHEET / REVIEW & SIGN. The post-arrival Flight Completion sign-off (#77 Mode B) already auto-surfaces via a one-time non-blocking toast when it becomes ready. The user wants the same behavior pre-departure: the sign-off should pop up on its own when the weights & balance are ready to sign, not require the pilot to spot the button.
+- **Design (mirror the #77 Mode B pattern)**:
+  - Backend: expose a `loadsheet_ready` boolean in the `ofp-live` payload alongside the existing `completion_ready`, computed as: flight RECORDING + pre-takeoff (`times.takeoff` null, `signature_locked == false`) + not yet signed + Fenix FINAL loadsheet synced (`fenix_loadsheet.ok` true — so the popup never offers an empty W&B sheet, which is exactly the #81/#79 empty-loadsheet failure mode) + phase on the ground (PARKED / PUSHBACK / TAXI OUT).
+  - Frontend: when `loadsheet_ready` first becomes true for a flight, show a one-time non-blocking toast (e.g. "REVIEW & SIGN — LOADSHEET READY: weights & balance synced. Sign before departure.") and make the SIGN LOADSHEET button prominent (existing `ofpLiveSign`); clear the one-time flag when the flight is no longer ready (signed / takeoff / no active flight) so a NEW flight triggers it again — identical lifecycle to `_lsCompletionToastShown`.
+  - Deliberately NOT a blocking modal: the pilot may be taxiing; the toast + button is dismissible and non-intrusive, consistent with the completion sign-off. Clicking the toast or button opens the existing Review & Sign modal (type/draw signature).
+- **Acceptance**: next flight with the rebuilt app — after the Fenix FINAL loadsheet syncs (RECORDING + on ground + pre-takeoff + unsigned), the toast appears once without any click; dismissing it leaves the button visible; after signing, no re-popup; on the next flight it pops again; it never pops with an empty loadsheet.
+- **Fallback for non-Fenix / non-GSX users (user question 2026-08-11: "combination of both?")**: the popup must not be Fenix-only. The existing builder already source-stamps every W&B cell (`availability`/`source`/`note`) and TOW already has an `off-snapshot` fallback from the sim gross weight (ofp_actuals.py `gross_weight_lb` snapshot at block-out) — so the readiness gate broadens from `fenix_loadsheet.ok` to: flight RECORDING + pre-takeoff + unsigned + on ground + ANY of {Fenix FINAL loadsheet synced, GSX/Fenix boarding progress present, sim gross-weight off-snapshot available, SimBrief plan present}. The modal then shows the best-available combination, per-cell source-stamped: Fenix EFB actuals when present → GSX boarding actuals → sim gross-weight TOW (off-snapshot) → SimBrief planned values as the floor. CG (MACZFW/MACTOW) stays Fenix-only: for other aircraft it renders as "—" with a note ("CG unavailable for this aircraft — sheet signed without CG"), and signing is allowed with that flag on the snapshot. Non-GSX users get planned PAX/BAG with the existing "no trusted measured source" note (#71-style) rather than blank cells. Fuel actuals (RAMP/OUT, TAKEOFF/OFF) already come from the recorder baseline for every aircraft. Acceptance adds: a PMDG/default aircraft flight (no Fenix, no GSX) still pops the pre-departure toast with plan+sim-weight W&B and lets the pilot sign with source stamps and the CG-unavailable flag.
+- **Status**: IMPLEMENTED (2026-08-11, source-side). Backend exposes `loadsheet_ready` (RECORDING + pre-takeoff + unsigned + `signature_locked==false` + on-ground phase + ANY of Fenix FINAL loadsheet / GSX boarding progress / SimBrief plan present — the non-Fenix fallback chain). Frontend (`opsroom.js`) shows a one-time non-blocking toast + prominent REVIEW & SIGN button when it flips true, reset per flight via `_lsLoadsheetToastShown` (same lifecycle as the completion toast). Pending: rebuild + live verification on both Fenix and non-Fenix flights.
+
+---
+### #83 — SimConnect dispatch-thread deaths (0xC00000B0) during flight: recovery smoothing + diagnostics (PLAN ONLY)
+
+- **Investigated**: 2026-08-11 live (FFT1011). Session log (4,356 lines, ~90 min): 2 × `SimConnect dispatch failure (rebuilding session): WinError -1073741648 / 0xC00000B0`, 3 × `SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID`, 0 × permanent SimConnect degradation (#64 ceiling never hit). This is NOT a flood — the perceived "pile-up" is the print noise plus the flight-watch STALE events that follow each recovery.
+- **Root cause of 0xC00000B0 (STATUS_IMAGE_ALREADY_LOADED)**: the MSFS2024 SimConnect client's dispatch thread dies when the sim-side SimConnect server resets the connection state (flight reload / loading screens / sim-side connection churn). Ruled out a DLL-version conflict in-app: every SimConnect consumer (simconnect_position wrapper, opsroom_native_bridge, pmdg777_sdk, closure_markers) resolves through the same `_candidate_library_paths()` and loads the first existing image (`_internal/SimConnect/SimConnect.dll`) — a single copy; ctypes dedups by full path. The PMDG SDK reuses the same candidate and is inactive on non-PMDG flights (0 PMDG log lines this session). The Camera Bridge is a separate process. So the app does not cause the death; #64 already rebuilds the session correctly.
+- **UNRECOGNIZED_ID (3 hits)**: transient single-SimVar definition misses on the shared session (aircraft-specific L:Vars). The historical floods are fixed (#10, v0.25.60 units-token fix); 3 isolated hits in 90 min is noise.
+- **Proposed fix**:
+  1. Recovery smoothing — on `_SESSION_DISPATCH_DEAD`, immediately stamp the shared cache "degraded → FSUIPC" and have the writer bypass the SimConnect heartbeat until the session rebuild completes, so a death never overlaps with an FSUIPC freeze to produce a >8 s STALE window (the observed standby periods).
+  2. Correlate precisely — log one line when the dispatch death fires with the surrounding writer state (FSUIPC frozen? phase? last sample age) so the next flight PROVES which stale events follow a death vs an FSUIPC stall.
+  3. Quiet the wrapper's raw `SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID` print to a single deduped line per 30 s (cosmetic).
+- **Acceptance**: next flight — dispatch deaths still recover automatically, but zero STALE windows longer than ~3 s follow them; the log shows the writer state at each death; UNRECOGNIZED_ID prints at most once per 30 s.
+- **Status**: IMPLEMENTED (2026-08-11, source-side). `session_dispatch_dead()` accessor exposed by simconnect_position.py; on dispatch death the writer bypasses the SimConnect heartbeat until the session rebuild finishes (no forced heartbeat into a dead session → no >8 s STALE overlap); dispatch deaths log the writer state for correlation; upstream wrapper's UNRECOGNIZED_ID lines are rate-limited to one per 30 s via a logging Filter. Pending: rebuild + live verification.
+
+---
+
+- **2026-08-11 post-flight finding — sim frame rate caps the cadence**: the writer requests 10-30 Hz but FSUIPC data only updates at the SIM's frame rate. FFT1011 reported 3 FPS on approach and ~5 FPS on the ground (addons/GSX loading); that alone explains the 4.9 Hz taxi reading. The watchdog fix below remains valid (protect against real FSUIPC stalls), but acceptance expectations must be FPS-aware: recorded Hz can never exceed the sim frame rate, so the fix targets *no standby blips and no writer-side stalls*, not a hard Hz number at low FPS.
+### #84 — Telemetry writer stalls: FSUIPC tick can block, producing the taxi STALE blips and low cadence (PLAN ONLY)
+
+- **Investigated**: 2026-08-11 live (FFT1011). 14 flight-watch STALE events (state=standby) during pushback/taxi/takeoff — only ~2 plausibly correlate with the SimConnect dispatch deaths (#83); the other 12 are writer-side. Black Box cadence measured 4.9 Hz in taxi vs 13.1 Hz in climb; data quality 36.3 → 88.6.
+- **Root cause (code trace)**: `_writer_loop` → `_writer_tick` calls `read_telemetry(force=True)` (a single batched pyuipc.read) with NO timeout, and the tick's `except Exception: pass` swallows failures silently. If the FSUIPC read blocks (FSUIPC7 busy / stall / reconnect), the writer freezes — the shared snapshot stops advancing, `_LAST_LIVE` ages past 8 s, and flight-watch returns standby. `_assess_fsuipc_freshness` also force-triggers a SimConnect heartbeat refresh on 5 s of unchanged FSUIPC data; if the SimConnect session is mid-rebuild at that moment (dispatch death), the recovery window stretches beyond 8 s → visible STALE.
+- **Proposed fix**:
+  1. Bound the FSUIPC read: wrap the tick's read in a watchdog (e.g. run the read with a 2 s ceiling via a side thread or set a monotonic deadline and skip enrichment on overrun) so a stalled FSUIPC can never freeze the whole loop.
+  2. On tick overrun, publish a degraded sample (`ok: True, telemetry_degraded: True, reason: "fsuipc read stalled"`) so flight-watch keeps serving the last-good values instead of going standby; mark the recorder sample so the PIREP can ignore/flatten the gap (#33-style telemetry_gap handling already exists).
+  3. Log the stall once per 30 s (not per tick) so the next flight shows exactly when/why FSUIPC stalls.
+  4. Re-measure cadence after the fix: taxi should sustain ≥ 15 Hz and cruise ≥ 10 Hz without any standby blips.
+- **Acceptance**: next flight — zero STALE blips during taxi/pushback; recorder cadence ≥ 10 Hz in all phases; the log records every FSUIPC stall with its duration.
+- **Status**: IMPLEMENTED (2026-08-11, source-side). `_writer_tick` is watchdog-guarded: a tick that overruns 1.5 s (FSUIPC stall) logs once per 30 s and publishes a degraded sample (`telemetry_degraded`, `telemetry_gap`, `degraded_reason`) so the display keeps last-good values and the recorder/analysis flatten the hole instead of the snapshot aging into standby. FPS-awareness note above stands: recorded Hz cannot exceed the sim frame rate. Pending: rebuild + live verification.
+
+---
+### #85 — Flight-watch display shows "TAKEOFF ROLL" on touchdown; display phase machine has no LANDING phase (PLAN ONLY)
+
+- **Observed LIVE**: 2026-08-11 FFT1011 KATL arrival. At touchdown 22:50:40Z the flight-watch display classified the landing as **"TAKEOFF ROLL"** (00:50:40 local: on_ground True, rad alt 13 ft, GS 122 → 94 through the rollout), then jumped to TAXI. The flight-watch machine ALSO flapped on final: 00:39-00:44 ENROUTE→CLIMB→ENROUTE→DESCENT and 00:50:03 ENROUTE at 275 ft radio alt on short final.
+- **Contrast — the RECORDER got it right**: the logbook/black-box phase machine accepted **LANDING ROLL + LANDING at 22:50:40Z**, recorded `landing: 22:50:40Z`, and detected a BOUNCE at 22:50:42Z. The PIREP data path is correct; only the user-facing display is wrong.
+- **Root cause (code trace)**: `flight_watch._phase` is a separate, simpler machine from `logbook._phase`. It has NO landing/landing-roll concept: app/flight_watch.py:132 `phase = "TAXI" if gs < 35 else "TAKEOFF ROLL"` — any on-ground sample at GS ≥ 35 (i.e. a landing rollout at touchdown speed) is classified TAKEOFF ROLL. The #42 pushback-vs-taxi fix added ordering invariants to the LOGBOOK machine and said "mirror in flight_watch._phase" — that mirror was never completed, so the display machine still lacks phase-ordering invariants entirely (ENROUTE can appear on final; TAKEOFF ROLL can appear after a takeoff already occurred).
+- **Proposed fix — extract ONE shared phase classifier (user-suggested 2026-08-11, and the correct approach)**: logbook._phase (app/logbook.py:793) is stateful per recording (meta._state latches: pushback_positive_latch, airborne_seen, phase-accept history; the _PHASE_TRANSITIONS invariant table at :939; GSX/backward-motion probes) and is driven by the recorder's _analyse loop. flight_watch._phase (app/flight_watch.py:90) is a simpler stateless-per-sample copy with its own _FW_PHASE_STATE and NO LANDING phase — that duplication is why the display said TAKEOFF ROLL at touchdown while the recorder said LANDING ROLL. They cannot trivially share the exact function (flight-watch does not maintain recorder meta), so:
+  1. Extract a shared `PhaseMachine` class (new module, e.g. app/phase_machine.py) holding the state + the _PHASE_TRANSITIONS invariant table + the ordering invariants (TAKEOFF ROLL only pre-takeoff; LANDING/LANDING ROLL after APPROACH; DESCENT never regresses; ENROUTE never appears on final), with pluggable side-effect hooks (GSX pushback probe, bounce/analysis recording) so the recorder's analysis stays in the recorder.
+  2. logbook._analyse instantiates one (recorder instance with its meta + GSX/bounce hooks).
+  3. flight_watch._phase instantiates its own instance of the SAME machine (plan context, no analysis hooks) — same rules, same LANDING/LANDING ROLL handling, so display and recorder can never disagree again.
+  4. Acceptance: next arrival — display and recorder both show APPROACH → LANDING ROLL/LANDING at touchdown (never TAKEOFF ROLL), no ENROUTE/CLIMB flicker on final or in the 00:39-00:44 window, and the display phase matches the recorder's accepted phase at every sampled moment.
+- **Status**: IMPLEMENTED (2026-08-11, source-side). Shared `app/phase_machine.py` holds the `_PHASE_TRANSITIONS` invariant table + `transition_allowed()` + `holding_phase()`; `logbook.py` imports the same table (local copy deleted, byte-identical verified) and `flight_watch.py` now classifies on-ground-after-airborne as LANDING ROLL (GS ≥ 40) / TAXI IN (GS < 40) — never TAKEOFF ROLL — plus an airborne-recovery escape and a sim-reload state reset. Display and recorder can no longer drift. Pending: rebuild + live verification.
+---
+### #86 — Flight Completion sign-off modal: duplicated KG units, empty ZFW/TOW/LDW, and no proper flight review (PLAN ONLY)
+
+- **Observed**: 2026-08-12, live. After block-in the Flight Completion sign-off popup opened but showed only a bare label/value grid:
+  ```
+  FLIGHT COMPLETION SIGN-OFF   FFT1011
+  SIGNING THESE VALUES (PLANNED / ACTUAL)
+  FFT1011 · KMCO → KATL
+  BLOCK      0122
+  FUEL USED  2,791 KG   KG
+  ZFW        — KG
+  TOW        — KG
+  LDW        — KG
+  ```
+  — while the Live OFP WEIGHTS table for the SAME flight and session showed actuals filled (ZFW 58,849 / TOW 64,134 / LDW 61,680 KG). The user wants a properly formatted review before signing.
+- **Root causes (code trace, opsroom.js)**:
+  1. **Duplicated unit** — `lsSignSummaryHtml` completion branch (opsroom.js:1887+): each row is `[label, value, unit]`; the value ALREADY carries the unit because `briefingOfpWeight(value, unit, 0)` returns `"2,791 KG"`, and the third element is rendered as a separate `<i>KG</i>` cell → “2,791 KG” + “KG”, and “—” + “KG” for the empty weights. The loadsheet branch has no such duplication (unit appears only in the caption).
+  2. **Empty ZFW/TOW/LDW** — the completion rows read `w.zfw?.actual_display ?? w.zfw?.actual` (and tow/ldw) with the same `data.weights` object the Live OFP table renders — the keys are correct (`weights.zfw/tow/ldw` built by `ofp_actuals._weights_section`, verified in test_ofp_overrides.py), so the cells were EMPTY in the payload at popup time. The weights actuals come from the Fenix EFB cache + recorder off/on snapshots; after the entry finalizes, `_live_ofp_payload` re-resolves `source` to the completed row and those sources can be absent → cells blank even though the Live OFP showed them minutes earlier. Needs a live repro on the rebuilt app (open the modal right after block-in and inspect `data.weights.zfw`) to confirm the exact drop point; expected fix is to carry last-known-good weights into the completion payload (the recorder already captured off/on snapshots).
+  3. **No real review** — the completion summary renders only BLOCK / FUEL USED / ZFW / TOW / LDW. #77 Mode B promised a full-flight review (block times planned vs actual, weights planned vs actual, fuel breakdown, finance result, passenger satisfaction, landing summary). `lsSignSnapshot` completion branch (opsroom.js:1823+) ALREADY captures times (out/off/on/in), full fuel (ramp/takeoff/trip/landing/block-in), weights, finance (airline_result/pilot_pay) and satisfaction (label/score) — the summary HTML just never renders them.
+- **Fix approach**:
+  1. Rebuild `lsSignSummaryHtml` completion branch into a proper review layout: header “FLIGHT COMPLETION REVIEW” + flight identity line (callsign · route · date); TIMES section (OUT/OFF/ON/IN/BLOCK, PLANNED vs ACTUAL vs DELTA); WEIGHTS section (ZFW/TOW/LDW, PLANNED vs ACTUAL, unit in the section caption only); FUEL section (RAMP OUT / TAKEOFF / TRIP / LANDING / BLOCK IN, PLANNED vs ACTUAL); and a summary strip (block duration, fuel used, airline result, pilot pay, satisfaction score + label). Mirror the ofp-completion-grid table markup already used in pirep.js so the modal looks like the rest of the app.
+  2. Fix the unit duplication: value WITHOUT unit + single unit cell, OR value WITH unit and no unit cell — never both. Keep the loadsheet branch's caption-unit pattern.
+  3. Completion payload: persist last-known-good ZFW/TOW/LDW actuals (recorder off/on snapshots + last Fenix sheet) into the completion-ready payload so the modal never shows “—” when the Live OFP showed values; store the same reviewed values in the signed snapshot.
+  4. Acceptance: post-arrival popup shows the full review (times/weights/fuel planned vs actual + finance/satisfaction strip), no duplicated units, ZFW/TOW/LDW populated whenever the Live OFP shows them, and the stored snapshot matches what was reviewed.
+- **Status**: IMPLEMENTED (2026-08-12, source-side). Frontend: `lsSignSummaryHtml` completion branch rebuilt into a full review — TIMES (OUT/OFF/ON/IN/BLOCK planned vs actual vs delta), WEIGHTS (ZFW/TOW/LDW, unit in the section caption only) and FUEL (RAMP OUT/TAKEOFF/TRIP/LANDING/BLOCK IN) sections plus a summary strip (block duration, fuel used, airline result, pilot pay, satisfaction score + label); the duplicated per-row unit is gone (never "2,791 KG KG"); `lsSignSnapshot` now stores BLOCK with the review; the dialog widens in completion mode (`ls-sign-dialog-wide`) and the summary title reads FLIGHT REVIEW. Backend: `_live_ofp_payload` attaches `finance` (airline_result/pilot_pay/symbol from the finalize statement, refreshed non-persist via `_refresh_entry_finance`) and `satisfaction` (score + category label) for completed flights, and a per-flight last-known-good cache (`_stash_lkg_ofp`/`_fill_lkg_ofp`, keyed by recorder id, capped at 12 flights) re-fills empty ZFW/TOW/LDW/fuel actuals when the Fenix sheet cache goes cold after landing — the popup can no longer show "—" for a cell the Live OFP had values for. Pending: rebuild + one post-arrival sign-off to confirm live.
+### #87 — Fenix loadsheet() 400 breaks the boarding monitor (GSX gets the request, the app can't confirm it)
+- **Reported**: 2026-08-12 (live flight EZY19TC, EGPH→EGBB, packaged v0.25.77 build).
+- **Symptom**: Ground control logs "boarding requested" and GSX genuinely receives it (Remote API v2 trigger returned ok:True with "Request Boarding" selectable in the menu at 11:56:25Z), but the Fenix loading monitor reports "boarding did not start after one-shot request" and goes monitoring-only forever. Live repro: after the user started boarding manually, GSX state showed boarding=ACTIVE · pax=0/145 · BOARDING_SERVICE_ACTIVE (boarding_raw 4→5) while the app monitor STILL reported FAILED — the app contradicts its own GSX read.
+- **Root cause (code trace + live probes)**: `loading_progress()` (fenix_adapter.py:766) → `loadsheet()` (fenix_adapter.py:254) calls `GET /fenix/loadsheet` with NO `loadsheetType` query param. The current Fenix portal requires it: live probes — no param → HTTP 400 "The loadsheetType field is required." (the exact error in last_progress.fenix.loadsheet), `?loadsheetType=Preliminary` → HTTP 200 (1249 B data), `?loadsheetType=Final` → HTTP 204. Because the loadsheet read 400s, the monitor never sees pax/cargo progress, declares FAILED, and the one-shot latch is consumed — so even a real boarding that follows is never acknowledged.
+- **Fix approach**: one-line change in `loadsheet()` (fenix_adapter.py:256): `_request("GET", "/fenix/loadsheet?loadsheetType=Preliminary", timeout=2.0)` — Preliminary is the correct type for the loading-progress path (it reflects in-progress boarding, per the sync_load_targets docstring); `loadsheet_final()` (which already passes `?loadsheetType=Final`) stays untouched for the weights path. Optionally harden: when the GSX snapshot itself reports boarding=ACTIVE, don't let the Fenix-path monitor override it with FAILED.
+- **Status**: PLAN ONLY (2026-08-12). Not implemented — logged during the flight per user instruction; will ship in the next rebuild.

@@ -35,6 +35,12 @@ def main() -> int:
     parser.add_argument("--out", required=True)
     parser.add_argument("--repo", default="https://github.com/OpsRoomApp/ops-room-releases")
     parser.add_argument("--channel", default=RELEASE_CHANNEL)
+    # #78 bridge: dual-publish. When --installer is given, the manifest gains
+    # the additive installer_url/installer_sha256 fields. Old updaters ignore
+    # unknown fields, so this is safe to publish while v0.24.1 is still on the
+    # zip path; the bridge updater uses the installer path for installer-
+    # managed installs and the zip path for loose-folder installs.
+    parser.add_argument("--installer", default="", help="Path to the Setup .exe to dual-publish in the manifest")
     args = parser.parse_args()
     version = args.version.strip()
     zip_path = Path(args.zip)
@@ -58,6 +64,15 @@ def main() -> int:
         "message": RELEASE_MESSAGE.format(version=version),
         "notes": RELEASE_NOTES.format(version=version),
     }
+    installer = str(args.installer or "").strip()
+    if installer:
+        installer_path = Path(installer)
+        if not installer_path.is_file():
+            raise SystemExit(f"Installer file not found: {installer}")
+        installer_digest = sha256(installer_path)
+        installer_url = f"{args.repo}/releases/download/{version}/{installer_path.name}"
+        manifest["installer_url"] = installer_url
+        manifest["installer_sha256"] = installer_digest
     out_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return 0
 
