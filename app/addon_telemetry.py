@@ -30,6 +30,20 @@ _FENIX_TRANSIENT_IDENTITY_TOKENS = frozenset({
 })
 _STICKY_FAMILY: dict[str, Any] | None = None
 _STICKY_FAMILY_AT = 0.0
+# #98 T1: the Fenix LVar litmus must never probe a clearly non-Fenix identity.
+# Probes of LVars that do not exist on the loaded aircraft churn
+# SIMCONNECT_EXCEPTION_UNRECOGNIZED_ID on every enricher tick (4 Hz), which
+# counts as session failures and drives the shared SimConnect dispatch into
+# native heap corruption (0xC0000374). Gate strictly + cool down after an
+# all-None result so a non-Fenix aircraft is probed at most once per latch.
+_FENIX_NON_FENIX_MAKERS = frozenset({
+    "ASOBO", "BOEING", "COCKPIT", "DEFAULT", "FLYBYWIRE", "GENERIC", "INI",
+    "INIBUILDS", "LATIN", "MSFS", "NONE", "PLACEHOLDER", "PMDG", "TITLE",
+    "UNAVAILABLE", "UNKNOWN", "WORKINGTITLE", "WT",
+})
+_LITMUS_NEXT_ALLOWED_AT = 0.0
+_LITMUS_LAST_IDENTITY = ""
+_LITMUS_COOLDOWN_SECONDS = 120.0
 
 
 def _stable_family(aircraft: dict[str, Any] | None) -> dict[str, Any]:
@@ -150,6 +164,18 @@ def _identity(sample: dict[str, Any]) -> dict[str, Any]:
             _LAST_IDENTITY = dict(aircraft); _LAST_IDENTITY_AT = time.monotonic()
     except Exception:
         aircraft = {}
+    # #92: hold the last-known-good identity for the SESSION, not 5 s. The
+    # FSUIPC path carries no aircraft title and a mid-flight SimConnect outage
+    # would otherwise re-degrade the recorder's adapter to generic. The grace
+    # timer is refreshed here so the (expensive) SimConnect retry above keeps
+    # its ~5 s cadence — no extra sim traffic — while the sticky identity
+    # carries the family forward. A genuine aircraft change is still caught:
+    # once SimConnect (or a fresh sample aircraft dict) returns, the newer
+    # identity overwrites this fallback and _aircraft_changed() resets the
+    # adapter lock against it.
+    if _LAST_IDENTITY:
+        _LAST_IDENTITY_AT = time.monotonic()
+        return dict(_LAST_IDENTITY)
     return aircraft
 
 
@@ -403,7 +429,21 @@ def enrich_telemetry(sample: dict[str, Any], offset_reader: Callable[[list[tuple
         identity_tokens = frozenset(
             t for t in identity_text.replace("N/A", "NA").replace("-", " ").replace("/", " ").split() if t
         )
-        if not identity_text or (identity_tokens and identity_tokens <= _FENIX_TRANSIENT_IDENTITY_TOKENS):
+        # #98 T1: never probe on a blank identity; never probe when a known
+        # non-Fenix maker token is present (DEFAULT/GENERIC/ASOBO/PMDG/INI...);
+        # cooldown the whole litmus after an all-None (non-Fenix) verdict so a
+        # generic A320 stops hammering SimConnect with UNRECOGNIZED_ID reads.
+        if (
+            identity_text
+            and identity_tokens
+            and identity_tokens <= _FENIX_TRANSIENT_IDENTITY_TOKENS
+            and not (identity_tokens & _FENIX_NON_FENIX_MAKERS)
+            and time.monotonic() >= _LITMUS_NEXT_ALLOWED_AT
+        ):
+            if identity_text != _LITMUS_LAST_IDENTITY:
+                # new aircraft identity -> allow a fresh litmus probe
+                _LITMUS_LAST_IDENTITY = identity_text
+                _LITMUS_NEXT_ALLOWED_AT = 0.0
             fenix_specs = specs_for_family("fenix_a32x")
             if fenix_specs:
                 try:
@@ -413,10 +453,16 @@ def enrich_telemetry(sample: dict[str, Any], offset_reader: Callable[[list[tuple
                     # telemetry tick. "Number" is the correct generic float units.
                     lvar_requests = [(s.lvar, "Number") for s in probe_specs]
                     values = list(simconnect_reader(lvar_requests))
+                    # #98 T1: an all-None probe verdict (LVars do not exist on the
+                    # loaded aircraft) parks the litmus for the cooldown window so
+                    # the enricher stops churning UNRECOGNIZED_ID reads. The latch
+                    # resets when the aircraft identity text changes.
+                    if not values or not any(v is not None for v in values) or len(values) != len(lvar_requests):
+                        _LITMUS_NEXT_ALLOWED_AT = time.monotonic() + _LITMUS_COOLDOWN_SECONDS
                     # Only force the Fenix family when the probe actually returned a
                     # readable value — an all-None result means the LVars do not exist
                     # on the loaded aircraft (avoid false-positive family detection).
-                    if values and any(v is not None for v in values) and len(values) == len(lvar_requests):
+                    elif any(v is not None for v in values) and len(values) == len(lvar_requests):
                         family = {"key": "fenix_a32x", "label": FAMILY_LABELS["fenix_a32x"], "supported": True, "aircraft_text": identity_text}
                         adapter.update({
                             "key": "fenix_a32x",

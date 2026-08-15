@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import math
-from ctypes import POINTER, Structure, byref, c_double, c_uint32, cast, sizeof
+from ctypes import POINTER, Structure, byref, c_double, c_int32, c_uint32, cast, sizeof
 import os
 import sys
 import threading
@@ -13,6 +13,22 @@ from pathlib import Path
 from typing import Any
 
 from .aircraft_adapters import detect_adapter
+
+
+def _clean_text(value: Any) -> str:
+    """Decode SimConnect string SimVars that arrive as bytes (#92).
+
+    The vendored SimConnect wrapper returns the TITLE / ATC_MODEL / ATC_TYPE
+    string SimVars as ``bytes`` on some builds; ``str(b"FenixA320")`` produces
+    the literal ``b"FenixA320"`` text that leaked into recorder metadata, the
+    Procedures aircraft label and the Live OFP. Decode bytes first, then strip.
+    """
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            return value.decode("utf-8", "replace").strip()
+        except Exception:
+            pass
+    return str(value or "").strip()
 
 class _SimConnectLogRateLimit(logging.Filter):
     """#83: rate-limit the upstream wrapper's per-exception warn lines.
@@ -96,29 +112,73 @@ _SESSION_CRASH_CEILING = 5
 _SESSION_CRASH_WINDOW_SECONDS = 300.0
 _SESSION_PERMANENTLY_DEGRADED = False
 
+# #64 follow-up: auto-recover the degradation instead of staying off until an
+# app restart. After the crash ceiling, SimConnect is parked for an escalating
+# cooldown; when the cooldown expires, ONE fresh rebuild is attempted. If the
+# sim-side connection has recovered (loading screen done / session reset), the
+# session re-establishes and the epoch resets. If it crashes again, the next
+# cooldown is longer. This keeps the heap-safety of #64 (no 2 ms dispatch-loop
+# thrash) while restoring SimConnect automatically.
+#
+# #108 (2026-08-13): the cooldown auto-recovery is now scoped to the probe
+# WORKER subprocess only (fresh native heap per process). The MAIN app process
+# parks SimConnect permanently after the crash ceiling — every rebuild on the
+# same damaged heap re-opens the session that trips ntdll 0xC0000374 (observed
+# live: 4 session rebuilds in 10 min, crash 1 s after a cooldown-triggered
+# SIM OPEN). Main-process reads now come from the worker pipe / FSUIPC / HTTP
+# bridge paths; only an app restart resets the main-process park.
+_SESSION_DEGRADED_UNTIL = 0.0
+_SESSION_DEGRADATION_EPOCHS = 0
+_SESSION_DEGRADE_COOLDOWNS = (120.0, 300.0, 600.0, 900.0)
+# A rebuilt session must stay alive this long before the degradation epoch is
+# reset (proves the recovery attempt actually stuck rather than a brief blip).
+_SESSION_RECOVERY_HEALTHY_SECONDS = 120.0
+
 
 def _note_dispatch_crash() -> bool:
-    """Count a dispatch-thread death and decide whether SimConnect is done.
+    """Count a dispatch-thread death and decide whether to park SimConnect.
 
-    Returns True once the crash ceiling is reached (SimConnect permanently
-    disabled for this run) so callers can stop retrying into a corrupt heap.
+    Returns True once the crash ceiling is reached, so callers can stop
+    retrying into a corrupt heap for the current cooldown.
+
+    #108 (2026-08-13): in the MAIN app process the park is permanent — the
+    first dispatch death parks SimConnect for the rest of the run (crash
+    ceiling of 1). Every session rebuild on the same process heap re-opens
+    the corrupt native session that trips ntdll 0xC0000374; the live crash
+    happened on the 4th rebuild (SIM OPEN 21:50:21 -> crash 21:50:22), well
+    before the old ceiling of 5 was ever reached. The probe WORKER subprocess
+    keeps its own crash ceiling (5 / escalating cooldown) because it owns a
+    fresh native heap per process and is respawned on death.
     """
     global _SESSION_CRASH_COUNT, _SESSION_CRASH_WINDOW_START, _SESSION_PERMANENTLY_DEGRADED
+    global _SESSION_DEGRADED_UNTIL, _SESSION_DEGRADATION_EPOCHS
     now = time.monotonic()
     if now - _SESSION_CRASH_WINDOW_START > _SESSION_CRASH_WINDOW_SECONDS:
         _SESSION_CRASH_COUNT = 0
         _SESSION_CRASH_WINDOW_START = now
     _SESSION_CRASH_COUNT += 1
-    if _SESSION_CRASH_COUNT >= _SESSION_CRASH_CEILING:
+    ceiling = _SESSION_CRASH_CEILING if _is_probe_worker_process() else 1
+    if _SESSION_CRASH_COUNT >= ceiling:
         if not _SESSION_PERMANENTLY_DEGRADED:
+            cooldown = _SESSION_DEGRADE_COOLDOWNS[min(_SESSION_DEGRADATION_EPOCHS, len(_SESSION_DEGRADE_COOLDOWNS) - 1)]
+            _SESSION_DEGRADED_UNTIL = now + cooldown
+            _SESSION_DEGRADATION_EPOCHS += 1
             print(
-                "SimConnect disabled for this session: "
-                f"{_SESSION_CRASH_COUNT} dispatch crashes in "
+                "SimConnect parked: "
+                f"{_SESSION_CRASH_COUNT} dispatch crash(es) in "
                 f"{int(now - _SESSION_CRASH_WINDOW_START)}s. "
-                "Degrading to the FSUIPC/WASM path for the rest of this run; "
-                "restart the app to retry SimConnect."
+                + (
+                    f"Permanently parked for this run (heap safety); "
+                    "FSUIPC + worker probe paths remain active."
+                    if not _is_probe_worker_process()
+                    else f"Degrading to the FSUIPC/WASM path for {int(cooldown)}s; "
+                    "SimConnect will be retried automatically after the cooldown."
+                )
             )
         _SESSION_PERMANENTLY_DEGRADED = True
+        # Start a fresh crash window for the next recovery attempt.
+        _SESSION_CRASH_COUNT = 0
+        _SESSION_CRASH_WINDOW_START = now
         return True
     return False
 
@@ -266,6 +326,160 @@ _BATCH_NAMES: list[str] = [
 ]
 _BATCH_STRING_CACHE: dict[str, Any] = {"t": 0.0, "title": "", "model": "", "type": ""}
 _BATCH_STRING_INTERVAL: float = 0.5
+
+# #80: dedicated single-SimVar CAMERA_STATE read. The FSUIPC 0x026D camera
+# offset does not reliably track MSFS2024 external camera states, so the
+# announcer camera-volume path falls back to the authoritative SimConnect
+# CAMERA_STATE enum. This is one INT32 SimVar, one definition, one request at
+# ~1 Hz — negligible traffic and fully independent of the numeric batch above
+# (which is FLOAT64 and cannot carry the enum).
+_CAMERA_STATE_STATE: dict[str, Any] = {
+    "sm_id": None,
+    "def_id": None,
+    "request_id": None,
+    "done": None,
+    "result": None,
+    "backoff_until": 0.0,
+    "cache_until": 0.0,
+    "cached_value": None,
+}
+
+
+def _camera_state_ensure(sm: Any) -> bool:
+    """Define the CAMERA_STATE enum data definition on the current session."""
+    if _CAMERA_STATE_STATE.get("sm_id") == id(sm) and _CAMERA_STATE_STATE.get("def_id") is not None:
+        return True
+    # #98 T1: a session that cannot define CAMERA_STATE (SIMCONNECT_EXCEPTION_
+    # NAME_UNRECOGNIZED on some aircraft/sessions) must not be retried on every
+    # announcer tick — that definition churn feeds the dispatch loop that ends
+    # in native heap corruption. Park the attempt for 30 s.
+    if time.monotonic() < float(_CAMERA_STATE_STATE.get("backoff_until") or 0.0):
+        return False
+    _CAMERA_STATE_STATE.update({"sm_id": None, "def_id": None, "request_id": None, "done": None, "result": None})
+    try:
+        from SimConnect.Constants import SIMCONNECT_UNUSED  # type: ignore
+        from SimConnect.Enum import SIMCONNECT_DATATYPE  # type: ignore
+
+        def_id = sm.new_def_id()
+        request_id = sm.new_request_id()
+        hr = sm.dll.AddToDataDefinition(
+            sm.hSimConnect, def_id.value, b"CAMERA_STATE", b"Enum",
+            SIMCONNECT_DATATYPE.SIMCONNECT_DATATYPE_INT32, 0, SIMCONNECT_UNUSED,
+        )
+        if not sm.IsHR(hr, 0):
+            _CAMERA_STATE_STATE["backoff_until"] = time.monotonic() + 30.0
+            return False
+        _CAMERA_STATE_STATE.update({
+            "sm_id": id(sm), "def_id": def_id, "request_id": request_id,
+            "done": threading.Event(), "result": None, "backoff_until": 0.0,
+        })
+        # Ensure the shared SimObject dispatch hook is installed so the
+        # camera-state response is parsed (the same handler also serves the
+        # numeric batch).
+        _install_batch_dispatch(sm)
+        return True
+    except Exception:
+        _CAMERA_STATE_STATE.update({"sm_id": None, "def_id": None, "request_id": None, "done": None})
+        return False
+
+
+def _read_camera_state_raw(sm: Any) -> int | None:
+    """One-request CAMERA_STATE read; None on failure (caller falls back)."""
+    if _CAMERA_STATE_STATE.get("sm_id") != id(sm) or _CAMERA_STATE_STATE.get("def_id") is None:
+        return None
+    if time.monotonic() < float(_CAMERA_STATE_STATE.get("backoff_until") or 0.0):
+        return None
+    try:
+        from SimConnect.Enum import SIMCONNECT_SIMOBJECT_TYPE  # type: ignore
+
+        done = _CAMERA_STATE_STATE["done"]
+        _CAMERA_STATE_STATE["result"] = None
+        done.clear()
+        hr = sm.dll.RequestDataOnSimObjectType(
+            sm.hSimConnect,
+            _CAMERA_STATE_STATE["request_id"].value,
+            _CAMERA_STATE_STATE["def_id"].value,
+            0,
+            SIMCONNECT_SIMOBJECT_TYPE.SIMCONNECT_SIMOBJECT_TYPE_USER,
+        )
+        if not sm.IsHR(hr, 0):
+            return None
+        if not done.wait(timeout=0.2):
+            _CAMERA_STATE_STATE["backoff_until"] = time.monotonic() + 5.0
+            return None
+        result = _CAMERA_STATE_STATE.get("result")
+        _CAMERA_STATE_STATE["result"] = None
+        return int(result) if result is not None else None
+    except Exception:
+        return None
+
+
+def _camera_state_read_in_process() -> int | None:
+    """Raw in-process CAMERA_STATE read, never routed through the worker.
+
+    Used by the probe worker's ``camera`` handler and by
+    ``camera_state_simconnect``'s non-worker fallback. The worker MUST NOT
+    call the public function: in packaged builds it routes through the probe
+    client, which spawns a NEW worker to answer the same request, which does
+    the same -- an unbounded probe-worker fork bomb (observed live 2026-08-14:
+    ~80 OPS ROOM.exe --probe-worker processes chained parent->child).
+    """
+    if _SESSION_PERMANENTLY_DEGRADED or _SESSION_DISPATCH_DEAD:
+        return None
+    value: int | None = None
+    try:
+        with _LOCK:
+            diagnostics = simconnect_diagnostics()
+            if not diagnostics.get("dll_path"):
+                value = None
+            else:
+                sm, _aq = _ensure_session(diagnostics)
+                if _camera_state_ensure(sm):
+                    value = _read_camera_state_raw(sm)
+    except Exception:
+        value = None
+    return value
+
+
+def camera_state_simconnect() -> int | None:
+    """Public, cached CAMERA_STATE read for the announcer volume path (#80).
+
+    Returns the SimConnect camera-state enum (2 cockpit, 3/4/5/6 external,
+    7 sixdof, 9 showcase/cabin, ...) or None when SimConnect is unavailable
+    (degraded/parked/not loaded) so the caller falls back to FSUIPC 0x026D.
+    Cached ~0.5 s so a 1 Hz poll never exceeds one cheap request per second.
+
+    #108 next tier: in packaged builds the read goes through the probe worker
+    (the main process never opens SimConnect for reads); source/dev runs keep
+    the in-process path unless ``OPSROOM_PROBE_WORKER=1``.
+    """
+    global _CAMERA_STATE_STATE
+    now = time.monotonic()
+    if _CAMERA_STATE_STATE.get("cached_value") is not None and now < float(_CAMERA_STATE_STATE.get("cache_until") or 0.0):
+        return int(_CAMERA_STATE_STATE["cached_value"])
+    if _is_probe_worker_process():
+        # Inside the probe worker itself: read in-process directly. Routing
+        # through the probe client here would spawn a NEW worker to serve the
+        # same request, and that worker would do the same -- fork bomb.
+        value = _camera_state_read_in_process()
+        _CAMERA_STATE_STATE["cached_value"] = value
+        _CAMERA_STATE_STATE["cache_until"] = now + (0.5 if value is not None else 2.0)
+        return value
+    worker_value = _worker_camera_state()
+    if worker_value is not None:
+        _CAMERA_STATE_STATE["cached_value"] = worker_value
+        _CAMERA_STATE_STATE["cache_until"] = now + 0.5
+        return worker_value
+    if _worker_reads_enabled():
+        # Packaged build: the worker is the only SimConnect client for reads -
+        # never fall back to opening a main-process session here.
+        _CAMERA_STATE_STATE["cached_value"] = None
+        _CAMERA_STATE_STATE["cache_until"] = now + 2.0
+        return None
+    value = _camera_state_read_in_process()
+    _CAMERA_STATE_STATE["cached_value"] = value
+    _CAMERA_STATE_STATE["cache_until"] = now + (0.5 if value is not None else 2.0)
+    return value
 
 
 class _ReplayPose(Structure):
@@ -560,16 +774,56 @@ def _note_session_read_result(ok: bool) -> None:
         _close_session()
 
 
+def _maybe_reset_recovery_epoch() -> None:
+    """Reset the escalating cooldown once a rebuilt session proves healthy."""
+    global _SESSION_DEGRADATION_EPOCHS
+    if _SESSION_DEGRADATION_EPOCHS and _SESSION_STARTED and time.monotonic() - _SESSION_STARTED >= _SESSION_RECOVERY_HEALTHY_SECONDS:
+        _SESSION_DEGRADATION_EPOCHS = 0
+
+
+def _is_probe_worker_process() -> bool:
+    """True when running inside the isolated probe worker subprocess.
+
+    The worker owns its own process (fresh native heap), so its session may
+    safely recover after a dispatch crash — if it corrupts, only the worker
+    dies and the client respawns it. The MAIN app process must NEVER rebuild:
+    every rebuild after a dispatch death re-opens SimConnect on the same
+    (already damaged) heap, which is what trips ntdll 0xC0000374 (#98, #108).
+    """
+    return "--probe-worker" in sys.argv
+
+
 def _ensure_session(diagnostics: dict[str, Any]) -> tuple[Any, Any]:
-    global _SESSION_SM, _SESSION_AQ, _SESSION_STARTED
+    global _SESSION_SM, _SESSION_AQ, _SESSION_STARTED, _SESSION_PERMANENTLY_DEGRADED
+    global _LAST_REBUILD_AT  # assigned inside the degraded-cooldown branch below
     if _SESSION_PERMANENTLY_DEGRADED:
-        # #64: repeated native dispatch crashes have poisoned the heap; never
-        # rebuild again this run. Callers already fall back to FSUIPC/WASM.
-        raise ConnectionError(
-            "SimConnect disabled for this session (repeated dispatch crashes); "
-            "degraded to the FSUIPC/WASM path."
-        )
+        now = time.monotonic()
+        if _is_probe_worker_process():
+            # Worker process: a fresh heap per process, so one guarded recovery
+            # attempt after the cooldown is safe (its death is contained and
+            # the client respawns it with a clean heap anyway).
+            if now < _SESSION_DEGRADED_UNTIL:
+                remaining = max(0.0, _SESSION_DEGRADED_UNTIL - now)
+                raise ConnectionError(
+                    "SimConnect parked after repeated dispatch crashes; "
+                    f"auto-retry in {remaining:.0f}s (FSUIPC/WASM active meanwhile)."
+                )
+            _SESSION_PERMANENTLY_DEGRADED = False
+            _LAST_REBUILD_AT = 0.0
+            print("SimConnect recovery attempt: crash cooldown expired, rebuilding the session")
+        else:
+            # Main app process: permanently parked for the rest of this run.
+            # Rebuilding on the same heap is exactly what produced the
+            # 0xC0000374 heap-corruption crashes (observed: SIM OPEN at
+            # 21:50:21 -> crash at 21:50:22 after a cooldown-triggered
+            # rebuild). All reads now come from the worker subprocess
+            # (LVars) / FSUIPC (telemetry) / the HTTP bridge (GSX, camera).
+            raise ConnectionError(
+                "SimConnect permanently parked for this run after dispatch crashes "
+                "(heap safety); FSUIPC + worker probe paths remain active."
+            )
     if _SESSION_SM is not None and _SESSION_AQ is not None and getattr(_SESSION_SM, "ok", False) and not _SESSION_DISPATCH_DEAD:
+        _maybe_reset_recovery_epoch()
         return _SESSION_SM, _SESSION_AQ
     _close_session()
     now = time.monotonic()
@@ -1176,9 +1430,9 @@ def _read_position_uncached() -> dict[str, Any]:
             pass
 
         aircraft_info = {
-            "title": str(aircraft_title or "").strip(),
-            "model": str(aircraft_model or "").strip(),
-            "type": str(aircraft_type or "").strip(),
+            "title": _clean_text(aircraft_title),
+            "model": _clean_text(aircraft_model),
+            "type": _clean_text(aircraft_type),
         }
         adapter = detect_adapter(aircraft_info)
 
@@ -1424,6 +1678,17 @@ def _install_batch_dispatch(sm: Any) -> None:
 
     def handler(pObjData: Any) -> None:
         try:
+            # #80: CAMERA_STATE single INT32 request (independent of the numeric
+            # FLOAT64 batch above).
+            cam_req = _CAMERA_STATE_STATE.get("request_id")
+            cam_done = _CAMERA_STATE_STATE.get("done")
+            cam_req_int = getattr(cam_req, "value", cam_req)
+            if cam_req_int is not None and cam_done is not None and int(pObjData.dwRequestID) == int(cam_req_int):
+                n = int(getattr(pObjData, "dwDefineCount", 0) or 0)
+                if n == 1:
+                    _CAMERA_STATE_STATE["result"] = int(cast(pObjData.dwData, POINTER(c_int32))[0])
+                    cam_done.set()
+                return
             request_id = _BATCH_STATE.get("request_id")
             done = _BATCH_STATE.get("done")
             request_id_int = getattr(request_id, "value", request_id)
@@ -1532,9 +1797,9 @@ def _read_position_minimal_batch(sm: Any, aq: Any, diagnostics: dict[str, Any]) 
             try:
                 _BATCH_STRING_CACHE.update({
                     "t": now,
-                    "title": str(aq.get("TITLE") or "").strip(),
-                    "model": str(aq.get("ATC_MODEL") or "").strip(),
-                    "type": str(aq.get("ATC_TYPE") or "").strip(),
+                    "title": _clean_text(aq.get("TITLE")),
+                    "model": _clean_text(aq.get("ATC_MODEL")),
+                    "type": _clean_text(aq.get("ATC_TYPE")),
                 })
             except Exception:
                 pass
@@ -1788,9 +2053,9 @@ def _read_position_minimal_uncached() -> dict[str, Any]:
                 pass
 
         aircraft_info = {
-            "title": str(_lr("_lr_aircraft_title") or "").strip(),
-            "model": str(_lr("_lr_aircraft_model") or "").strip(),
-            "type": str(_lr("_lr_aircraft_type") or "").strip(),
+            "title": _clean_text(_lr("_lr_aircraft_title")),
+            "model": _clean_text(_lr("_lr_aircraft_model")),
+            "type": _clean_text(_lr("_lr_aircraft_type")),
         }
         adapter = detect_adapter(aircraft_info)
 
@@ -1845,6 +2110,59 @@ def _read_position_minimal_uncached() -> dict[str, Any]:
         return {"ok": False, "reason": f"Minimal SimConnect position read failed: {exc}", "diagnostics": simconnect_diagnostics()}
 
 
+def _worker_reads_enabled() -> bool:
+    """True when the main process routes SimConnect READS through the worker.
+
+    #108 next tier: in packaged builds the main process NEVER opens SimConnect
+    for reads - position, identity and camera all come from the probe worker
+    subprocess, which owns its own native heap and is respawned on death. That
+    is what eliminates the 0xC0000374 heap-corruption class for every user,
+    with or without FSUIPC. Source/dev runs keep the in-process read path
+    (simpler to debug, and the crash class is packaged-app-specific) unless
+    ``OPSROOM_PROBE_WORKER=1`` explicitly enables the worker for live
+    verification. ``OPSROOM_PROBE_WORKER=0`` forces it off.
+    """
+    flag = os.getenv("OPSROOM_PROBE_WORKER", "").strip().lower()
+    if flag == "1":
+        return True
+    if flag == "0":
+        return False
+    return bool(getattr(sys, "frozen", False))
+
+
+def _worker_read_position() -> dict[str, Any] | None:
+    """Full position sample through the probe worker; None = worker unavailable."""
+    if not _worker_reads_enabled():
+        return None
+    try:
+        from .simconnect_probe_client import read_position as _worker_read
+        return _worker_read()
+    except Exception:
+        return None
+
+
+def _worker_read_minimal() -> dict[str, Any] | None:
+    """Minimal position sample through the probe worker; None = unavailable."""
+    if not _worker_reads_enabled():
+        return None
+    try:
+        from .simconnect_probe_client import read_position_minimal as _worker_read
+        return _worker_read()
+    except Exception:
+        return None
+
+
+def _worker_camera_state() -> int | None:
+    """CAMERA_STATE enum through the probe worker; None = unavailable."""
+    if not _worker_reads_enabled():
+        return None
+    try:
+        from .simconnect_probe_client import camera_state as _worker_camera
+        return _worker_camera()
+    except Exception:
+        return None
+
+
 def read_position_minimal(force: bool = False) -> dict[str, Any]:
     """Light-perimeter SimConnect read used by the Black Box record loop.
 
@@ -1855,7 +2173,22 @@ def read_position_minimal(force: bool = False) -> dict[str, Any]:
     absent field as ``None``.  The Black Box record loop is the only caller
     and always passes ``force=True``, so this function is always fresh and
     non-poisoning by design.
+
+    #108 next tier: in packaged builds this reads through the probe worker so
+    the main process never opens SimConnect. If the worker is unavailable the
+    read fails fast (never opens a main-process session in packaged builds);
+    source/dev runs keep the in-process path.
     """
+    worker_result = _worker_read_minimal()
+    if worker_result is not None:
+        return _sanitize_telemetry(worker_result)
+    if _worker_reads_enabled():
+        return {
+            "ok": False,
+            "reason": "SimConnect worker unavailable; reads are worker-isolated in this build",
+            "diagnostics": simconnect_diagnostics(),
+            "minimal": True,
+        }
     with _LOCK:
         result = _sanitize_telemetry(_read_position_minimal_uncached())
         _note_session_read_result(bool(result.get("ok")))
@@ -1868,14 +2201,28 @@ def read_position(force: bool = False) -> dict[str, Any]:
     Failures are returned as structured data so the FIDS remains usable with
     manual airport selection. A very short cache prevents duplicate connection
     attempts when several endpoints are requested together.
+
+    #108 next tier: in packaged builds the read goes through the probe worker
+    (the main process never opens SimConnect for reads); source/dev runs keep
+    the in-process path unless ``OPSROOM_PROBE_WORKER=1``.
     """
     global _CACHE, _CACHE_TIME
     now = time.monotonic()
     with _LOCK:
         if not force and _CACHE is not None and now - _CACHE_TIME < _CACHE_SECONDS:
             return dict(_CACHE)
-        result = _sanitize_telemetry(_read_position_uncached())
-        _note_session_read_result(bool(result.get("ok")))
+        worker_result = _worker_read_position()
+        if worker_result is not None:
+            result = _sanitize_telemetry(worker_result)
+        elif _worker_reads_enabled():
+            result = {
+                "ok": False,
+                "reason": "SimConnect worker unavailable; reads are worker-isolated in this build",
+                "diagnostics": simconnect_diagnostics(),
+            }
+        else:
+            result = _sanitize_telemetry(_read_position_uncached())
+            _note_session_read_result(bool(result.get("ok")))
         _CACHE = dict(result)
         _CACHE_TIME = time.monotonic()
         return result

@@ -24,8 +24,25 @@ dist_installer/
 dist/
 build/
 
+# Legacy frontend build tooling (Babel)
+node_modules/
+
 # Navigation databases
 app/data/navigation/*.sqlite
 
 # FAA NMS-API reference docs & sample credentials (keep out of VCS)
 FAA NMS API/
+# MSFS SDK packager build outputs (ops-room-tablet-src)
+tools/simobjects/package/ops-room-tablet-src/Packages/
+tools/simobjects/package/ops-room-tablet-src/_Temp/
+
+# Local scratch / probe / third-party artifacts (do not commit)
+.scratch_monitor.py
+dist.zip
+fenix_main_bundle.js
+fenix_loadsheet_probe.json
+lb_probe.json
+monitor_checkpoints.txt
+
+# MSFS SDK packager local feedback/output (test artifacts)
+tools/simobjects/feedback/

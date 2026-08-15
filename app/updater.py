@@ -23,7 +23,7 @@ FALLBACK_MANIFEST_URL = "https://raw.githubusercontent.com/OpsRoomApp/ops-room-r
 DEFAULT_MANIFEST_URL = PRIMARY_MANIFEST_URL
 STATE_FILE = "update_state.json"
 DOWNLOAD_TIMEOUT = 25
-DEFAULT_VERSION = "0.25.77"
+DEFAULT_VERSION = "0.25.0"
 
 
 @dataclass(frozen=True)
@@ -182,6 +182,16 @@ def _validate_manifest(data: dict[str, Any]) -> dict[str, Any]:
         _hex64(installer_sha)
         data["installer_url"] = installer_url
         data["installer_sha256"] = installer_sha
+    # Website-primary manifests carry a GitHub fallback for the installer too.
+    fallback_installer_url = str(data.get("fallback_installer_url") or "").strip()
+    fallback_installer_sha = str(data.get("fallback_installer_sha256") or "").strip()
+    if fallback_installer_url:
+        if not fallback_installer_url.lower().startswith("https://") or not fallback_installer_url.lower().endswith(".exe"):
+            raise ValueError("Update manifest fallback_installer_url must be an HTTPS EXE.")
+        if fallback_installer_sha:
+            _hex64(fallback_installer_sha)
+            data["fallback_installer_sha256"] = fallback_installer_sha
+        data["fallback_installer_url"] = fallback_installer_url
     # v0.25.60: Normalise optional fields for downstream consumers
     if fallback_url:
         data["fallback_download_url"] = fallback_url
@@ -298,7 +308,9 @@ def check_for_update(force: bool = False) -> dict[str, Any]:
         "remote_version": latest,
         "installed_version": installed,
         "download_url": download_url,
+        "fallback_download_url": str(manifest.get("fallback_download_url") or "").strip(),
         "installer_url": installer_url,
+        "fallback_installer_url": str(manifest.get("fallback_installer_url") or "").strip(),
         "installer_sha256": installer_sha,
         "install_mode": install_mode,
         "update_available": available,
@@ -366,6 +378,39 @@ def _download(url: str, target: Path, version: str = "") -> None:
         raise ValueError("Downloaded update file is empty.")
 
     os.replace(part, target)
+
+
+def _download_with_fallback(urls: list[str], target: Path, version: str = "", expected_sha: str = "") -> str:
+    """Download from the first URL that works, verifying the SHA256 once.
+
+    ``urls`` is ordered primary-first (website, then GitHub fallback). The
+    fallback is used when the primary is unreachable, returns an HTTP error,
+    or serves a file that fails checksum verification. The checksum is pinned
+    in the manifest, so every candidate must serve the same bytes.
+    """
+    expected = expected_sha.lower()
+    last_error: Exception | None = None
+    for url in urls:
+        try:
+            _download(url, target, version)
+            if expected:
+                actual = _sha256(target).lower()
+                if not secrets.compare_digest(actual, expected):
+                    raise ValueError("Downloaded update failed SHA256 verification")
+            return url
+        except Exception as exc:
+            last_error = exc
+            logging.getLogger(__name__).warning(
+                "Download from %s failed (%s); trying the next URL.", url, type(exc).__name__
+            )
+            continue
+    write_state({
+        "stage": "failed",
+        "version": version,
+        "package": str(target),
+        "reason": f"{type(last_error).__name__}: {last_error}" if last_error else "No download URL available",
+    })
+    raise last_error or ValueError("No download URL available.")
 
 
 def _install_dir() -> Path:
@@ -585,11 +630,10 @@ def _prepare_installer_update(manifest: dict[str, Any], download_url: str, expec
     staging.mkdir(parents=True, exist_ok=True)
     installer_path = staging / f"OPS_ROOM_Setup_{latest}_Windows_x64.exe"
     write_state({"stage": "downloading", "version": latest, "installer": str(installer_path), "target": str(target) if target else ""})
-    _download(installer_url, installer_path, latest)
-    actual_sha = _sha256(installer_path).lower()
-    if not secrets.compare_digest(actual_sha, installer_sha):
-        write_state({"stage": "failed", "version": latest, "reason": "Installer SHA256 mismatch", "expected": installer_sha, "actual": actual_sha, "installer": str(installer_path)})
-        raise ValueError("Downloaded installer failed SHA256 verification.")
+    # Website (installer_url) first; the GitHub release copy is a transparent
+    # fallback when the site is unreachable or serves a bad file.
+    candidates = [u for u in (installer_url, str(manifest.get("fallback_installer_url") or "").strip()) if u]
+    _download_with_fallback(candidates, installer_path, latest, expected_sha=installer_sha)
     # Post-install verification targets the folder the installer manages. For
     # the installer era (no registry entry yet on a loose-folder install) fall
     # back to the current install dir -- the nudge phase converts those.
@@ -650,15 +694,11 @@ def prepare_update(manifest: dict[str, Any]) -> dict[str, Any]:
     staging.mkdir(parents=True, exist_ok=True)
     package = staging / f"OPS_ROOM_v{latest}_Windows_x64.zip"
     write_state({"stage": "downloading", "version": latest, "package": str(package)})
-    _download(download_url, package, latest)
+    # Website (download_url) first; the GitHub release copy (fallback_download_url)
+    # is a transparent fallback when the site is unreachable or serves a bad file.
+    candidates = [u for u in (download_url, str(manifest.get("fallback_download_url") or "").strip()) if u]
+    _download_with_fallback(candidates, package, latest, expected_sha=expected_sha)
     actual_sha = _sha256(package).lower()
-    # v0.25.17 polish: constant-time compare so a side-channel on the bytes-
-    # length of the slowly-computed digest cannot be used to fingerprint
-    # progress (the SHA256 is already public via update.json, this is
-    # defense-in-depth only).
-    if not secrets.compare_digest(actual_sha, expected_sha):
-        write_state({"stage": "failed", "version": latest, "reason": "SHA256 mismatch", "expected": expected_sha, "actual": actual_sha, "package": str(package)})
-        raise ValueError("Downloaded update failed SHA256 verification.")
     try:
         with zipfile.ZipFile(package) as zf:
             bad = zf.testzip()

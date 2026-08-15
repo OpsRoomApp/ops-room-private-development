@@ -1,0 +1,19 @@
+{
+  "content": [
+    {
+      "path": "html_ui/efb_ui/efb_apps/OPSRoomEfb/OPSRoomEfb.css",
+      "size": 1754,
+      "date": 134312386346169008
+    },
+    {
+      "path": "html_ui/efb_ui/efb_apps/OPSRoomEfb/OPSRoomEfb.js",
+      "size": 10762,
+      "date": 134312386235624928
+    },
+    {
+      "path": "html_ui/efb_ui/efb_apps/OPSRoomEfb/Assets/app-icon.svg",
+      "size": 719,
+      "date": 134312362193535584
+    }
+  ]
+}

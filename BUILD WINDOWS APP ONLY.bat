@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
-title Build OPS ROOM 0.25.77 Public Release Windows App Only
+title Build OPS ROOM 0.25.0 Public Release Windows App Only
 
  echo ================================================================
- echo OPS ROOM 0.25.77 Public Release - Windows app only build
+ echo OPS ROOM 0.25.0 Public Release - Windows app only build
  echo ================================================================
  echo.
 
@@ -187,6 +187,31 @@ if errorlevel 1 goto :fail
 copy /y "tools\simobjects\package\closure-markers\layout.json" "%DIST_DIR%\OPS ROOM\closure-markers\layout.json" >nul
 if errorlevel 1 goto :fail
 
+rem Ship the built in-game tablet panel MSFS Community package next to the app
+rem so the first-run installer (app/simobjects_installer.py) can copy it into
+rem the MSFS 2020/2024 Community folders automatically. The build script
+rem regenerates manifest.json/layout.json and recompiles the InGamePanels
+rem .spb from the source project when the MSFS SDK is available.
+"%VENV_DIR%\Scripts\python.exe" tools\simobjects\package\build_tablet_package.py || goto :fail
+if exist "%DIST_DIR%\OPS ROOM\ops-room-tablet" rmdir /s /q "%DIST_DIR%\OPS ROOM\ops-room-tablet"
+xcopy /E /I /Y "tools\simobjects\package\ops-room-tablet" "%DIST_DIR%\OPS ROOM\ops-room-tablet" >nul
+if errorlevel 1 (
+  echo ERROR: Could not copy the in-game tablet panel package into the release package.
+  goto :fail
+)
+
+rem Ship the built OPS ROOM EFB app MSFS Community package (native MSFS 2024
+rem EFB, the same mechanism GSX/Navigraph use). The build script regenerates
+rem manifest.json/layout.json from the source; the first-run installer copies
+rem it into the 2024 Community folder only.
+"%VENV_DIR%\Scripts\python.exe" tools\simobjects\package\build_efb_package.py || goto :fail
+if exist "%DIST_DIR%\OPS ROOM\ops-room-efb" rmdir /s /q "%DIST_DIR%\OPS ROOM\ops-room-efb"
+xcopy /E /I /Y "tools\simobjects\package\ops-room-efb" "%DIST_DIR%\OPS ROOM\ops-room-efb" >nul
+if errorlevel 1 (
+  echo ERROR: Could not copy the EFB app package into the release package.
+  goto :fail
+)
+
 for %%F in (
   "README.txt"
   "RELEASE_NOTES.txt"
@@ -201,15 +226,15 @@ echo Verifying public package contents...
 rem Public release folder cleanup: keep user-facing dist clean.
 rem Developer/admin files such as build validation notes, Google Apps Script setup,
 rem old release notes and helper batch files are intentionally not copied.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -LiteralPath '%DIST_DIR%\OPS ROOM' -DestinationPath '%DIST_DIR%\OPS_ROOM_v0_25_77_Public_Windows_x64.zip' -Force -ErrorAction Stop" || goto :fail
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -LiteralPath '%DIST_DIR%\OPS ROOM' -DestinationPath '%DIST_DIR%\OPS_ROOM_v0_25_0_Public_Windows_x64.zip' -Force -ErrorAction Stop" || goto :fail
 
-"%VENV_DIR%\Scripts\python.exe" tools\write_update_manifest.py --version 0.25.77 --channel stable --zip "%DIST_DIR%\OPS_ROOM_v0_25_77_Public_Windows_x64.zip" --out "%DIST_DIR%\update.json" || goto :fail
+"%VENV_DIR%\Scripts\python.exe" tools\write_update_manifest.py --version 0.25.0 --channel stable --site https://opsroom.live --zip "%DIST_DIR%\OPS_ROOM_v0_25_0_Public_Windows_x64.zip" --out "%DIST_DIR%\update.json" || goto :fail
 
 echo.
 echo Build complete:
 echo   %DIST_DIR%\OPS ROOM\OPS ROOM.exe
-echo   %DIST_DIR%\OPS_ROOM_v0_25_77_Public_Windows_x64.zip
-echo   %DIST_DIR%\OPS_ROOM_v0_25_77_Public_Windows_x64.zip.sha256
+echo   %DIST_DIR%\OPS_ROOM_v0_25_0_Public_Windows_x64.zip
+echo   %DIST_DIR%\OPS_ROOM_v0_25_0_Public_Windows_x64.zip.sha256
 echo   %DIST_DIR%\update.json
 echo.
 pause

@@ -27,6 +27,7 @@ from .fenix_adapter import (
     set_ground_power as fenix_set_ground_power,
     set_chocks as fenix_set_chocks,
     start_deboarding as fenix_start_deboarding,
+    fenix_efb_active,
 )
 from .fenix_gsx_loading_state_machine import FenixGsxLoadingStateMachine, FenixGsxLoadingSnapshot, GsxMenuEntry
 from .simconnect_position import _LOCK as SIM_LOCK, _ensure_session, _send_sim_event, simconnect_diagnostics, read_position
@@ -2771,6 +2772,50 @@ def _ensure_fenix_probe_thread() -> None:
     _FENIX_PROBE_THREAD.start()
 
 
+def _warm_fenix_detection() -> None:
+    """Force one Fenix identity probe so the next automation cycle already
+    knows whether departure loading is Fenix-controlled.
+
+    Detection is one localhost EFB probe (sub-ms when the portal answers,
+    instant connection-refused when it does not) plus a cached SimConnect
+    title read -- never a multi-second network call, so this adds no
+    user-visible lag on the Begin Departure Services press. It populates the
+    sticky detection state (fenix_detected / fenix_controlled_loading) so the
+    first cycle builds the correct service plan instead of firing a generic
+    GSX refuel that a Fenix session would never execute.
+    """
+    try:
+        _ensure_fenix_probe_thread()
+        fenix_status(force=True)
+    except Exception:
+        pass
+
+
+_FENIX_SNAPSHOT_STALE_SECONDS = 120.0
+
+
+def _last_progress_fresh(last_progress: Any, now: float | None = None) -> bool:
+    """#99: True while the Fenix loading snapshot is recent enough to trust.
+
+    A stale ``last_progress`` (Fenix EFB gone, aircraft changed, or the app
+    restarted and only re-seeded old disk state) must never keep Live OFP
+    PAX/BAG/PAYLOAD actuals frozen on old numbers.
+    """
+    if not isinstance(last_progress, dict) or not last_progress:
+        return False
+    try:
+        updated = last_progress.get("updated_at")
+        if not updated:
+            return False
+        from datetime import datetime
+
+        parsed = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
+        age = (datetime.now(parsed.tzinfo) - parsed).total_seconds() if parsed.tzinfo else (datetime.utcnow() - parsed.replace(tzinfo=None)).total_seconds()
+        return age <= _FENIX_SNAPSHOT_STALE_SECONDS
+    except Exception:
+        return False
+
+
 def automation_status() -> dict[str, Any]:
     # #71-followup (v0.25.77.1): the Fenix loadsheet refresh used to run inline
     # here — a synchronous EFB fetch (up to 2 s) inside EVERY status request,
@@ -2780,7 +2825,16 @@ def automation_status() -> dict[str, Any]:
     _ensure_fenix_probe_thread()
     with _AUTOMATION_LOCK:
         payload = {"ok": True, **{key: (list(value) if isinstance(value, list) else value) for key, value in _AUTOMATION.items()}}
-        payload["fenix_loading"] = dict(_FENIX_LOADING_STATE)
+        loading = dict(_FENIX_LOADING_STATE)
+        # #99: never serve a frozen loading snapshot to the Live OFP. If the
+        # last Fenix loading update is older than the staleness window, drop it
+        # so the OFP builder falls back to "no trusted measured source" (or the
+        # GSX-live fallback in the request path) instead of stale numbers.
+        last_progress = loading.get("last_progress")
+        if not _last_progress_fresh(last_progress):
+            loading["last_progress"] = {}
+            loading["stale_reason"] = "Fenix loading snapshot expired; Live OFP uses no stale actuals"
+        payload["fenix_loading"] = loading
         return payload
 
 
@@ -2953,10 +3007,13 @@ def _fenix_aircraft_active() -> bool:
     try:
         fstat = fenix_status(force=False)
     except Exception:
-        return False
+        fstat = {}
     aircraft = fstat.get("aircraft") if isinstance(fstat.get("aircraft"), dict) else {}
     adapter = aircraft.get("adapter") if isinstance(aircraft.get("adapter"), dict) else {}
-    return bool(fstat.get("fenix_detected") or fstat.get("fenix_controlled_loading") or adapter.get("key") == "fenix")
+    detected = bool(fstat.get("fenix_detected") or fstat.get("fenix_controlled_loading") or adapter.get("key") == "fenix")
+    # #94: when SimConnect identity is unavailable the EFB portal is still the
+    # authoritative Fenix signal (and the only path the door commands need).
+    return detected or bool(fenix_efb_active())
 
 
 def _close_fenix_cargo_doors_once(latch_name: str, reason: str) -> bool:
@@ -3585,6 +3642,19 @@ def _fenix_authoritative_complete(progress: dict[str, Any] | None = None, fenix_
 
     age = _fenix_loading_age_s()
 
+    # #114: Fenix emits the FINAL loadsheet only after pax/cargo boarding and
+    # refuelling complete -- its presence is the strongest "aircraft loaded"
+    # confirmation and short-circuits the value gates (which can be stuck on
+    # stale GSX counters or a not-yet-generated Preliminary loadsheet). A short
+    # settle window keeps the handoff from racing the GSX UI.
+    if age >= 10.0:
+        try:
+            from .fenix_adapter import loadsheet_final_cached as _final_cached
+            if _final_cached().get("ok"):
+                return True
+        except Exception:
+            pass
+
     gsx_pax_loaded = _num(progress.get("passengers_boarding_total"))
     gsx_pax_target = _num(progress.get("passengers_target"))
     gsx_pax_complete = bool(gsx_pax_target is not None and gsx_pax_target > 0 and gsx_pax_loaded is not None and gsx_pax_loaded >= gsx_pax_target)
@@ -4152,7 +4222,9 @@ def _fenix_arrival_family() -> bool:
         fstat = {}
     aircraft = fstat.get("aircraft") if isinstance(fstat.get("aircraft"), dict) else {}
     adapter = aircraft.get("adapter") if isinstance(aircraft.get("adapter"), dict) else {}
-    return bool(fstat.get("fenix_detected") or fstat.get("fenix_controlled_loading") or fstat.get("fenix_family_hint") or adapter.get("key") == "fenix")
+    detected = bool(fstat.get("fenix_detected") or fstat.get("fenix_controlled_loading") or fstat.get("fenix_family_hint") or adapter.get("key") == "fenix")
+    # #94: fall back to the EFB portal when SimConnect identity is degraded.
+    return detected or bool(fenix_efb_active())
 
 
 def _fenix_arrival_state_once(latch: str, label: str, action) -> bool:
@@ -4688,6 +4760,38 @@ def _automation_cycle(mode: str) -> bool:
         if mode == "ARRIVAL":
             return _finalize_arrival_handling_invoice()
 
+    # Cold-start settle guard: if the Fenix EFB portal is reachable but the
+    # aircraft identity has not been confirmed yet (app just started, SimConnect
+    # title still warming up), hold the generic departure plan for a short
+    # window instead of firing a generic GSX refuel into what is almost
+    # certainly a Fenix session (which would never execute it). The loop
+    # re-runs every ~1.5 s, so this is a brief, invisible delay; if the
+    # identity is still unresolved after the window, it falls back to the
+    # generic plan.
+    if (
+        departure_mode
+        and settings.get("gsx_fenix_auto_load", True)
+        and not fenix_loading
+        and not _fenix_controlled_session_active()
+    ):
+        try:
+            fstat = fenix_status(force=False)
+            if fstat.get("efb_online") and not (
+                fstat.get("fenix_detected") or fstat.get("fenix_family_hint")
+            ):
+                with _AUTOMATION_LOCK:
+                    started_raw = str(_AUTOMATION.get("started_at") or "")
+                age = 0.0
+                try:
+                    stamp = datetime.fromisoformat(started_raw.replace("Z", "+00:00"))
+                    age = (datetime.now(timezone.utc) - stamp).total_seconds()
+                except Exception:
+                    pass
+                if age < 8.0:
+                    _automation_record("FENIX WARMUP", "Fenix portal reachable; holding generic plan while aircraft identity confirms")
+                    return False
+        except Exception:
+            pass
     if departure_mode:
         _ensure_departure_recorder_started("Departure portion of ground-service session")
     service_plan = _service_plan_for_mode(mode, settings, raws, fenix_loading)
@@ -4982,6 +5086,11 @@ def start_automation(mode: str = "AUTO") -> dict[str, Any]:
     settings = load_settings().get("integrations", {})
     if not bool(settings.get("gsx_automation_enabled", True)):
         raise RuntimeError("GSX automation is disabled in Host settings")
+    # Warm Fenix detection BEFORE the first automation cycle so the departure
+    # plan already knows whether loading is Fenix-controlled. One localhost
+    # probe + cached SimConnect title read is milliseconds; the background
+    # probe thread also starts here so it stays warm for the whole session.
+    _warm_fenix_detection()
     with _AUTOMATION_LOCK:
         if _AUTOMATION_THREAD and _AUTOMATION_THREAD.is_alive():
             return automation_status()
@@ -5118,8 +5227,100 @@ def release_control() -> dict[str, Any]:
     return {"ok": True}
 
 
+def _maybe_rearm_departure_after_restart() -> None:
+    """#101: resume a mid-departure automation session after an app restart.
+
+    #65 persists the latches + mode at every latch change, and
+    _load_automation_state() re-seeds them, but nothing ever RESTARTED the
+    automation loop -- so after a crash/restart mid-departure the app sat idle
+    (phase null, boarding never re-requested, water deferred forever).
+
+    This re-arms the proven departure loop WITHOUT resetting the re-seeded
+    latches (start_automation() would wipe them and re-fire completed
+    services). Guards: only when the persisted mode is DEPARTURE/FULL_TURNAROUND
+    (or AUTO that resolves to departure), the aircraft is still on the ground
+    pre-block-out with fresh telemetry, and no loop is already running. The
+    latches themselves gate every re-fire, so re-arming is always idempotent.
+    """
+    global _AUTOMATION_THREAD
+    try:
+        if _AUTOMATION_THREAD and _AUTOMATION_THREAD.is_alive():
+            return
+        with _AUTOMATION_LOCK:
+            mode = str(_AUTOMATION.get("mode") or "").upper()
+            running = bool(_AUTOMATION.get("running"))
+        if running or mode not in ("DEPARTURE", "FULL_TURNAROUND", "AUTO"):
+            return
+        # Still on the ground before block-out? Only then is a departure session
+        # meaningful to resume (an airborne flight must not re-request boarding).
+        try:
+            from .logbook import get_active_recorder
+            active = get_active_recorder()
+            if active is not None:
+                times = active.get("times") or {}
+                if times.get("block_out"):
+                    return
+        except Exception:
+            pass
+        try:
+            sample = read_telemetry(force=False)
+            if not sample.get("ok") or sample.get("on_ground") is False:
+                return
+        except Exception:
+            pass
+        _automation_record("RESUME", "Departure automation re-armed after restart (latches preserved)")
+        with _AUTOMATION_LOCK:
+            if _AUTOMATION_THREAD and _AUTOMATION_THREAD.is_alive():
+                return
+            _AUTOMATION_STOP.clear()
+            _stop_pushback_direction_keepalive()
+            _PUSHBACK_KEEPALIVE_STOP.clear()
+            _AUTOMATION["running"] = True
+            _AUTOMATION["stage"] = "RESUMED"
+            _AUTOMATION["detail"] = "Resumed from persisted state after restart"
+            _AUTOMATION["updated_at"] = _utc()
+            _AUTOMATION_THREAD = threading.Thread(target=_automation_loop, name="OpsRoom-GSX-Automation", daemon=True)
+        _AUTOMATION_THREAD.start()
+    except Exception as exc:
+        _automation_record("RESUME", f"Departure re-arm skipped: {type(exc).__name__}: {exc}")
+
+
+def _schedule_departure_rearm() -> None:
+    """#101: fire _maybe_rearm_departure_after_restart a few seconds after
+    startup (FSUIPC/telemetry may not be up at import time), then give up
+    quietly. The re-seeded latches persist regardless."""
+    def _delayed() -> None:
+        for attempt in range(5):
+            time.sleep(6.0)
+            try:
+                if _AUTOMATION_THREAD and _AUTOMATION_THREAD.is_alive():
+                    return
+                with _AUTOMATION_LOCK:
+                    running = bool(_AUTOMATION.get("running"))
+                if running:
+                    return
+                _maybe_rearm_departure_after_restart()
+                with _AUTOMATION_LOCK:
+                    running = bool(_AUTOMATION.get("running"))
+                if running:
+                    return
+            except Exception:
+                pass
+
+    threading.Thread(target=_delayed, name="OpsRoom-GSX-DepartureRearm", daemon=True).start()
+
+
 # #65: re-seed the GSX automation completion state (latches + mode) from disk at
 # import so an app restart mid-arrival keeps the post-arrival completion gate
 # working instead of finalizing without arrival receipts. Must run before any
 # automation_status()/_arrival_services_complete_for_record() consumer reads it.
 _load_automation_state()
+# Warm Fenix detection from app start (background, ~4 s cadence) so departure
+# automation never has to wait for the first probe when the user presses Begin
+# Departure Services. The probe thread is a daemon and costs a localhost call
+# every few seconds -- no startup lag.
+_ensure_fenix_probe_thread()
+# #101: a mid-departure restart must also resume the departure loop (latches
+# re-seeded above). Delayed so telemetry/GSX are reachable before the first
+# guard check.
+_schedule_departure_rearm()

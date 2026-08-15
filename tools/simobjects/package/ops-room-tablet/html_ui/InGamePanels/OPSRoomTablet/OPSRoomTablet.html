@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>OPS ROOM</title>
+  <link rel="stylesheet" href="/SCSS/common.css" />
+  <script type="text/javascript" src="/JS/coherent.js"></script>
+  <script type="text/javascript" src="/JS/common.js"></script>
+  <script type="text/javascript" src="/JS/dataStorage.js"></script>
+  <script type="text/javascript" src="/JS/buttons.js"></script>
+  <script type="text/javascript" src="/JS/Services/ToolBarPanels.js"></script>
+  <script type="text/javascript" src="/Pages/VCockpit/Instruments/Shared/BaseInstrument.js"></script>
+  <link rel="import" href="/templates/NewPushButton/NewPushButton.html" />
+  <link rel="import" href="/templates/ToggleButton/toggleButton.html" />
+  <link rel="import" href="/templates/ingameUi/ingameUi.html" />
+  <link rel="import" href="/templates/ingameUiHeader/ingameUiHeader.html" />
+
+  <style>
+    /*
+     * The in-sim webview (Coherent GT) is a Chromium-era engine: it cannot
+     * parse `inset`, `min()/max()/clamp()`, CSS variables *we* declare, or
+     * flex `gap`. Everything below is plain CSS2 + early flexbox.
+     *
+     * Layout: the native ingame-ui element is restyled as a tablet body
+     * (dark rounded bezel). The native ingame-ui-header stays as the top bar:
+     * it is the sim's drag handle and hosts the sim's own reduce/close
+     * buttons, which is what makes drag + minimize + close actually work.
+     * The iframe is the tablet "screen" and fills everything else.
+     */
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: transparent;
+      font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    /* ---- Tablet body (bezel) ---- */
+    ingame-ui#OPSRoomTablet {
+      width: 100% !important;
+      height: 100% !important;
+      background: #0c0d10 !important;
+      background: -webkit-linear-gradient(160deg, #191b20 0%, #0c0d10 22%, #07080a 100%) !important;
+      background: linear-gradient(160deg, #191b20 0%, #0c0d10 22%, #07080a 100%) !important;
+      border-radius: 26px !important;
+      padding: 14px 14px 16px !important;
+      box-sizing: border-box !important;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .06) !important;
+      display: -webkit-flex !important;
+      display: flex !important;
+      -webkit-flex-direction: column !important;
+      flex-direction: column !important;
+      -webkit-align-items: stretch !important;
+      align-items: stretch !important;
+    }
+
+    /* ---- Native header becomes the slim top bezel strip (drag + controls) ---- */
+    ingame-ui#OPSRoomTablet ingame-ui-header {
+      position: relative;
+      width: 100% !important;
+      min-height: 2.6rem !important;
+      max-height: 2.6rem !important;
+      background: transparent !important;
+      margin-bottom: 0 !important;
+      display: -webkit-flex !important;
+      display: flex !important;
+      -webkit-align-items: center !important;
+      align-items: center !important;
+    }
+    /* Hide the title text; the header stays as the drag handle. */
+    ingame-ui#OPSRoomTablet ingame-ui-header .wrap .title {
+      display: none !important;
+    }
+    ingame-ui#OPSRoomTablet ingame-ui-header .wrap {
+      min-width: 0 !important;
+      width: 100% !important;
+    }
+    /* A tablet camera sits in the centre of the top bezel. */
+    ingame-ui#OPSRoomTablet ingame-ui-header::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 9px;
+      height: 9px;
+      margin-top: -5px;
+      margin-left: -5px;
+      border-radius: 50%;
+      background: #050608;
+      background: -webkit-radial-gradient(circle at 34% 30%, #2c333c 0%, #0a0c0f 55%, #000 100%);
+      background: radial-gradient(circle at 34% 30%, #2c333c 0%, #0a0c0f 55%, #000 100%);
+      box-shadow: inset 0 1px 2px rgba(255, 255, 255, .22), 0 0 0 2px rgba(0, 0, 0, .4);
+      pointer-events: none;
+    }
+    /* Only keep minimize/restore + close on a tablet; drop pop-out/detach. */
+    ingame-ui#OPSRoomTablet ingame-ui-header .Extern,
+    ingame-ui#OPSRoomTablet ingame-ui-header .Detach {
+      display: none !important;
+    }
+
+    /* ---- Content area (the screen) ---- */
+    ingame-ui#OPSRoomTablet .ingameUiContent,
+    ingame-ui#OPSRoomTablet .ingameUiWrapper {
+      display: -webkit-flex !important;
+      display: flex !important;
+      -webkit-flex-direction: column !important;
+      flex-direction: column !important;
+      width: 100% !important;
+      height: 100% !important;
+      min-height: 0 !important;
+      min-width: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+      -webkit-align-items: stretch !important;
+      align-items: stretch !important;
+      -webkit-flex: 1 1 auto !important;
+      flex: 1 1 auto !important;
+      background: transparent !important;
+    }
+    ingame-ui#OPSRoomTablet .ingameUiWrapper > * {
+      -webkit-flex-grow: 1 !important;
+      flex-grow: 1 !important;
+    }
+
+    #ortRoot {
+      position: relative;
+      display: -webkit-flex !important;
+      display: flex !important;
+      -webkit-flex-direction: column !important;
+      flex-direction: column !important;
+      width: 100% !important;
+      height: 100% !important;
+      min-height: 0 !important;
+      min-width: 0 !important;
+      margin-top: 8px !important;
+      overflow: hidden !important;
+      -webkit-align-items: stretch !important;
+      align-items: stretch !important;
+      -webkit-flex: 1 1 auto !important;
+      flex: 1 1 auto !important;
+      background: #050607;
+      border-radius: 14px;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .05);
+    }
+    #ortFrame {
+      -webkit-flex: 1 1 auto !important;
+      flex: 1 1 auto !important;
+      width: 100% !important;
+      height: 100% !important;
+      border: 0;
+      display: block;
+      background: #050607;
+      pointer-events: auto;
+    }
+
+    .ort-hide { display: none !important; }
+
+    /* ---- Boot / not-detected screen (only shown while the app is down) ---- */
+    #ortBoot {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: -webkit-flex;
+      display: flex;
+      -webkit-flex-direction: column;
+      flex-direction: column;
+      -webkit-align-items: center;
+      align-items: center;
+      -webkit-justify-content: center;
+      justify-content: center;
+      padding: 6% 8%;
+      box-sizing: border-box;
+      text-align: center;
+      background: -webkit-radial-gradient(120% 90% at 50% 0%, #12150f 0%, #0a0c09 58%, #070907 100%);
+      background: radial-gradient(120% 90% at 50% 0%, #12150f 0%, #0a0c09 58%, #070907 100%);
+    }
+    .ort-boot-mark {
+      width: 56px;
+      height: 56px;
+      margin-bottom: 20px;
+    }
+    .ort-boot-mark svg { width: 100%; height: 100%; display: block; }
+    .ort-boot-name {
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: .34em;
+      text-indent: .34em;
+      color: #f0ecd9;
+      text-transform: uppercase;
+    }
+    .ort-boot-sub {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .46em;
+      text-indent: .46em;
+      color: #efbd47;
+      text-transform: uppercase;
+      margin-top: 8px;
+    }
+    .ort-boot-status {
+      margin-top: 30px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: .12em;
+      color: #8f907c;
+      text-transform: uppercase;
+      min-height: 1.4em;
+    }
+    .ort-boot-hint {
+      margin-top: 18px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #7c7d6c;
+      max-width: 78%;
+    }
+    .ort-boot-button {
+      margin-top: 24px;
+      -webkit-appearance: none;
+      appearance: none;
+      border: 1px solid #efbd47;
+      background: rgba(239,189,71,.08);
+      color: #ffe09a;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      padding: 13px 28px;
+      cursor: pointer;
+      box-shadow: inset 0 0 0 1px rgba(239,189,71,.25), 0 0 14px rgba(239,189,71,.18);
+    }
+    .ort-boot-button:hover {
+      background: rgba(239,189,71,.16);
+      box-shadow: inset 0 0 0 1px rgba(239,189,71,.4), 0 0 18px rgba(239,189,71,.3);
+    }
+    .ort-boot-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      margin-top: 24px;
+      background: #2f3228;
+      box-shadow: 0 0 0 1px #171a12;
+    }
+    .ort-boot-dot.on {
+      background: #79ff7c;
+      box-shadow: 0 0 8px rgba(121,255,124,.8), 0 0 0 1px #3f8a45;
+      -webkit-animation: ort-pulse 1.6s ease-in-out infinite;
+      animation: ort-pulse 1.6s ease-in-out infinite;
+    }
+    @-webkit-keyframes ort-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+    @keyframes ort-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+    #ortDiag {
+      margin-top: 20px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #5f6253;
+      white-space: pre;
+      text-align: left;
+      max-width: 90%;
+    }
+  </style>
+</head>
+
+<body class="border-box">
+  <ingamepanel-opsroom-tablet>
+    <ingame-ui
+      id="OPSRoomTablet"
+      panel-id="PANEL_OPS_ROOM_TABLET"
+      title="OPS ROOM"
+      class="ingameUiFrame panelInvisible"
+      content-fit="true"
+      resize="both"
+      min-width="20"
+      min-height="26">
+      <div id="ortRoot">
+        <iframe id="ortFrame" allowfullscreen="true" title="OPS ROOM"></iframe>
+        <div id="ortBoot">
+          <div class="ort-boot-mark" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="OPS ROOM">
+              <defs>
+                <mask id="gap-mask">
+                  <rect width="512" height="512" fill="white" />
+                  <rect x="220" y="0" width="72" height="80" fill="black" />
+                  <rect x="220" y="432" width="72" height="80" fill="black" />
+                </mask>
+              </defs>
+              <g fill="none">
+                <circle cx="256" cy="256" r="180" stroke="#FFFFFF" stroke-width="12" mask="url(#gap-mask)" />
+                <line x1="256" y1="48" x2="256" y2="160" stroke="#FFFFFF" stroke-width="12" stroke-dasharray="16 14" stroke-linecap="butt" />
+                <polygon points="256,198 162,376 254,326" fill="#FFFFFF" />
+                <polygon points="256,198 350,376 258,326" fill="#FFFFFF" />
+              </g>
+            </svg>
+          </div>
+          <div class="ort-boot-name">OPS ROOM</div>
+          <div class="ort-boot-sub">In-Game Tablet</div>
+          <div class="ort-boot-status" id="ortStatus">CONNECTING&hellip;</div>
+          <button class="ort-boot-button ort-hide" id="ortButton" type="button">CHECK AGAIN</button>
+          <div class="ort-boot-hint ort-hide" id="ortHint">Launch OPS ROOM on your PC. This tablet connects automatically as soon as it is running.</div>
+          <div class="ort-boot-dot" id="ortDot"></div>
+          <div id="ortDiag"></div>
+        </div>
+      </div>
+    </ingame-ui>
+  </ingamepanel-opsroom-tablet>
+
+  <script type="text/javascript">
+    // Custom panel component (same pattern as the sim's own GenericPanel).
+    try {
+      if (typeof TemplateElement !== "undefined" && typeof checkAutoload === "function") {
+        class IngamePanelOPSRoomTablet extends TemplateElement {
+          constructor() {
+            super(...arguments);
+            this.started = false;
+          }
+          connectedCallback() {
+            super.connectedCallback();
+            this.ingameUi = this.querySelector('ingame-ui');
+            if (this.ingameUi && !this.started) {
+              this.started = true;
+              startPanel(this.ingameUi);
+            }
+          }
+          disconnectedCallback() {
+            super.disconnectedCallback();
+          }
+        }
+        window.customElements.define("ingamepanel-opsroom-tablet", IngamePanelOPSRoomTablet);
+        checkAutoload();
+      }
+    } catch (e) {}
+
+    // Panel logic (ES5 only: no arrows, no let/const, no template strings).
+    var CANDIDATES = ["http://localhost:8080", "http://127.0.0.1:8080", "http://localhost:8090"];
+    var HEALTH_PATH = "/api/panel/health";
+    // The in-sim webview is Coherent GT (Chromium-era), so the tablet loads the
+    // legacy-transpiled build of the app (no OpenLayers, ES2015 JS).
+    var EFB_PATH = "/static/index.legacy.html?efb=1";
+
+    var active = null;          // resolved base URL once the app is found
+    var mounted = false;        // iframe has been given a src (mount once)
+    var probing = false;
+    var healthFailStreak = 0;
+    var started = false;
+
+    function byId(id) { return document.getElementById(id); }
+
+    function setStatus(text) {
+      var el = byId("ortStatus");
+      if (el) { el.textContent = text; }
+    }
+    function setDot(on) {
+      var el = byId("ortDot");
+      if (el) { el.className = "ort-boot-dot" + (on ? " on" : ""); }
+    }
+    function show(id) { var el = byId(id); if (el) { el.classList.remove("ort-hide"); } }
+    function hide(id) { var el = byId(id); if (el) { el.classList.add("ort-hide"); } }
+
+    function diagLine() {
+      return "app " + (active ? "up (" + active + ")" : "down") + ", mounted " + (mounted ? "yes" : "no");
+    }
+    function refreshDiag() {
+      var el = byId("ortDiag");
+      if (el) { el.textContent = diagLine(); }
+    }
+
+    // Show the boot overlay WITHOUT touching the iframe. If the app is down the
+    // iframe may show a dead/error page underneath, which is why the overlay is
+    // opaque. If the app is up the overlay is simply hidden again.
+    function showBootOverlay(label) {
+      show("ortBoot");
+      var btn = byId("ortButton");
+      var hint = byId("ortHint");
+      if (btn) { btn.classList.remove("ort-hide"); }
+      if (hint) { hint.classList.remove("ort-hide"); }
+      setStatus(label || "OPS ROOM NOT DETECTED");
+      setDot(false);
+      refreshDiag();
+    }
+    function hideBootOverlay() {
+      hide("ortBoot");
+      setDot(true);
+      refreshDiag();
+    }
+
+    // Probe every candidate in order; call done(baseOrNull).
+    function probeAll(done) {
+      var idx = 0;
+      (function scan() {
+        if (idx >= CANDIDATES.length) {
+          done(null);
+          return;
+        }
+        probeOne(CANDIDATES[idx], function (up) {
+          if (up) { done(CANDIDATES[idx]); }
+          else { idx += 1; scan(); }
+        });
+      })();
+    }
+
+    function probeOne(base, done) {
+      var xhr = new XMLHttpRequest();
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (!settled) { finish(false); }
+      }, 2500);
+      function finish(ok) {
+        if (settled) { return; }
+        settled = true;
+        clearTimeout(timer);
+        try { xhr.abort(); } catch (e) {}
+        done(ok);
+      }
+      xhr.onreadystatechange = function () {
+        if (settled) { return; }
+        if (xhr.readyState === 4) {
+          finish(xhr.status >= 200 && xhr.status < 500);
+        }
+      };
+      xhr.onerror = function () { finish(false); };
+      xhr.onabort = function () { finish(false); };
+      try {
+        xhr.open("GET", base + HEALTH_PATH, true);
+        xhr.send();
+      } catch (e) { finish(false); }
+    }
+
+    // Mount the iframe exactly once per resolved base. The timestamp busts the
+    // panel cache on the very first mount only.
+    function mountFrame(base) {
+      var frame = byId("ortFrame");
+      if (frame) {
+        frame.src = base + EFB_PATH + "&t=" + new Date().getTime();
+        mounted = true;
+      }
+      active = base;
+      hideBootOverlay();
+    }
+
+    // One immediate check: probe and either mount (first time / app returned)
+    // or keep the boot overlay. This never reloads an already-mounted, healthy
+    // iframe, which is what stopped the 10-second OFP reload loop.
+    function checkNow() {
+      if (probing) { return; }
+      probing = true;
+      setStatus("CONNECTING\u2026");
+      probeAll(function (base) {
+        probing = false;
+        if (base) {
+          healthFailStreak = 0;
+          if (!mounted || active !== base) {
+            mountFrame(base);
+          } else {
+            hideBootOverlay();
+          }
+        } else {
+          showBootOverlay();
+        }
+      });
+    }
+
+    // Slow background health poll: only toggles the boot overlay if the app
+    // genuinely went down (3 misses in a row). It never touches the iframe
+    // while the app stays up.
+    function healthPoll() {
+      if (!active) { return; }
+      probeAll(function (base) {
+        if (base) {
+          if (healthFailStreak >= 3 || active !== base) {
+            mountFrame(base);
+          }
+          healthFailStreak = 0;
+        } else {
+          healthFailStreak += 1;
+          if (healthFailStreak >= 3) {
+            showBootOverlay("OPS ROOM DISCONNECTED");
+          }
+        }
+      });
+    }
+
+    function startPanel(panel) {
+      if (started) { return; }
+      started = true;
+
+      var bootBtn = byId("ortButton");
+      if (bootBtn) {
+        bootBtn.addEventListener("click", function () {
+          bootBtn.classList.add("ort-hide");
+          var hint = byId("ortHint");
+          if (hint) { hint.classList.add("ort-hide"); }
+          checkNow();
+        });
+      }
+
+      // Open: probe + mount if needed. Closed: do nothing — the sim blocks
+      // input via `ingame-ui.panelInactive { pointer-events: none }`, and the
+      // app stays mounted so reopening is instant and never reloads OFP.
+      panel.addEventListener("panelActive", function () {
+        checkNow();
+      });
+
+      // Kick off immediately in case the panel was already active before this
+      // script ran (the sim fires panelActive asynchronously).
+      checkNow();
+
+      window.setInterval(healthPoll, 15000);
+      refreshDiag();
+    }
+  </script>
+</body>
+</html>

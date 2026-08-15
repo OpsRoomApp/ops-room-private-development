@@ -236,5 +236,35 @@ function setupCollapsiblePanels(){
     });
   });
 }
-async function boot(){applyAirlineTheme();tick();setInterval(tick,1000);showHostPage(location.hash==='#settings'?'settings':'status');setupCollapsiblePanels();try{await loadSettings()}catch(error){$('hostSaveState').textContent=`LOAD FAILED: ${friendlyError(error.message)}`}await Promise.all([refresh(false),refreshVpilotInstall(),refreshSecurity(),refreshSurfaceStatus(false)]);setInterval(()=>refresh(false),10000);setInterval(refreshVpilotInstall,15000);setInterval(refreshSecurity,15000)}
+// --- Discord community (v0.25.0) ---
+async function loadCommunityStatus(){
+  try{const data=await fet('/api/community/status',{cache:'no-store'}).then(r=>r.json());renderCommunityStatus(data)}catch{}
+}
+function renderCommunityStatus(data){
+  if(!data)return;
+  if($('hostDiscordState'))$('hostDiscordState').textContent=data.connected?('CONNECTED: '+(data.discord_username||data.discord_id||'')):'NOT CONNECTED';
+  if($('hostDiscordConnect'))$('hostDiscordConnect').disabled=!!data.connected;
+  if($('hostDiscordDisconnect'))$('hostDiscordDisconnect').disabled=!data.connected;
+  if($('hostDiscordShare'))$('hostDiscordShare').checked=!!data.share_flights;
+  if($('hostDiscordVisibility'))$('hostDiscordVisibility').value=data.visibility||'discord';
+  if($('hostDiscordPresence'))$('hostDiscordPresence').checked=!!data.rich_presence_enabled;
+  if($('hostDiscordDetail'))$('hostDiscordDetail').innerHTML=data.connected?`<b>${escapeHtml(data.discord_username||'CONNECTED')}</b><span>Takeoff / landing events post to the community channel; public visibility also feeds the website map + leaderboard.</span>`:'<span>Connect Discord to share takeoff/landing flights and appear on the community leaderboard. Flight data only, opt-in.</span>';
+}
+async function communityConnect(){
+  try{await fetch('/api/community/connect',{method:'POST'})}catch(error){$('hostSaveState').textContent=friendlyError(error.message);return}
+  for(let i=0;i<30;i++){await new Promise(r=>setTimeout(r,1000));try{const data=await fet('/api/community/status',{cache:'no-store'}).then(r=>r.json());if(data&&data.connected){renderCommunityStatus(data);return}}catch{}}
+  loadCommunityStatus();
+}
+async function communityDisconnect(){
+  try{const data=await fetch('/api/community/disconnect',{method:'POST'}).then(r=>r.json());renderCommunityStatus(data)}catch(error){$('hostSaveState').textContent=friendlyError(error.message)}
+}
+async function communityUpdate(partial){
+  try{const data=await fetch('/api/community/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(partial)}).then(r=>r.json());renderCommunityStatus(data)}catch(error){$('hostSaveState').textContent=friendlyError(error.message)}
+}
+if($('hostDiscordConnect'))$('hostDiscordConnect').addEventListener('click',communityConnect);
+if($('hostDiscordDisconnect'))$('hostDiscordDisconnect').addEventListener('click',communityDisconnect);
+if($('hostDiscordShare'))$('hostDiscordShare').addEventListener('change',()=>communityUpdate({share_flights:$('hostDiscordShare').checked}));
+if($('hostDiscordVisibility'))$('hostDiscordVisibility').addEventListener('change',()=>communityUpdate({visibility:$('hostDiscordVisibility').value}));
+if($('hostDiscordPresence'))$('hostDiscordPresence').addEventListener('change',()=>communityUpdate({rich_presence_enabled:$('hostDiscordPresence').checked}));
+async function boot(){applyAirlineTheme();tick();setInterval(tick,1000);showHostPage(location.hash==='#settings'?'settings':'status');setupCollapsiblePanels();try{await loadSettings()}catch(error){$('hostSaveState').textContent=`LOAD FAILED: ${friendlyError(error.message)}`}await Promise.all([refresh(false),refreshVpilotInstall(),refreshSecurity(),refreshSurfaceStatus(false),loadCommunityStatus()]);setInterval(()=>refresh(false),10000);setInterval(refreshVpilotInstall,15000);setInterval(refreshSecurity,15000);setInterval(loadCommunityStatus,15000)}
 boot();

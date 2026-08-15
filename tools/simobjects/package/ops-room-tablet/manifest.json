@@ -1,0 +1,14 @@
+{
+  "dependencies": [],
+  "content_type": "MISC",
+  "title": "OPS ROOM Tablet",
+  "manufacturer": "OPS ROOM",
+  "creator": "OPS ROOM",
+  "package_version": "0.25.0",
+  "minimum_game_version": "1.0.0",
+  "release_notes": {
+    "neutral": {
+      "LastUpdate": "In-game tablet panel for MSFS 2020 and MSFS 2024. Adds an OPS ROOM toolbar button that opens the full operations console (status, FIDS, dispatch, briefing, scratchpad, flight watch, live map, datalink, procedures, logbook, black box and more) as a tablet-style panel talking to the OPS ROOM desktop app on localhost."
+    }
+  }
+}

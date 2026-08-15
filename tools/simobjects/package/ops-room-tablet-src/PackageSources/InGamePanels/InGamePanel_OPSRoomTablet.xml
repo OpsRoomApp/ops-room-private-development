@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SimBase.Document Type="InGamePanels" version="1,0">
+  <Filename>InGamePanel_OPSRoomTablet.spb</Filename>
+  <InGamePanels.InGamePanelDefinition
+    id="PANEL_OPS_ROOM_TABLET"
+    Name="OPS ROOM"
+    url="html_ui/InGamePanels/OPSRoomTablet/OPSRoomTablet.html"
+    resizeDirections="Both"
+    minWidth="20"
+    minHeight="26"
+    defaultWidth="28"
+    defaultHeight="38"
+    defaultTop="30"
+    defaultRight="2"
+    icon="ICON_TOOLBAR_OPS_ROOM"
+    buttonVisible="true">
+  </InGamePanels.InGamePanelDefinition>
+</SimBase.Document>

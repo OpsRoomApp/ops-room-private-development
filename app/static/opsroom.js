@@ -461,7 +461,7 @@ async function safeJsonResponse(response){
 
 function reportFrontendError(source, detail){
   try{
-    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.77', ts:new Date().toISOString()};
+    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.0', ts:new Date().toISOString()};
     lastFrontendError = payload.detail;
     navigator.sendBeacon?.('/api/frontend/log', new Blob([JSON.stringify(payload)], {type:'application/json'})) || fetch('/api/frontend/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true}).catch(()=>{});
   }catch(_){ }
@@ -545,7 +545,18 @@ function isTabletLayout(){
   return Boolean(tabletUa || iPadDesktopMode || compactTouch);
 }
 
+function efbRequestedFromUrl(){
+  // The in-game tablet panel loads the app with ?efb=1 so the EFB/iPad
+  // launcher shell is forced regardless of user agent (the sim webview is
+  // not a touch device). The query string survives internal hash navigation
+  // (showPage uses history.replaceState for the #hash only).
+  try{
+    return new URLSearchParams(window.location.search).get('efb') === '1';
+  }catch(e){return false;}
+}
+
 function terminalHomeStyle(){
+  if(efbRequestedFromUrl()) return 'efb';
   const value = localStorage.getItem(TERMINAL_HOME_STYLE_KEY) || 'auto';
   return TERMINAL_HOME_STYLES.has(value) ? value : 'auto';
 }
@@ -811,7 +822,7 @@ function showPage(name){
   if(name === 'finances') runModuleStart('finances', startFinances);
   if(name === 'obs') runModuleStart('obs', ()=>{updateObsTools();loadObsBranding()});
   if(name === 'scratchpad') runModuleStart('scratchpad', startScratchpad);
-  if(name === 'system') runModuleStart('system', ()=>{loadStorageStatus();checkUpdates(false,true);loadStartupConsole();renderModuleVisibilityGrid()});
+  if(name === 'system') runModuleStart('system', ()=>{loadStorageStatus();checkUpdates(false,true);loadStartupConsole();renderModuleVisibilityGrid();loadSystemDiscordStatus()});
   if(name === 'fids') runModuleStart('fids', loadCameraBridgeStatus);
   if(name === 'network') runModuleStart('network', ()=>{loadNetwork(false);loadComms(false);if(settings?.interface?.notifications&&'Notification' in window&&Notification.permission==='default')Notification.requestPermission().catch(()=>{})});
 }
@@ -1549,11 +1560,11 @@ function patchBriefingOfpLive(data){
   set('times:block:est', '');
   const weights = data.weights || {};
   const disp = (item,key,digits=0)=>briefingOfpWeight(item?.[key+'_display'] ?? item?.[key], unit, digits);
-  const wrow = (key,item,isCount=false,ovrKey=null)=>{ if(!item) return; const u = isCount ? '' : unit; set(`weights:${key}:planned`, isCount?briefingOfpWeight(item.planned, '', 0):disp(item,'planned')); set(`weights:${key}:max`, disp(item,'max')); set(`weights:${key}:actual`, briefingOfpWeight(item.actual_display ?? item.actual, u, 0), (ovrKey && manual[ovrKey] !== undefined) ? {manual:true, manualValue:manual[ovrKey]} : undefined); set(`weights:${key}:delta`, briefingOfpWeight(item.delta_display ?? item.delta, u, 1)); };
+  const wrow = (key,item,isCount=false,ovrKey=null)=>{ if(!item) return; const u = isCount ? '' : unit; set(`weights:${key}:planned`, isCount?briefingOfpWeight(item.planned, '', 0):disp(item,'planned')); set(`weights:${key}:max`, disp(item,'max')); set(`weights:${key}:actual`, briefingOfpWeight(item.actual_display ?? item.actual, u, 0), (ovrKey && manual[ovrKey] !== undefined) ? {manual:true, manualValue:manual[ovrKey]} : undefined); set(`weights:${key}:delta`, briefingOfpWeight(item.delta_display ?? item.delta, '', 1)); };
   wrow('pax', weights.passengers, true, 'weights:pax'); wrow('bags', weights.bags_cargo); wrow('freight', weights.commercial_freight);
   wrow('payload', weights.payload); wrow('zfw', weights.zfw, false, 'weights:zfw'); wrow('tow', weights.tow, false, 'weights:tow'); wrow('ldw', weights.ldw, false, 'weights:ldw');
   const fuel = data.fuel || {};
-  const frow = (key,item,ovrKey=null)=>{ if(!item) return; set(`fuel:${key}:planned`, disp(item,'planned')); set(`fuel:${key}:actual`, disp(item,'actual'), (ovrKey && manual[ovrKey] !== undefined) ? {manual:true, manualValue:manual[ovrKey]} : undefined); set(`fuel:${key}:delta`, briefingOfpWeight(item.delta_display ?? item.delta, unit, 1)); };
+  const frow = (key,item,ovrKey=null)=>{ if(!item) return; set(`fuel:${key}:planned`, disp(item,'planned')); set(`fuel:${key}:actual`, disp(item,'actual'), (ovrKey && manual[ovrKey] !== undefined) ? {manual:true, manualValue:manual[ovrKey]} : undefined); set(`fuel:${key}:delta`, briefingOfpWeight(item.delta_display ?? item.delta, '', 1)); };
   frow('ramp', fuel.ramp_out, 'fuel:ramp'); frow('takeoff', fuel.takeoff_off, 'fuel:takeoff'); frow('trip', fuel.trip);
   frow('landing', fuel.landing_on, 'fuel:landing'); frow('blockin', fuel.block_in, 'fuel:blockin'); frow('extra', fuel.extra_surplus);
   bindBriefingOfpLiveEditors(panel);
@@ -1805,6 +1816,16 @@ let _lsSignTool = 'draw';
 let _lsSignKind = 'loadsheet';
 let _lsCompletionToastShown = false;
 let _lsLoadsheetToastShown = false;
+let _lsSignResizeBound = false;
+// #91: global sign-off watcher — polls the OFP live payload from any screen so
+// the pre-departure loadsheet sign-off (and the post-arrival completion
+// sign-off) open as a real modal the moment they become available, without the
+// pilot having to be on the Briefing OFP tab.
+let _signoffWatchTimer = null;
+let _signoffWatchBusy = false;
+let _signoffWatchFlightId = null;
+let _signoffLoadsheetModalShown = false;
+let _signoffCompletionModalShown = false;
 let _lsSignStrokes = [];
 let _lsSignCurrentStroke = null;
 let _lsSignDrawing = false;
@@ -1956,9 +1977,20 @@ function lsSignSummaryHtml(data, kind){
       `</div>`;
     return `<div class="ls-sign-flight">${escapeHtml(who || 'FLIGHT')} · REVIEW AND SIGN</div>` +
       `<div class="ls-sign-review">` +
-        `<div class="ls-sign-section"><span class="ls-sign-section-title">TIMES <small>SCHEDULED / ACTUAL / DELTA</small></span><div class="ls-sign-table">${headRow}${timeRows}</div></div>` +
-        `<div class="ls-sign-section"><span class="ls-sign-section-title">WEIGHTS <small>${escapeHtml(unit)} · PLANNED / ACTUAL</small></span><div class="ls-sign-table">${itemHead}${weightRows}</div></div>` +
-        `<div class="ls-sign-section"><span class="ls-sign-section-title">FUEL <small>${escapeHtml(unit)} · PLANNED / ACTUAL</small></span><div class="ls-sign-table">${itemHead}${fuelRows}</div></div>` +
+        `<div class="ls-sign-panel">` +
+          `<div class="ls-sign-section-title">TIMES <small>SCHEDULED / ACTUAL / DELTA</small></div>` +
+          `<div class="ls-sign-table">${headRow}${timeRows}</div>` +
+        `</div>` +
+        `<div class="ls-sign-panel ls-sign-panel-right">` +
+          `<div class="ls-sign-section">` +
+            `<div class="ls-sign-section-title">WEIGHTS <small>${escapeHtml(unit)} · PLANNED / ACTUAL</small></div>` +
+            `<div class="ls-sign-table">${itemHead}${weightRows}</div>` +
+          `</div>` +
+          `<div class="ls-sign-section">` +
+            `<div class="ls-sign-section-title">FUEL <small>${escapeHtml(unit)} · PLANNED / ACTUAL</small></div>` +
+            `<div class="ls-sign-table">${itemHead}${fuelRows}</div>` +
+          `</div>` +
+        `</div>` +
       `</div>` +
       strip;
   }
@@ -1982,20 +2014,44 @@ function lsSignPadReset(){
   const canvas = $('lsSignCanvas');
   if(canvas){
     const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.strokeStyle = '#f2f0e5';
     ctx.lineWidth = 4;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
   }
+  lsSignResizeCanvas();
   const type = $('lsSignType');
   if(type) type.value = '';
 }
+function lsSignResizeCanvas(){
+  // Match the scratchpad's high-quality approach: size the backing store to
+  // the DISPLAYED box × devicePixelRatio (with setTransform) so the signature
+  // renders at native resolution with the correct aspect — the old fixed
+  // 640×280 store stretched to a 100%×8.2rem box was blurry and distorted.
+  const canvas = $('lsSignCanvas');
+  if(!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(80, rect.width || canvas.clientWidth || 640);
+  const h = Math.max(40, rect.height || canvas.clientHeight || 280);
+  const scale = window.devicePixelRatio || 1;
+  if(canvas.width !== Math.round(w * scale) || canvas.height !== Math.round(h * scale)){
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  }
+  lsSignDraw();
+}
 function lsSignDraw(){
+  // Full redraw in CSS-pixel space (the DPR transform handles device pixels),
+  // so the exported image and the live stroke are both crisp.
   const canvas = $('lsSignCanvas');
   if(!canvas) return;
   const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(1, rect.width || canvas.clientWidth || 1);
+  const h = Math.max(1, rect.height || canvas.clientHeight || 1);
+  ctx.clearRect(0, 0, w, h);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   for(const stroke of _lsSignStrokes){
@@ -2004,15 +2060,46 @@ function lsSignDraw(){
     ctx.strokeStyle = '#f2f0e5';
     ctx.lineWidth = Number(stroke.width || 4);
     ctx.beginPath();
-    ctx.moveTo(points[0].x * canvas.width, points[0].y * canvas.height);
+    ctx.moveTo(points[0].x * w, points[0].y * h);
     if(points.length === 1){
-      ctx.arc(points[0].x * canvas.width, points[0].y * canvas.height, Math.max(1, Number(stroke.width||4)/2), 0, Math.PI * 2);
+      ctx.arc(points[0].x * w, points[0].y * h, Math.max(1, Number(stroke.width||4)/2), 0, Math.PI * 2);
       ctx.fillStyle = ctx.strokeStyle;
       ctx.fill();
     }else{
-      for(const p of points.slice(1)) ctx.lineTo(p.x * canvas.width, p.y * canvas.height);
+      for(const p of points.slice(1)) ctx.lineTo(p.x * w, p.y * h);
       ctx.stroke();
     }
+  }
+}
+function lsSignDrawSegment(){
+  // Incremental path: on pointermove only append the new segment of the
+  // CURRENT stroke instead of re-clearing and re-stroking every prior point
+  // (the old per-move full redraw is what made drawing feel laggy).
+  const canvas = $('lsSignCanvas');
+  const stroke = _lsSignCurrentStroke;
+  if(!canvas || !stroke) return;
+  const points = stroke.points || [];
+  if(!points.length) return;
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(1, rect.width || canvas.clientWidth || 1);
+  const h = Math.max(1, rect.height || canvas.clientHeight || 1);
+  ctx.strokeStyle = '#f2f0e5';
+  ctx.lineWidth = Number(stroke.width || 4);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if(points.length === 1){
+    ctx.beginPath();
+    ctx.arc(points[0].x * w, points[0].y * h, Math.max(1, Number(stroke.width||4)/2), 0, Math.PI * 2);
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.fill();
+  }else{
+    const prev = points[points.length - 2];
+    const last = points[points.length - 1];
+    ctx.beginPath();
+    ctx.moveTo(prev.x * w, prev.y * h);
+    ctx.lineTo(last.x * w, last.y * h);
+    ctx.stroke();
   }
 }
 function lsSignPoint(event){
@@ -2030,13 +2117,13 @@ function lsSignPadPointerDown(event){
   _lsSignDrawing = true;
   _lsSignCurrentStroke = {width: 4, points: [lsSignPoint(event)]};
   _lsSignStrokes.push(_lsSignCurrentStroke);
-  lsSignDraw();
+  lsSignDrawSegment();
 }
 function lsSignPadPointerMove(event){
   if(!_lsSignDrawing || !_lsSignCurrentStroke) return;
   event.preventDefault();
   _lsSignCurrentStroke.points.push(lsSignPoint(event));
-  lsSignDraw();
+  lsSignDrawSegment();
 }
 function lsSignPadPointerUp(event){
   if(!_lsSignDrawing) return;
@@ -2077,10 +2164,14 @@ function lsSignSetTool(tool){
   apply();
 }
 function openLoadsheetSignDialog(){
+  // #110: this function returns true ONLY when the dialog actually opened
+  // (showModal succeeded). Every refusal/exception path returns false so the
+  // global sign-off watcher can retry on the next poll instead of latching
+  // "shown" forever after a single transient failure.
   const data = briefingOfpLiveData;
   if(!data?.ok || !lsSignFlightId()){
     showToast('SIGN LOADSHEET','NO FLIGHT','No active recording is available to sign.','warn');
-    return;
+    return false;
   }
   // #77: the button becomes the Flight Completion sign-off once the aircraft
   // is parked after block-in; otherwise it is the pre-departure loadsheet.
@@ -2089,12 +2180,12 @@ function openLoadsheetSignDialog(){
   if(kind === 'completion'){
     if(data.completion_locked === true && !data.signed_completion){
       showToast('REVIEW & SIGN','LOCKED','Flight Completion sign-off is only available after block-in at the arrival gate.','warn');
-      return;
+      return false;
     }
   }else{
     if(data.signature_locked === true && !data.signed){
       showToast('SIGN LOADSHEET','LOCKED','Loadsheet signing is locked after takeoff.','warn');
-      return;
+      return false;
     }
   }
   if(!_lsSignDialog){
@@ -2142,7 +2233,12 @@ function openLoadsheetSignDialog(){
   const header = _lsSignDialog.querySelector('header strong');
   if(header) header.textContent = completionMode ? 'FLIGHT COMPLETION SIGN-OFF' : 'LOADSHEET SIGN-OFF';
   $('lsSignFlightLabel').textContent = String((data.plan_identity||{}).callsign || 'FLIGHT');
-  $('lsSignSummary').innerHTML = lsSignSummaryHtml(data, _lsSignKind);
+  const sumBox = $('lsSignSummary');
+  // U-37: the completion review is a full two-panel layout, so the summary
+  // container must NOT keep the 3-column .ls-sign-grid cell styles (its
+  // `>div` rule would hijack the .ls-sign-review wrapper). Swap the class.
+  if(sumBox) sumBox.className = completionMode ? 'ls-sign-review-wrap' : 'ls-sign-grid';
+  if(sumBox) sumBox.innerHTML = lsSignSummaryHtml(data, _lsSignKind);
   const nameInput = $('lsSignName');
   if(nameInput) nameInput.value = current ? String(current.signer || '') : '';
   const roleSel = $('lsSignRole');
@@ -2151,8 +2247,89 @@ function openLoadsheetSignDialog(){
   if(removeBtn) removeBtn.hidden = !current;
   $('lsSignSubmit').textContent = current ? (completionMode ? 'RE-SIGN COMPLETION' : 'RE-SIGN LOADSHEET') : (completionMode ? 'SIGN OFF FLIGHT' : 'SIGN LOADSHEET');
   lsSignSetTool('draw');
-  _lsSignDialog.showModal();
+  try{
+    _lsSignDialog.showModal();
+  }catch(_e){
+    // #110: showModal can throw if the dialog is already open or the page is
+    // mid-navigation; report and let the watcher retry rather than latching.
+    console.warn('SIGN-OFF: loadsheet dialog failed to open', _e);
+    return false;
+  }
+  // Crisp signature: size the canvas backing store to the now-visible box ×
+  // devicePixelRatio, and keep it correct if the window/dialog resizes.
+  lsSignResizeCanvas();
+  if(!_lsSignResizeBound){
+    _lsSignResizeBound = true;
+    window.addEventListener('resize', ()=>{
+      if(_lsSignDialog && _lsSignDialog.open) lsSignResizeCanvas();
+    });
+  }
   setTimeout(()=>{ if(nameInput) nameInput.focus(); }, 50);
+  return true;
+}
+async function pollGlobalSignoff(){
+  // #91: one shared poller drives both sign-off auto-popups from any screen.
+  if(_signoffWatchBusy) return;
+  _signoffWatchBusy = true;
+  try{
+    const controller = new AbortController();
+    const abortTimer = setTimeout(()=>{ try{ controller.abort(); }catch(_){} }, 3000);
+    try{
+      const response = await fetch('/api/briefing/ofp-live', {cache:'no-store', signal: controller.signal});
+      const data = await safeJsonResponse(response);
+      if(!data || !data.ok) return;
+      const rid = String((data.recorder_identity||{}).id || data.flight_id || '');
+      if(rid !== _signoffWatchFlightId){
+        _signoffWatchFlightId = rid;
+        _signoffLoadsheetModalShown = false;
+        _signoffCompletionModalShown = false;
+      }
+      if(!rid) return;
+      // Keep the shared OFP data fresh so the modal renders current values even
+      // when the user is not on the Briefing OFP tab.
+      briefingOfpLiveData = data;
+      if(_lsSignDialog && _lsSignDialog.open) return; // never stack dialogs
+      // #110: re-arm when readiness drops and comes back (a transient refusal
+      // mid-window must not suppress the popup for the rest of the flight).
+      if(data.loadsheet_ready !== true){
+        _signoffLoadsheetModalShown = false;
+      }
+      if(data.completion_ready !== true){
+        _signoffCompletionModalShown = false;
+      }
+      if(data.loadsheet_ready === true && !data.signed && !_signoffLoadsheetModalShown){
+        // Latch ONLY after the dialog actually opened — a refusal/exception
+        // returns false and the next 5s poll simply retries.
+        if(openLoadsheetSignDialog() === true){
+          _signoffLoadsheetModalShown = true;
+          _lsLoadsheetToastShown = true; // suppress the panel's redundant toast
+        }else{
+          // Ready but refused/threw: make it visible in the log instead of invisible.
+          console.warn('SIGN-OFF: loadsheet_ready but dialog refused/failed');
+          try{ fetch('/api/logbook/events', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({event:'SIGN-OFF dialog refused (loadsheet_ready)'})}); }catch(_e){}
+        }
+      }else if(data.completion_ready === true && !data.signed_completion && !_signoffCompletionModalShown){
+        if(openLoadsheetSignDialog() === true){
+          _signoffCompletionModalShown = true;
+          _lsCompletionToastShown = true; // suppress the panel's redundant toast
+        }else{
+          console.warn('SIGN-OFF: completion_ready but dialog refused/failed');
+          try{ fetch('/api/logbook/events', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({event:'SIGN-OFF dialog refused (completion_ready)'})}); }catch(_e){}
+        }
+      }
+    }finally{
+      clearTimeout(abortTimer);
+    }
+  }catch(_error){
+    // Never surface watcher failures — the OFP panel poll is the fallback.
+  }finally{
+    _signoffWatchBusy = false;
+  }
+}
+function startGlobalSignoffWatcher(){
+  if(_signoffWatchTimer) return;
+  pollGlobalSignoff();
+  _signoffWatchTimer = setInterval(pollGlobalSignoff, 5000);
 }
 async function submitLoadsheetSignature(){
   const data = briefingOfpLiveData || {};
@@ -3838,6 +4015,7 @@ function fillSettings(data){
   renderModuleVisibilityGrid();
   const localHost=['127.0.0.1','localhost','::1'].includes(location.hostname);
   if($('openHostSetup')) $('openHostSetup').hidden=!localHost;
+  if($('reRunSetup')) $('reRunSetup').hidden=!localHost;
   if($('hostAccessNote')) $('hostAccessNote').textContent=localHost?'Open the desktop host setup to change accounts and integrations.':'Protected settings can only be changed on the simulator computer.';
 }
 
@@ -5501,7 +5679,7 @@ function saveMapView(){
   renderMapControllerList();
   scheduleAviationRefresh(260);
 }
-// ── v0.25.80: server-cached RainViewer precipitation layer ────────────────
+// ── v0.25.0: server-cached RainViewer precipitation layer ─────────────────
 // Tiles are served by opsroom.live (our own nginx + admin-api proxy), never
 // fetched from RainViewer by the client. The frame key comes from the
 // /api/v1/rainviewer/status endpoint and is embedded in the tile URL, so a
@@ -5556,7 +5734,7 @@ function initOnlineMap(){
   olBoundaryLayer=makeVectorLayer(boundaryStyle,7);
   olNotamLayer=makeVectorLayer(notamStyle,8);
   olNotamLayer.setVisible(mapLayerChecked('mapLayerNotams',false));
-  // v0.25.80: server-cached RainViewer precipitation layer. Rendered between
+  // v0.25.0: server-cached RainViewer precipitation layer. Rendered between
   // the basemap and the vector layers; attribution stays visible in the map's
   // attribution control (RainViewer free-tier requirement).
   olWeatherLayer=new ol.layer.Tile({source:new ol.source.XYZ({url:mapWeatherTileUrl('__none__'),opacity:.75,attributions:'Weather data by <a href="https://www.rainviewer.com" target="_blank" rel="noopener noreferrer">RainViewer</a>'}),opacity:.75,zIndex:5,visible:mapWeatherVisible()});
@@ -7326,7 +7504,7 @@ async function sendBugReport(){
     const response = await fetch('/api/diagnostics/bug-report/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const data = await safeJsonResponse(response);
     if(!data.ok) throw new Error(data.error || 'Bug report was not accepted by the endpoint.');
-    const fileLine = data.diagnosticsFileUrl ? `\nDiagnostics uploaded to Google Drive.` : '';
+    const fileLine = data.diagnosticsFileUrl ? `\nDiagnostics uploaded.` : '';
     bugReportSetStatus(`Report sent. ID: ${data.reportId || 'received'}${fileLine}`, 'ok');
   }catch(error){
     bugReportSetStatus(`Send failed: ${friendlyError(error.message)}\nUse DOWNLOAD ZIP or COPY REPORT as fallback.`, 'fault');
@@ -7721,6 +7899,26 @@ async function toggleRaas(){
 function toggleCameraBridgeFloatPanel(){const panel=$('cameraBridgeFloatPanel'),button=$('cameraBridgeFloatToggle');if(!panel)return;const collapsed=panel.classList.toggle('is-collapsed');if(button){button.setAttribute('aria-expanded',collapsed?'false':'true');button.textContent=collapsed?'SHOW CAMERA PANEL':'HIDE CAMERA PANEL'}try{localStorage.setItem('opsroom_camera_panel_collapsed',collapsed?'1':'0')}catch{}}
 function restoreCameraBridgeFloatPanel(){const panel=$('cameraBridgeFloatPanel'),button=$('cameraBridgeFloatToggle');if(!panel)return;let collapsed=false;try{collapsed=localStorage.getItem('opsroom_camera_panel_collapsed')==='1'}catch{}panel.classList.toggle('is-collapsed',collapsed);if(button){button.setAttribute('aria-expanded',collapsed?'false':'true');button.textContent=collapsed?'SHOW CAMERA PANEL':'HIDE CAMERA PANEL'}}
 
+// --- Discord community (system page) ---
+async function loadSystemDiscordStatus(){
+  const localHost=['127.0.0.1','localhost','::1'].includes(location.hostname);
+  const btn=$('systemDiscordConnect'), dbtn=$('systemDiscordDisconnect');
+  if(!btn&&!dbtn)return;
+  if(!localHost){ if(btn)btn.hidden=true; if(dbtn)dbtn.hidden=true; return; }
+  try{
+    const data=await fetch('/api/community/status',{cache:'no-store'}).then(r=>r.json());
+    if(btn){ btn.hidden=!!data.connected; btn.textContent=data.connected?('DISCORD: '+(data.discord_username||data.discord_id||'CONNECTED')):'CONNECT DISCORD'; }
+    if(dbtn)dbtn.hidden=!data.connected;
+  }catch(e){}
+}
+async function systemDiscordConnect(){
+  try{await fetch('/api/community/connect',{method:'POST'})}catch(e){}
+  loadSystemDiscordStatus();
+}
+async function systemDiscordDisconnect(){
+  try{await fetch('/api/community/disconnect',{method:'POST'})}catch(e){}
+  loadSystemDiscordStatus();
+}
 function setup(){
   restoreObsPrefs();
   $('bugReportButton')?.addEventListener('click',openBugReport);
@@ -7737,6 +7935,8 @@ function setup(){
   $('refreshFlight').addEventListener('click',()=>loadFlight(true));
   $('briefingRefresh').addEventListener('click',()=>loadFlight(true));
   $('deviceScale').addEventListener('change',event=>applyDeviceScale(event.target.value));
+  $('systemDiscordConnect')?.addEventListener('click',systemDiscordConnect);
+  $('systemDiscordDisconnect')?.addEventListener('click',systemDiscordDisconnect);
   $('terminalHomeStyle')?.addEventListener('change',event=>setTerminalHomeStyle(event.target.value));
   $('perfAircraft')?.addEventListener('change',updatePerformanceFlaps);
   $('perfMode')?.addEventListener('change',()=>{updatePerformanceFlaps();fillPerformanceFromSimbrief();fillPerformanceWeatherLive();fillPerformanceLiveWeight();renderPerformanceTlr();});
@@ -7972,7 +8172,7 @@ function startBackgroundModuleRefresh(){
 
 async function boot(){
   applyAirlineTheme();
-  applyDeviceScale(localStorage.getItem('opsroom-device-scale') || 'auto');if($('hoppieType'))$('hoppieType').value='telex';setTerminalHomeStyle(terminalHomeStyle());setRailCollapsed(localStorage.getItem(RAIL_COLLAPSED_KEY)==='1');notificationItems=notificationStore();notificationUnread=notificationItems.filter(item=>!item.read).length;updateClock(); setInterval(updateClock,1000); setup();setCommsSendMode('private');updateNotificationUi();requestOpsWakeLock();pollNotifications();notificationTimer=setInterval(pollNotifications,2500);startGlobalRaasListener();startLandingMonitor();
+  applyDeviceScale(localStorage.getItem('opsroom-device-scale') || 'auto');if($('hoppieType'))$('hoppieType').value='telex';setTerminalHomeStyle(terminalHomeStyle());setRailCollapsed(localStorage.getItem(RAIL_COLLAPSED_KEY)==='1');notificationItems=notificationStore();notificationUnread=notificationItems.filter(item=>!item.read).length;updateClock(); setInterval(updateClock,1000); setup();bindOnboarding();setCommsSendMode('private');updateNotificationUi();requestOpsWakeLock();pollNotifications();notificationTimer=setInterval(pollNotifications,2500);startGlobalRaasListener();startLandingMonitor();startGlobalSignoffWatcher();
   try{await loadSettings();}catch(error){console.error(error)}
   initPrinterSettings();
   initPrinterPreviewModal();
@@ -7999,6 +8199,7 @@ async function boot(){
   setInterval(loadServerInfo,60000);
   setInterval(()=>{if(activePage==='network')loadNetwork(false)},5000);
   startVpilotStream();
+  checkOnboarding();
   if('serviceWorker' in navigator){
     navigator.serviceWorker.getRegistrations?.().then(regs=>regs.forEach(reg=>reg.unregister())).catch(()=>{});
   }
@@ -8592,3 +8793,160 @@ function cfRestorePins() {
 // Call restore after pin definition (the existing cfLoadPins function is already correct)
 // The fix is ensuring cfState.pins is initialized from localStorage on every page load.
 // This is already handled at cfInitAirpor
+
+// ---- First-run onboarding wizard (v0.25.79) ----
+const ONB_STEP_COUNT = 7;
+let onbStep = 0;
+function onbDots(){
+  const d=$('onbDots');if(!d)return;
+  let h='';
+  for(let i=0;i<ONB_STEP_COUNT;i++){h+='<span class="onb-dot'+(i===onbStep?' active':'')+'"></span>';}
+  d.innerHTML=h;
+}
+function onbHide(){
+  const ov=$('onboardingOverlay');if(!ov)return;
+  ov.hidden=true;
+  ov.style.display='none';
+}
+function onbShow(){
+  const ov=$('onboardingOverlay');if(!ov)return;
+  ov.style.display='flex';
+  ov.hidden=false;
+}
+function onbGo(n){
+  onbStep=n;
+  document.querySelectorAll('.onb-step').forEach(el=>{el.hidden=Number(el.dataset.step)!==n;});
+  const back=$('onbBack'),next=$('onbNext');
+  if(back)back.hidden=n===0;
+  if(next)next.textContent=n===ONB_STEP_COUNT-1?'FINISH':'CONTINUE';
+  onbDots();
+  if(n===6)loadOnbMsfs();
+}
+function onbStatusRow(name,ok,val){
+  return '<div class="onb-status-row"><i class="'+(ok?'onb-ok':'onb-warn')+'"></i><span>'+escapeHtml(name)+'</span><small>'+escapeHtml(val)+'</small></div>';
+}
+function renderOnbStatus(d){
+  const el=$('onbStatusList');if(!el)return;
+  const rows=[];
+  rows.push(onbStatusRow('Simulator',d.sim&&d.sim.connected,(d.sim&&d.sim.source)||'Not detected'));
+  rows.push(onbStatusRow('GSX',d.gsx&&d.gsx.detected,d.gsx&&d.gsx.detected?'Detected':'Not detected'));
+  rows.push(onbStatusRow('Fenix EFB',d.fenix&&d.fenix.efb_online,d.fenix&&d.fenix.efb_online?'Online':'Not detected'));
+  rows.push(onbStatusRow('Discord',d.discord&&d.discord.connected,d.discord&&d.discord.connected?'Connected':'Not connected'));
+  rows.push(onbStatusRow('SimBrief',d.simbrief&&d.simbrief.configured,d.simbrief&&d.simbrief.configured?'Linked':'Not set'));
+  rows.push(onbStatusRow('VATSIM',d.vatsim&&d.vatsim.configured,d.vatsim&&d.vatsim.configured?'Set':'Not set'));
+  rows.push(onbStatusRow('Hoppie',d.hoppie&&d.hoppie.configured,d.hoppie&&d.hoppie.configured?'Configured':'Not set'));
+  rows.push(onbStatusRow('Announcements',d.announcer&&d.announcer.configured,d.announcer&&d.announcer.configured?'Set':'Not set'));
+  rows.push(onbStatusRow('RAAS voice',d.raas&&d.raas.configured,d.raas&&d.raas.configured?'Set':'Not set'));
+  el.innerHTML=rows.join('');
+}
+async function loadOnboardingState(){
+  let d=null;
+  try{const r=await fetch('/api/onboarding/status',{cache:'no-store'});d=await r.json();}catch(e){return null;}
+  if(!d||!d.ok)return null;
+  if($('onbSimbrief'))$('onbSimbrief').value=(d.simbrief&&d.simbrief.value)||'';
+  if($('onbVatsim'))$('onbVatsim').value=(d.vatsim&&d.vatsim.value)||'';
+  if($('onbUnitWeight'))$('onbUnitWeight').value=(d.units&&d.units.weight)||'kg';
+  if($('onbLan'))$('onbLan').checked=d.lan?d.lan.enabled!==false:true;
+  const dc=d.discord&&d.discord.connected;
+  if($('onbDiscordState')){$('onbDiscordState').textContent=dc?'CONNECTED':'NOT CONNECTED';$('onbDiscordState').classList.toggle('connected',!!dc);}
+  if($('onbDiscordConnect'))$('onbDiscordConnect').disabled=!!dc;
+  renderOnbStatus(d);
+  return d;
+}
+async function checkOnboarding(){
+  if(efbRequestedFromUrl())return; // inside the in-game panel: never auto-open the full-screen wizard there
+  const d=await loadOnboardingState();
+  if(!d)return;
+  if(d.setup_completed)return;
+  onbShow();
+  onbGo(0);
+}
+function openOnboarding(){
+  onbShow();
+  onbGo(0);
+  loadOnboardingState();
+}
+async function onbFinish(){
+  let current={};
+  try{current=await (await fetch('/api/settings',{cache:'no-store'})).json();}catch(e){}
+  const curUnits=((current&&current.interface&&current.interface.units)||{});
+  const payload={
+    identity:{simbrief_user_id:($('onbSimbrief')?$('onbSimbrief').value.trim():''),vatsim_cid:($('onbVatsim')?$('onbVatsim').value.trim():'')},
+    integrations:{announcements_root:($('onbAnnouncements')?$('onbAnnouncements').value.trim():''),announcements_enabled:!!($('onbAnnouncements')&&$('onbAnnouncements').value.trim())},
+    server:{lan_access:$('onbLan')?$('onbLan').checked:true},
+    interface:{units:{weight:$('onbUnitWeight')?$('onbUnitWeight').value:'kg',distance:curUnits.distance||'nm',altitude:curUnits.altitude||'ft',speed:curUnits.speed||'kt',vertical_speed:curUnits.vertical_speed||'fpm'}}
+  };
+  const hoppie=$('onbHoppie')?$('onbHoppie').value.trim():'';
+  if(hoppie)payload.hoppie_logon_code=hoppie;
+  const raasPath=$('onbRaas')?$('onbRaas').value.trim():'';
+  try{
+    const r=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const rd=await r.json();
+    if(!r.ok)throw new Error(rd.detail||('HTTP '+r.status));
+    if(raasPath){try{await fetch('/api/raas/voice-path',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:raasPath})});}catch(e){}}
+  }catch(e){console.error('onboarding save failed',e);}
+  onbHide();
+}
+async function onbConnectDiscord(){
+  try{await fetch('/api/community/connect',{method:'POST'});}catch(e){}
+  for(let i=0;i<30;i++){await new Promise(r=>setTimeout(r,1000));try{const d=await (await fetch('/api/community/status',{cache:'no-store'})).json();if(d&&d.connected){const st=$('onbDiscordState');if(st){st.textContent='CONNECTED';st.classList.add('connected');}const btn=$('onbDiscordConnect');if(btn)btn.disabled=true;return;}}catch(e){}}
+}
+async function onbBrowseFolder(targetId){
+  const input=$(targetId);if(!input)return;
+  try{
+    const r=await fetch('/api/browse-folder',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const d=await r.json();
+    if(d&&d.ok&&d.path)input.value=d.path;
+  }catch(e){console.error('folder browse failed',e);}
+}
+async function loadOnbMsfs(){
+  let status=null;
+  try{status=await (await fetch('/api/msfs/packages/status',{cache:'no-store'})).json();}catch(e){status=null;}
+  const el=$('onbMsfsFolders');if(!el)return;
+  const folders=(status&&status.community_folders)||[];
+  if(!folders.length){
+    el.innerHTML='<div class="onb-status-row"><i class="onb-warn"></i><span>No MSFS Community folder detected</span><small>Install into a folder below</small></div>';
+    return;
+  }
+  el.innerHTML=folders.map(f=>{
+    const list=Object.values(f.packages||{});
+    const present=list.filter(p=>p.installed).length;
+    const total=list.length;
+    const done=total>0&&present===total;
+    const state=done?'INSTALLED':(present>0?present+'/'+total+' INSTALLED':'MISSING');
+    return onbStatusRow(f.label,done,f.exists?state:'folder missing');
+  }).join('');
+}
+async function onbMsfsInstall(folders){
+  const btn=$('onbMsfsInstall'),st=$('onbMsfsState');
+  if(btn)btn.disabled=true;
+  if(st){st.style.display='block';st.textContent='Installing into '+(folders&&folders.length?folders.length:0)+' folder(s)...';}
+  try{
+    const r=await fetch('/api/msfs/packages/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folders:folders||null})});
+    const d=await r.json();
+    if(st)st.textContent=(d&&d.reason)||'Install finished.';
+    await loadOnbMsfs();
+  }catch(e){
+    if(st)st.textContent='Install failed: '+friendlyError(e.message);
+  }finally{
+    if(btn)btn.disabled=false;
+  }
+}
+async function onbMsfsBrowseAndInstall(){
+  try{
+    const r=await fetch('/api/browse-folder',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const d=await r.json();
+    if(d&&d.ok&&d.path)await onbMsfsInstall([d.path]);
+  }catch(e){console.error('folder browse failed',e);}
+}
+function bindOnboarding(){
+  $('onbNext')?.addEventListener('click',()=>{if(onbStep===ONB_STEP_COUNT-1){onbFinish();}else{onbGo(onbStep+1);}});
+  $('onbBack')?.addEventListener('click',()=>{onbGo(Math.max(0,onbStep-1));});
+  $('onbSkip')?.addEventListener('click',onbFinish);
+  $('onbClose')?.addEventListener('click',onbFinish);
+  $('onbDiscordConnect')?.addEventListener('click',onbConnectDiscord);
+  $('reRunSetup')?.addEventListener('click',openOnboarding);
+  document.querySelectorAll('[data-onb-browse]').forEach(btn=>{btn.addEventListener('click',()=>onbBrowseFolder(btn.dataset.onbBrowse));});
+  $('onbMsfsInstall')?.addEventListener('click',()=>onbMsfsInstall(null));
+  $('onbMsfsBrowse')?.addEventListener('click',onbMsfsBrowseAndInstall);
+}

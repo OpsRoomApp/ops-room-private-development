@@ -99,6 +99,16 @@ def _phase(telemetry: dict[str, Any], plan: dict[str, Any] | None) -> str:
     prev_phase = _FW_PHASE_STATE.get("phase")
 
     if on_ground:
+        # #112: a fresh SimBrief plan while parked is a new flight context —
+        # re-arm the departure machine so the NEXT pushback classifies
+        # correctly after a previous arrival latched ``arrived``.
+        plan_id = str((plan or {}).get("plan_id") or "")
+        prev_plan_id = str(_FW_PHASE_STATE.get("plan_id") or "")
+        if plan_id and plan_id != prev_plan_id and gs < 2.0:
+            _FW_PHASE_STATE["plan_id"] = plan_id
+            _FW_PHASE_STATE["arrived"] = False
+        elif plan_id and not prev_plan_id:
+            _FW_PHASE_STATE["plan_id"] = plan_id
         # #42: the display mirror of the logbook phase-ordering invariant.
         gsx_push = _gsx_pushback_active() and gs <= 10.0
         if gsx_push:
@@ -125,11 +135,19 @@ def _phase(telemetry: dict[str, Any], plan: dict[str, Any] | None) -> str:
             _FW_PHASE_STATE["phase"] = "PUSHBACK"
             return "PUSHBACK"
         # Movement out of PARKED before taxi proof is pushback (ordering
-        # invariant — Fenix blind spot: no body-vx, track == heading).
+        # invariant — Fenix blind spot: no body-vx, track == heading). #112:
+        # only a genuine first departure — once the aircraft has landed this
+        # session (``arrived``), post-arrival movement is taxi, never PUSHBACK.
         if gs >= 1.0 and (prev_phase == "PARKED" or prev_phase is None):
-            _FW_PHASE_STATE["pushback"] = True
-            _FW_PHASE_STATE["phase"] = "PUSHBACK"
-            return "PUSHBACK"
+            if not _FW_PHASE_STATE.get("arrived"):
+                _FW_PHASE_STATE["pushback"] = True
+                _FW_PHASE_STATE["phase"] = "PUSHBACK"
+                return "PUSHBACK"
+            _FW_PHASE_STATE["pushback"] = False
+            _FW_PHASE_STATE["high_gs_polls"] = 0
+            phase = "TAXI IN" if _FW_PHASE_STATE.get("airborne_seen") else "TAXI"
+            _FW_PHASE_STATE["phase"] = phase
+            return phase
         if gs < 2.0:
             _FW_PHASE_STATE["phase"] = "PARKED"
             # #85: once parked at the gate after arrival, drop the airborne
@@ -145,8 +163,10 @@ def _phase(telemetry: dict[str, Any], plan: dict[str, Any] | None) -> str:
         # #85: after the aircraft has been airborne, on-ground movement is the
         # landing roll / taxi-in — NEVER TAKEOFF ROLL (FFT1011 showed the
         # display calling the landing rollout TAKEOFF ROLL because this machine
-        # had no LANDING concept).
+        # had no LANDING concept). #112: latch ``arrived`` here so any later
+        # PARKED->movement after a >90s gate stop is TAXI IN, not PUSHBACK.
         if _FW_PHASE_STATE.get("airborne_seen"):
+            _FW_PHASE_STATE["arrived"] = True
             phase = "LANDING ROLL" if gs >= 40 else "TAXI IN"
             _FW_PHASE_STATE["phase"] = phase
             return phase
@@ -160,9 +180,12 @@ def _phase(telemetry: dict[str, Any], plan: dict[str, Any] | None) -> str:
         _FW_PHASE_STATE["phase"] = "TAKEOFF ROLL"
         return "TAKEOFF ROLL"
     # Airborne: the departure latch must not leak into arrival taxi-in.
+    # #112: a fresh takeoff also clears the arrival latch so a same-plan return
+    # leg still classifies its departure pushback correctly.
     _FW_PHASE_STATE["pushback"] = False
     _FW_PHASE_STATE["high_gs_polls"] = 0
     _FW_PHASE_STATE["airborne_seen"] = True
+    _FW_PHASE_STATE["arrived"] = False
     # #66: once ENROUTE/CRUISE is settled, never bounce back to CLIMB. The
     # climb detector keeps firing for minutes after a slow top-of-climb (vs
     # stays >250 while the aircraft slowly approaches cruise) which produced a

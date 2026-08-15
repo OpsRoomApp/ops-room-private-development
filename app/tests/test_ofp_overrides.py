@@ -424,7 +424,7 @@ def test_exports_attach_manual_overrides() -> None:
     store.set_overrides("FLT-EXPORT-1", {"times:out": "1017", "weights:zfw": 108.7})
 
     from app.briefing_data import _app_version as _bd_version
-    _expected_version = str(_bd_version() or "0.25.77")
+    _expected_version = str(_bd_version() or "0.25.0")
     payload = json.loads(logbook.export_json())
     check("export_json stamps real app version", str(payload.get("version")) == _expected_version, str(payload.get("version")))
     entry = next((e for e in payload["entries"] if e.get("id") == "FLT-EXPORT-1"), None)
@@ -496,6 +496,54 @@ def test_fenix_loadsheet_absent_falls_back_to_snapshots() -> None:
     check("snapshot TOW source", tow.get("source") == "off-snapshot", str(tow))
 
 
+def test_recorded_fenix_snapshots_fill_completed_entry() -> None:
+    """#113: recorded Fenix EFB values in the snapshots fill the completed entry.
+
+    The Full PIREP OFP-completion endpoint never has the live Fenix loadsheet
+    (the in-memory EFB cache goes cold after landing / restart), so the builder
+    must fall back to the Fenix values captured into the immutable operational
+    snapshots at each event. KGS values convert into the plan's LBS unit.
+    """
+    rec = _recorder()
+    rec["operational_snapshots"] = {
+        "out": {
+            "fuel_lb": 8600,
+            "fenix_zfw_kg": 49350.0,
+            "fenix_tow_kg": 52800.0,
+            "fenix_ldw_kg": 51650.0,
+            "fenix_max_zfw_kg": 61000.0,
+            "fenix_max_tow_kg": 73500.0,
+            "fenix_max_ldw_kg": 64500.0,
+            "fenix_pax_loaded": 118.0,
+            "fenix_cargo_loaded_kg": 2041.2,
+        },
+        "off": {"fuel_lb": 8400, "fenix_tow_kg": 52800.0, "fenix_pax_loaded": 118.0, "fenix_cargo_loaded_kg": 2041.2},
+        "on": {"fuel_lb": 2800, "fenix_ldw_kg": 51650.0},
+        "in": {"fuel_lb": 2500},
+    }
+    # Completed-entry path: NO live loadsheet and NO loading progress - the
+    # exact shape the Full PIREP endpoint passes.
+    payload = build_live_ofp_actuals(_plan(), None, completed_entry=rec)
+    weights = payload.get("weights") or {}
+    tow = weights.get("tow") or {}
+    zfw = weights.get("zfw") or {}
+    ldw = weights.get("ldw") or {}
+    pax = weights.get("passengers") or {}
+    bags = weights.get("bags_cargo") or {}
+    payload_actual = (weights.get("payload") or {}).get("actual")
+    # 52800 kg = 116,404 lb; 49350 kg = 108,798 lb; 51650 kg = 113,869 lb
+    check("recorded-fenix TOW actual", tow.get("actual") is not None and abs(tow["actual"] - 116404.0) < 2.0, str(tow))
+    check("recorded-fenix ZFW actual", zfw.get("actual") is not None and abs(zfw["actual"] - 108798.0) < 2.0, str(zfw))
+    check("recorded-fenix LDW actual", ldw.get("actual") is not None and abs(ldw["actual"] - 113869.0) < 2.0, str(ldw))
+    check("recorded-fenix TOW source", tow.get("source") == "fenix final loadsheet (recorded snapshot)", str(tow))
+    check("recorded-fenix TOW max from snapshot", tow.get("max") is not None and abs(tow["max"] - 162040.0) < 2.0, str(tow))
+    check("recorded-fenix PAX actual", pax.get("actual") == 118 and pax.get("source") == "fenix loading (recorded snapshot)", str(pax))
+    # 2041.2 kg cargo -> 4,500 lb plan unit
+    check("recorded-fenix BAG actual", bags.get("actual") is not None and abs(bags["actual"] - 4500.0) < 3.0, str(bags))
+    check("recorded-fenix PAYLOAD computed", payload_actual is not None and payload_actual > 0.0, str(payload_actual))
+    check("no live sheet leaves snapshot path", tow.get("source") != "fenix final loadsheet", str(tow))
+
+
 def main() -> None:
     test_store_validation()
     test_store_persistence()
@@ -516,6 +564,7 @@ def main() -> None:
     test_prune_orphaned()
     test_fenix_loadsheet_fills_tow_zfw_ldw()
     test_fenix_loadsheet_absent_falls_back_to_snapshots()
+    test_recorded_fenix_snapshots_fill_completed_entry()
 
     print("=" * 60)
     total = PASS + FAIL

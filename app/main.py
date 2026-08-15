@@ -23,6 +23,7 @@ from .vatsim_client import get_vatsim_data, CACHE_SECONDS
 from .weather_client import fetch_metar, fetch_realworld_atis
 from . import nms_client
 from . import notam_client  # v0.25.65: server-side NOTAM store client (DB-first)
+from . import community
 from .realworld import router as realworld_router, _DEBUG_ROUTER as realworld_debug_router, start_background_refresh
 from .camera_state import get_target, set_target, set_view as set_camera_view_state, reset_view as reset_camera_view_state, release_camera as release_camera_state
 from .scratchpad import scratchpad_status, scratchpad_get_page, scratchpad_save_page, scratchpad_clear_page
@@ -59,6 +60,17 @@ from .module_preloader import register as _preloader_register, prewarm_all as _p
 from .aircraft_adapter_installer import adapter_status as aircraft_adapter_status, install_adapters as aircraft_adapters_install, fsuipc_log_status as aircraft_fsuipc_log_status, reduce_fsuipc_log_size as aircraft_fsuipc_reduce_log
 from .pmdg777_eula import eula_text as pmdg777_eula_text, status as pmdg777_eula_status
 from .pmdg777_sdk import shutdown as pmdg777_sdk_shutdown
+
+# #102: the app ships no logging.basicConfig anywhere, so the root logger
+# stayed at WARNING and INFO diagnostics (Rich Presence connect/update, Discord
+# sync) never reached opsroom.log. Raise to INFO here, once, for the whole
+# process; the launcher tees stderr into opsroom.log.
+try:
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger().setLevel(logging.INFO)
+except Exception:
+    pass
 
 _LOGGER = logging.getLogger("opsroom.main")
 try:
@@ -109,9 +121,10 @@ from .ofp_overrides import get_overrides, set_overrides, remove_override, clear_
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="OPS ROOM", version="0.25.77")
+app = FastAPI(title="OPS ROOM", version="0.25.0")
 app.include_router(realworld_router)
 app.include_router(realworld_debug_router)
+app.include_router(community.router)
 app.add_middleware(GZipMiddleware, minimum_size=512)
 
 
@@ -119,6 +132,11 @@ app.add_middleware(GZipMiddleware, minimum_size=512)
 def _opsroom_startup_autofetch_ofp() -> None:
     """Warm telemetry and SimBrief caches without blocking the UI after app start."""
     start_telemetry_engine()
+    # community: Discord Rich Presence + opt-in flight-event / live-feed sender
+    try:
+        community.start_community()
+    except Exception as exc:
+        _LOGGER.debug("Community integration start skipped: %s", exc)
     # v0.25.60: start real-world flight background refresh loop
     try:
         start_background_refresh()
@@ -248,6 +266,11 @@ def _opsroom_shutdown() -> None:
     except Exception:
         pass
     _step("telemetry")
+    try:
+        community.shutdown_community()
+    except Exception:
+        pass
+    _step("community")
     # v0.25.68: close the SimConnect sessions (telemetry + closure markers)
     # so their dispatch threads stop polling during teardown -- otherwise the
     # wrapper floods ``OS error: WinError 0xc00000b0`` and uvicorn hangs until
@@ -259,6 +282,15 @@ def _opsroom_shutdown() -> None:
     except Exception:
         pass
     _step("simconnect")
+    # #108 next tier: stop the isolated SimConnect probe worker subprocess so
+    # its stdin/stdout pipes and any native session are released cleanly.
+    try:
+        from .simconnect_probe_client import shutdown as _probe_worker_shutdown
+
+        _probe_worker_shutdown()
+    except Exception:
+        pass
+    _step("probe-worker")
     # v0.25.71: closure-marker SimConnect teardown is shelved with the rest
     # of the in-sim injection backend (no session is ever opened now).
     # try:
@@ -883,6 +915,110 @@ def settings_put(payload: dict, request: Request) -> dict:
     return {"ok": True, "settings": saved, "restart_required": restart_required}
 
 
+@app.get("/api/onboarding/status")
+def onboarding_status(request: Request) -> dict:
+    """Aggregated first-run setup state for the onboarding wizard.
+
+    Reuses the existing detection surfaces (system summary, Fenix, Discord,
+    settings) so the wizard never probes the sim independently -- it reports
+    what is already known, and the UI only surfaces the missing pieces.
+    """
+    _require_local_host(request)
+    settings = load_settings()
+    summary = build_system_summary(probe_simconnect=False)
+    integrations = summary.get("integrations") or {}
+
+    sim = integrations.get("msfs") or {}
+    telemetry = integrations.get("telemetry") or {}
+    sim_connected = sim.get("state") == "connected"
+
+    try:
+        fenix = fenix_status(force=False)
+    except Exception:
+        fenix = {}
+    fenix_online = bool((fenix or {}).get("efb_online"))
+
+    try:
+        disc = community.community_status()
+    except Exception:
+        disc = {}
+    discord_connected = bool((disc or {}).get("connected"))
+
+    ann_root = str(settings.get("integrations", {}).get("announcements_root") or "").strip()
+    raas_path = str(settings.get("integrations", {}).get("raas_voice_path") or "").strip()
+
+    # Backfill: installs created before the wizard existed have no
+    # ``setup_completed`` flag. Treat any real prior configuration as
+    # completion so an existing install is never interrupted, while a truly
+    # fresh install still gets the guided setup.
+    identity = settings.get("identity", {}) or {}
+    existing_config = bool(
+        str(identity.get("simbrief_user_id") or "").strip()
+        or str(identity.get("vatsim_cid") or "").strip()
+        or bool(settings.get("integrations", {}).get("hoppie_configured", False))
+        or ann_root
+        or raas_path
+    )
+    setup_completed = bool(settings.get("interface", {}).get("setup_completed", False)) or existing_config
+
+    return {
+        "ok": True,
+        "setup_completed": setup_completed,
+        "sim": {"connected": sim_connected, "source": telemetry.get("label", ""), "detail": sim.get("detail", "")},
+        "simbrief": {"configured": bool(settings.get("identity", {}).get("simbrief_user_id")), "value": settings.get("identity", {}).get("simbrief_user_id", "")},
+        "vatsim": {"configured": bool(settings.get("identity", {}).get("vatsim_cid")), "value": settings.get("identity", {}).get("vatsim_cid", "")},
+        "hoppie": {"configured": bool(settings.get("integrations", {}).get("hoppie_configured", False))},
+        "announcer": {"configured": bool(ann_root), "enabled": bool(settings.get("integrations", {}).get("announcements_enabled", False))},
+        "raas": {"configured": bool(raas_path)},
+        "gsx": {"detected": integrations.get("gsx", {}).get("state") == "detected"},
+        "fenix": {"efb_online": fenix_online},
+        "discord": {"connected": discord_connected},
+        "lan": {"enabled": bool(settings.get("server", {}).get("lan_access", True))},
+        "units": {"weight": settings.get("interface", {}).get("units", {}).get("weight", "kg")},
+    }
+
+
+_FOLDER_DIALOG_LOCK = threading.Lock()
+
+
+@app.post("/api/browse-folder")
+def browse_folder(request: Request) -> dict:
+    """Open a native folder picker on the host and return the chosen path.
+
+    Used by the onboarding wizard and Host Setup folder fields. tkinter is a
+    bundled hidden import (see OPS_ROOM.spec) and the dialog is modal, so the
+    endpoint is a sync route that runs on a worker thread while a module lock
+    prevents a second dialog from stacking on top of the first.
+    """
+    _require_local_host(request)
+    if not _FOLDER_DIALOG_LOCK.acquire(blocking=False):
+        return {"ok": False, "path": "", "error": "A folder dialog is already open."}
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)
+            root.lift()
+        except Exception:
+            pass
+        root.update()
+        try:
+            path = filedialog.askdirectory(title="Select folder")
+        finally:
+            try:
+                root.destroy()
+            except Exception:
+                pass
+        return {"ok": True, "path": str(path or "")}
+    except Exception as exc:
+        return {"ok": False, "path": "", "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        _FOLDER_DIALOG_LOCK.release()
+
+
 @app.get("/api/system/summary")
 def system_summary(probe_simconnect: bool = False) -> dict:
     return build_system_summary(probe_simconnect=probe_simconnect)
@@ -1181,6 +1317,28 @@ def _live_ofp_payload() -> dict:
         last_progress = fenix_loading.get("last_progress") if isinstance(fenix_loading, dict) else {}
         if isinstance(last_progress, dict) and last_progress:
             loading_progress = last_progress
+        else:
+            # #99: the Fenix snapshot is stale/absent (expired by the staleness
+            # TTL in gsx_remote.automation_status). Fall back to LIVE GSX
+            # boarding progress so the Live OFP still shows measured PAX/cargo
+            # while Fenix is silent instead of freezing on stale numbers.
+            try:
+                gsx_live = gsx_status(force=False)
+                gsx_progress = gsx_live.get("progress") if isinstance(gsx_live, dict) else {}
+                if isinstance(gsx_progress, dict):
+                    live_pax = gsx_progress.get("passengers_boarding_total")
+                    live_target = gsx_progress.get("passengers_target")
+                    live_cargo = gsx_progress.get("boarding_cargo_percent")
+                    if live_pax is not None or live_cargo is not None:
+                        loading_progress = {
+                            "passengers": live_pax,
+                            "target": live_target,
+                            "boarding_cargo_percent": live_cargo,
+                            "source": "gsx-live",
+                            "updated_at": gsx_live.get("sampled_at") or gsx_live.get("_utc_now", ""),
+                        }
+            except Exception:
+                pass
     except Exception:
         loading_progress = None
     # #60: TOW/ZFW/LDW actuals on Fenix come from the EFB FINAL loadsheet
@@ -2522,34 +2680,56 @@ def notams_closure_proximity() -> Response:
     )
 
 
-# v0.25.71: SHELVED - closure-marker deployment endpoints (see shelf note
-# above the auto-deploy machinery). Kept as commented-out code for later.
-#
-# @app.get("/api/simobjects/install-status")
-# def simobjects_install_status() -> dict:
-#     """Closure-marker Community package install status for the UI (v0.25.65)."""
-#     from . import closure_markers
-#     from .simobjects_installer import install_status
-#
-#     status = install_status()
-#     status["auto_deploy_radius_nm"] = closure_markers.marker_radius_nm()
-#     status["auto_deploy_altitude_gate_ft"] = closure_markers.marker_altitude_gate_ft()
-#     status["auto_deploy_enabled"] = _simobjects_markers_enabled()
-#     return status
+# v0.25.71+: the runtime NOTAM closure-marker deployment machinery stays
+# SHELVED (auto-deploy loop, spawn endpoints). The Community package install
+# surface was reactivated and generalized below as the MSFS packages API
+# (closure markers + the in-game tablet panel) for the onboarding wizard.
 
 
-# @app.post("/api/simobjects/install")
-# def simobjects_install(request: Request) -> Response:
-#     """Manually re-run the Community folder installer (v0.25.65)."""
-#     _require_local_host(request)
-#     from .simobjects_installer import install_package
-#
-#     result = install_package()
-#     return Response(
-#         content=json.dumps(result),
-#         media_type="application/json",
-#         headers={"Cache-Control": "no-store"},
-#     )
+@app.get("/api/panel/health")
+def panel_health() -> Response:
+    """Lightweight liveness probe for the in-game tablet panel and other
+    clients that may fetch from a foreign origin (the in-sim webview).
+    Deliberately CORS-open (``Access-Control-Allow-Origin: *``) so the sim
+    panel can mount the app as soon as it starts; the response carries no
+    data and no credentials.
+    """
+    return Response(
+        content=json.dumps({"ok": True, "service": "opsroom"}),
+        media_type="application/json",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/api/msfs/packages/status")
+def msfs_packages_status() -> dict:
+    """MSFS Community package availability + per-folder install status for
+    the onboarding wizard (closure markers + in-game tablet panel)."""
+    from .simobjects_installer import install_status
+
+    return install_status()
+
+
+@app.post("/api/msfs/packages/install")
+def msfs_packages_install(payload: dict | None = None, request: Request = None) -> Response:
+    """Copy the MSFS Community packages into every detected Community folder,
+    or into explicit ``folders`` paths (e.g. an Addons Linker library chosen
+    with the native folder picker). Idempotent and best-effort."""
+    _require_local_host(request)
+    from .simobjects_installer import install_packages
+
+    data = payload or {}
+    folders = data.get("folders") or None
+    names = data.get("packages") or None
+    result = install_packages(names=names, folders=folders)
+    return Response(
+        content=json.dumps(result),
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # @app.get("/api/simobjects/notam-closures")
@@ -3195,7 +3375,7 @@ def server_qr(request: Request) -> Response:
 def health() -> dict:
     return {
         "ok": True,
-        "version": "0.25.77",
+        "version": "0.25.0",
         "product": "OPS ROOM",
         "refresh_seconds": CACHE_SECONDS,
         "simconnect": simconnect_diagnostics(),

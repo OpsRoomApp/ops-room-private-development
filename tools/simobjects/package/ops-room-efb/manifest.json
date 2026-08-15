@@ -1,0 +1,14 @@
+{
+  "dependencies": [],
+  "content_type": "MISC",
+  "title": "OPS ROOM EFB",
+  "manufacturer": "OPS ROOM",
+  "creator": "OPS ROOM",
+  "package_version": "0.25.0",
+  "minimum_game_version": "1.0.0",
+  "release_notes": {
+    "neutral": {
+      "LastUpdate": "OPS ROOM app for the native MSFS 2024 EFB. Opens the full operations console (status, FIDS, dispatch, briefing, scratchpad, flight watch, datalink, procedures, logbook, black box and more) inside the cockpit tablet, talking to the OPS ROOM desktop app on localhost."
+    }
+  }
+}

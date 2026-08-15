@@ -16,9 +16,9 @@
   <link rel="icon" href="/static/icons/opsroom-192.png" />
   <link rel="apple-touch-icon" href="/static/icons/opsroom-192.png" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.9.0/ol.css" />
-  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-77" />
-  <script src="/static/pdf.min.js?v=0-25-77"></script>
-  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js?v=0-25-77';</script>
+  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-0" />
+  <script src="/static/pdf.min.js?v=0-25-0"></script>
+  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js?v=0-25-0';</script>
 </head>
 <body>
   <div id="raasGlobalAlert" class="raas-global-alert" aria-live="assertive" hidden></div>
@@ -35,7 +35,7 @@
         <img src="/static/opsroom-brand-mark.svg" alt="" />
         <span><b>OPS ROOM</b><small>OPERATIONS CONTROL CENTRE</small></span>
       </button>
-      <div class="efb-header-actions"><a class="discord-button efb-notification-button" href="https://discord.gg/tNscx7C64b" target="_blank" rel="noopener" aria-label="Join Discord" title="Join OPS ROOM Discord"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></span></a><button id="efbNotificationButton" class="notification-button efb-notification-button" type="button" aria-label="Open notifications"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6v3.4L4.2 16v1.2h15.6V16L18 12.4V9a6 6 0 0 0-6-6Zm0 18a3 3 0 0 0 2.7-1.7H9.3A3 3 0 0 0 12 21Z"/></svg></span><b id="efbNotificationBadge" hidden>0</b></button><div class="efb-profile-pill"><span id="efbProfileInitial">O</span><b id="efbProfileLabel">OPS ROOM</b></div></div>
+      <div class="efb-header-actions"><a class="discord-button efb-notification-button" href="https://discord.gg/Dv6fNAjhAt" target="_blank" rel="noopener" aria-label="Join Discord" title="Join OPS ROOM Discord"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></span></a><button id="efbNotificationButton" class="notification-button efb-notification-button" type="button" aria-label="Open notifications"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6v3.4L4.2 16v1.2h15.6V16L18 12.4V9a6 6 0 0 0-6-6Zm0 18a3 3 0 0 0 2.7-1.7H9.3A3 3 0 0 0 12 21Z"/></svg></span><b id="efbNotificationBadge" hidden>0</b></button><div class="efb-profile-pill"><span id="efbProfileInitial">O</span><b id="efbProfileLabel">OPS ROOM</b></div></div>
     </header>
 <main class="efb-launchpad" aria-label="Module launcher">
       <button class="efb-app" type="button" data-page="status"><span class="efb-icon"><img src="/static/efb-icons/status.png" alt="" loading="lazy" decoding="async" /></span><b>Status</b></button>
@@ -85,7 +85,7 @@
         <span>OPERATIONS CONTROL CENTRE</span>
       </button>
       <div class="masthead-status">
-        <a class="discord-button masthead-discord" href="https://discord.gg/tNscx7C64b" target="_blank" rel="noopener" aria-label="Join Discord" title="Join OPS ROOM Discord"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></span></a>
+        <a class="discord-button masthead-discord" href="https://discord.gg/Dv6fNAjhAt" target="_blank" rel="noopener" aria-label="Join Discord" title="Join OPS ROOM Discord"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></span></a>
         <button id="notificationButton" class="notification-button" type="button" aria-label="Open notifications"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6v3.4L4.2 16v1.2h15.6V16L18 12.4V9a6 6 0 0 0-6-6Zm0 18a3 3 0 0 0 2.7-1.7H9.3A3 3 0 0 0 12 21Z"/></svg></span><b id="notificationBadge" hidden>0</b></button>
         <span id="dateLine">26 JUN 2026</span>
         <strong id="utcClock">00:00:00 UTC</strong>
@@ -117,9 +117,7 @@
         <button class="nav-item" data-page="system" aria-label="SYSTEM">SYSTEM</button>
       </nav>
       <div class="rail-footer">
-        <span>OPS ROOM 0.25.77 PUBLIC RELEASE</span>
-        <span>LAN CONSOLE</span>
-        <span>SIMULATION USE ONLY</span>
+        <span>OPS ROOM v0.25.0</span>
       </div>
     </aside>
     <button id="railScrim" class="rail-scrim" type="button" aria-label="Close navigation"></button>
@@ -488,7 +486,6 @@
               <div><span>SELECTED SPD</span><b id="fcuSpeedRead">--- KT</b></div>
               <div><span>SELECTED V/S</span><b id="fcuVsRead">---- FPM</b></div>
             </div>
-            <div class="fcu-readonly-note">DISPLAY ONLY. AIRCRAFT CONTROL BUTTONS HAVE BEEN REMOVED.</div>
           </section>
           <section class="panel watch-advisories-panel">
             <header><span>Advisories</span><span>Live</span></header>
@@ -883,7 +880,7 @@
               <div><strong>ACCOUNTS AND INTEGRATIONS ARE MANAGED ON THE HOST PC</strong><p>VATSIM CID, SimBrief identity, Hoppie code, GSX path, LAN access and server port are configured in the OPS ROOM desktop host.</p></div>
             </div>
             <div id="hostConfigRows" class="host-config-rows"></div>
-            <div class="inline-actions terminal-host-actions"><a id="openHostSetup" class="control-button" href="/host#settings" target="_blank" rel="noreferrer" hidden>OPEN HOST SETUP</a><span id="hostAccessNote">Use the desktop host on the simulator computer to change protected settings.</span></div>
+            <div class="inline-actions terminal-host-actions"><a id="openHostSetup" class="control-button" href="/host#settings" target="_blank" rel="noreferrer" hidden>OPEN HOST SETUP</a><button id="reRunSetup" class="control-button" type="button" hidden>RE-RUN SETUP</button><button id="systemDiscordConnect" class="control-button" type="button" hidden>CONNECT DISCORD</button><button id="systemDiscordDisconnect" class="control-button" type="button" hidden>DISCONNECT DISCORD</button><span id="hostAccessNote">Use the desktop host on the simulator computer to change protected settings.</span></div>
           </section>
           <section class="panel form-panel terminal-display-panel">
             <header><span>This display</span><span>Device settings</span></header>
@@ -1010,7 +1007,85 @@
   <div id="opsToast" class="ops-toast" hidden data-priority="operational"><div><span id="opsToastSource">OPS ROOM</span><strong id="opsToastFrom">NOTIFICATION</strong><p id="opsToastText"></p></div><div class="toast-actions"><button id="opsToastOpen" type="button">Open</button><button id="opsToastClose" type="button">Dismiss</button></div></div>
   <!-- v0.25.60: Thermal receipt preview modal -->
   <div id="printerPreviewModal"><div class="printer-preview-dialog"><div class="printer-preview-header"><span>80MM RECEIPT PREVIEW</span><button id="printerPreviewClose" type="button" aria-label="Close preview">&times;</button></div><div class="printer-preview-body" id="printerPreviewBody"></div><div class="printer-preview-footer"><button id="printerPreviewCopyBtn" class="printer-preview-btn-copy" type="button">COPY RAW TEXT</button><button id="printerPreviewCloseBtn" class="printer-preview-btn-close" type="button">CLOSE</button></div></div></div>
+  <!-- First-run onboarding wizard -->
+  <div id="onboardingOverlay" class="onboarding-overlay" hidden>
+    <section class="onboarding-dialog" role="dialog" aria-modal="true" aria-labelledby="onbTitle">
+      <header class="onboarding-header">
+        <div class="onboarding-title">
+          <span class="kicker">HOST SETUP</span>
+          <strong id="onbTitle">OPS ROOM</strong>
+        </div>
+        <div class="onboarding-dots" id="onbDots" aria-hidden="true"></div>
+        <button id="onbClose" class="onboarding-close" type="button" aria-label="Close setup">&times;</button>
+      </header>
+      <div class="onboarding-body">
+        <section class="onb-step" data-step="0">
+          <h2>Welcome</h2>
+          <p class="onb-sub">OPS ROOM is your operations console for Microsoft Flight Simulator. Link flight planning and audio in a few steps, or skip and fly now. Everything can be changed later in Host Setup.</p>
+          <h3>Current setup</h3>
+          <div class="onb-status-list" id="onbStatusList"></div>
+        </section>
+        <section class="onb-step" data-step="1" hidden>
+          <h2>Flight planning</h2>
+          <p class="onb-sub">SimBrief loads your flight plan and fills the Performance page automatically.</p>
+          <label class="onb-field">SIMBRIEF PILOT ID OR USERNAME
+            <input id="onbSimbrief" autocomplete="off" placeholder="Pilot ID or username" />
+          </label>
+          <label class="onb-field">VATSIM CID <span class="onb-optional">OPTIONAL</span>
+            <input id="onbVatsim" inputmode="numeric" autocomplete="off" placeholder="1234567" />
+          </label>
+        </section>
+        <section class="onb-step" data-step="2" hidden>
+          <h2>Datalink</h2>
+          <p class="onb-sub">Hoppie adds CPDLC and PDC clearances. Request a free logon code at <a href="https://www.hoppie.nl/acars/system/register.html" target="_blank" rel="noopener">hoppie.nl</a>.</p>
+          <label class="onb-field">HOPPIE LOGON CODE <span class="onb-optional">OPTIONAL</span>
+            <input id="onbHoppie" type="password" autocomplete="new-password" placeholder="Leave blank to skip" />
+          </label>
+        </section>
+        <section class="onb-step" data-step="3" hidden>
+          <h2>Audio</h2>
+          <label class="onb-field">ANNOUNCEMENTS FOLDER
+            <span class="onb-folder-row"><input id="onbAnnouncements" autocomplete="off" placeholder="Path to announcements" /><button class="onb-browse" type="button" data-onb-browse="onbAnnouncements">BROWSE</button></span>
+          </label>
+          <p class="onb-sub onb-link"><a href="https://discord.gg/ZqZSSfeW9W" target="_blank" rel="noopener">Airline announcement packs are shared in our Discord.</a></p>
+          <label class="onb-field">RAAS VOICE PACK FOLDER
+            <span class="onb-folder-row"><input id="onbRaas" autocomplete="off" placeholder="Path to RAAS voice pack" /><button class="onb-browse" type="button" data-onb-browse="onbRaas">BROWSE</button></span>
+          </label>
+          <p class="onb-sub onb-link"><a href="https://gofile.io/d/c12rCznl" target="_blank" rel="noopener">Download a RAAS voice pack.</a></p>
+        </section>
+        <section class="onb-step" data-step="4" hidden>
+          <h2>Community</h2>
+          <p class="onb-sub">Connect Discord to post takeoff and landing events and appear on the leaderboard. Flight data only, and always opt-in.</p>
+          <div class="onb-actions"><button id="onbDiscordConnect" type="button" class="control-button primary-control">CONNECT DISCORD</button><span id="onbDiscordState" class="onb-state">NOT CONNECTED</span></div>
+          <p class="onb-sub onb-link"><a href="https://discord.gg/Dv6fNAjhAt" target="_blank" rel="noopener">Join the OPS ROOM Discord server.</a></p>
+        </section>
+        <section class="onb-step" data-step="5" hidden>
+          <h2>Preferences</h2>
+          <label class="onb-field">WEIGHT UNIT
+            <select id="onbUnitWeight"><option value="kg">KILOGRAMS (KG)</option><option value="lb">POUNDS (LB)</option></select>
+          </label>
+          <label class="onb-check"><input id="onbLan" type="checkbox" checked /><i></i>ALLOW LAN / TABLET ACCESS</label>
+        </section>
+        <section class="onb-step" data-step="6" hidden>
+          <h2>In-sim Tablet</h2>
+          <p class="onb-sub">OPS ROOM ships an in-game tablet panel (MSFS 2020 and 2024) plus NOTAM closure markers. Install them into your Community folder and the OPS ROOM button appears on the sim toolbar.</p>
+          <div class="onb-status-list" id="onbMsfsFolders"></div>
+          <div class="onb-actions">
+            <button id="onbMsfsInstall" type="button" class="control-button primary-control">INSTALL</button>
+            <button id="onbMsfsBrowse" type="button" class="control-button">CHOOSE FOLDER...</button>
+          </div>
+          <p class="onb-sub onb-link" id="onbMsfsState">Detected folders are listed above. Use CHOOSE FOLDER to install into an Addons Linker library or another location.</p>
+        </section>
+      </div>
+      <footer class="onboarding-footer">
+        <button id="onbSkip" type="button" class="control-button">SKIP ALL</button>
+        <span class="onb-footer-spacer"></span>
+        <button id="onbBack" type="button" class="control-button" hidden>BACK</button>
+        <button id="onbNext" type="button" class="control-button primary-control">CONTINUE</button>
+      </footer>
+    </section>
+  </div>
   <script src="https://cdn.jsdelivr.net/npm/ol@10.9.0/dist/ol.js"></script>
-  <script src="/static/opsroom.js?v=0-25-77"></script>
+  <script src="/static/opsroom.js?v=0-25-0"></script>
 </body>
 </html>

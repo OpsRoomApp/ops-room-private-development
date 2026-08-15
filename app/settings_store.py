@@ -18,6 +18,13 @@ SECRETS_FILE = "secrets.json"
 _SETTINGS_CACHE: dict[str, Any] | None = None
 _SETTINGS_CACHE_TIME: float = 0.0
 
+# Bug reports moved from the legacy Google Apps Script endpoint to the OPS ROOM
+# server. Existing installs have the old URL persisted in settings.json, so the
+# load-time migration below rewrites it exactly once (a user-configured custom
+# endpoint is never touched). Keep in sync with app/bug_report.py DEFAULT_ENDPOINT.
+LEGACY_BUG_REPORT_ENDPOINT = "https://script.google.com/macros/s/AKfycbww__VDAulz5xGlg40osNfNjoho_Xus0TcFK6HUk_mbIOrsBlxrYDt_5d_sUOfboxaJ/exec"
+BUG_REPORT_ENDPOINT = "https://admin.opsroom.live/api/v1/bug-reports"
+
 DEFAULT_SETTINGS: dict[str, Any] = {
     "identity": {
         "vatsim_cid": "",
@@ -106,8 +113,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "bug_report": {
         "enabled": True,
-        "provider": "google_apps_script",
-        "endpoint": "https://script.google.com/macros/s/AKfycbww__VDAulz5xGlg40osNfNjoho_Xus0TcFK6HUk_mbIOrsBlxrYDt_5d_sUOfboxaJ/exec",
+        "provider": "opsroom_server",
+        "endpoint": "https://admin.opsroom.live/api/v1/bug-reports",
         "secret": "e7eb1adf7e094220a3f5ad89fcf6d01ce4194a0fe4b2452f9415b97d808bbbab",
         "max_log_lines": 500,
         "include_diagnostics_zip": True,
@@ -154,6 +161,20 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "logbook": True, "blackbox": True, "finances": True, "obs": True, "system": True
         },
     },
+    # #109: community sharing is ON + PUBLIC by default so a fresh connect or
+    # app restart never requires a manual /flight-visibility command. An
+    # explicit user choice (discord/hidden/off) still wins via the marker
+    # migration below and the server's preserve-existing reconnect.
+    "community": {
+        "discord_client_id": "1532784515418951721",
+        "rich_presence_enabled": True,
+        "api_base": "https://admin.opsroom.live",
+        "discord_id": "",
+        "discord_username": "",
+        "discord_app_token": "",
+        "visibility": "public",
+        "share_flights": True,
+    },
 }
 
 
@@ -173,6 +194,39 @@ def _merge(default: Any, incoming: Any) -> Any:
                 result[key] = _merge(default.get(key), value) if key in default else value
         return result
     return incoming if incoming is not None else deepcopy(default)
+
+
+def _migrate_bug_report_endpoint(normalized: dict[str, Any]) -> bool:
+    """Move bug reports from the legacy Google Apps Script endpoint to the
+    OPS ROOM server, exactly once, without clobbering a user-configured
+    custom endpoint or secret."""
+    cfg = normalized.setdefault("bug_report", {})
+    stored = str(cfg.get("endpoint") or "").strip()
+    if stored == LEGACY_BUG_REPORT_ENDPOINT:
+        cfg["endpoint"] = BUG_REPORT_ENDPOINT
+        cfg["provider"] = "opsroom_server"
+        return True
+    return False
+
+
+def _migrate_community_public(normalized: dict[str, Any]) -> bool:
+    """#109: community sharing defaults ON + PUBLIC, once.
+
+    Flips the old conservative defaults (``visibility == "discord"`` with
+    ``share_flights False``) to public/on unless the migration already ran
+    (``community_public_migrated`` marker). The marker is written together with
+    the flipped value, so an explicit user choice made AFTER the upgrade is
+    never re-flipped.
+    """
+    community = normalized.setdefault("community", {})
+    if community.get("community_public_migrated") is True:
+        return False
+    if community.get("visibility") in (None, "discord") or not community.get("share_flights"):
+        community["visibility"] = "public"
+        community["share_flights"] = True
+        community["community_public_migrated"] = True
+        return True
+    return False
 
 
 def _migrate_lan_access(normalized: dict[str, Any]) -> bool:
@@ -219,7 +273,9 @@ def load_settings() -> dict[str, Any]:
         # load and persist the flipped value immediately, so a stale file that
         # already holds the old marker can never lock the checkbox off again.
         # (Verified live: settings.json had lan_access False + migrated True.)
-        if _migrate_lan_access(result):
+        # #109: community sharing ON + PUBLIC by default (same one-time pattern).
+        # Bug reports: legacy Apps Script URL -> OPS ROOM server (one-time).
+        if _migrate_lan_access(result) or _migrate_community_public(result) or _migrate_bug_report_endpoint(result):
             try:
                 target = app_data_dir() / SETTINGS_FILE
                 target.parent.mkdir(parents=True, exist_ok=True)

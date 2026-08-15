@@ -326,3 +326,39 @@ will render. Fix: size the preview to the configured width/height ratio properly
   Status, Host System Setup, plus traffic-board and obs HTML).
 - All U-10/U-14 claims verified in source with line numbers (opsroom.js:6375 raw
   events slice; traffic_board.html:12/99 and obs.html:10/14 stale ?v=0-25-73).
+
+### U-37 — Flight Completion sign-off review is too crowded / scattered [UX]
+The post-arrival FLIGHT REVIEW modal (opsroom.js `lsSignSummaryHtml` completion
+branch, #86) stacks three 4-column tables vertically — TIMES (6 rows), WEIGHTS
+(3 rows), FUEL (5 rows) — then a 5-cell summary strip (BLOCK / FUEL USED /
+AIRLINE RESULT / PILOT PAY / SATISFACTION) below, inside a 56rem-wide dialog.
+Each table repeats its own 4-column header and the rows are tight
+(`font-size:.62rem`, `padding:.16rem`), so the modal reads as one dense wall of
+numbers with no visual hierarchy or flow — "all over the place".
+
+Proposed redesign (implement in opsroom.js + opsroom.css, one component):
+1. **Two-panel layout instead of three stacked tables**: left panel = TIMES
+   (tall, 6 rows), right panel = WEIGHTS (top) + FUEL (bottom) — the natural
+   reading order for a pilot review (when → how heavy → how much fuel).
+2. **Drop the per-table repeated 4-column header**; use a single shared column
+   header row per panel, with DELTA rendered as a compact inline chip
+   (`+21` in amber) on the actual column instead of a full 4th column.
+3. **More breathing room**: raise row font to ~.7rem, increase row padding,
+   add clear section spacing and a subtle alternating-row tint.
+4. **Summary strip becomes a footer bar**: one horizontal rule + the five
+   stats evenly spaced with larger numbers (.85rem), labels beneath, instead
+   of five separate bordered cells.
+5. Keep the flight identity line as a compact eyebrow above the panels, and
+   the sign pad/name/role form unchanged below.
+Acceptance: at 56rem the dialog shows all three sections without scrolling,
+each panel is visually distinct, and no cell text wraps or overflows.
+
+Status: IMPLEMENTED (2026-08-12, source-side). `lsSignSummaryHtml` completion
+branch now emits a two-panel layout (TIMES left, WEIGHTS + FUEL right via
+`.ls-sign-panel` / `.ls-sign-panel-right`), and `#lsSignSummary` swaps its
+class to `ls-sign-review-wrap` in completion mode so the 3-column
+`.ls-sign-grid>div` rule can no longer hijack the review wrapper (that was the
+real cause of the "all over the place" look). CSS bumped to `.7rem` rows with
+more padding, amber tabular-nums delta values, and the summary strip is now a
+footer bar with larger numbers. The loadsheet (pre-departure) branch keeps its
+compact 3-column grid. Pending: rebuild + one post-arrival sign-off to view.

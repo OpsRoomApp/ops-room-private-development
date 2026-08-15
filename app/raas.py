@@ -284,22 +284,33 @@ def _session_gate(tel: dict[str, Any], lat: float, lon: float, now: float) -> tu
         _ACTIVE_SESSION_ARMED = False
         _ACTIVE_SESSION_FIRST_VALID = 0.0
         return False, "Simulator paused/loading"
+    # v0.25.79: the MSFS main menu / world map / loading screens are not a
+    # flight. Reject unconditionally -- the sim reports menu state here and any
+    # runway detected from this position is a false positive (menu default
+    # airfield, e.g. DGTK).
+    if bool(tel.get("simulator_loading")) or int(tel.get("simulator_menu_state") or 0):
+        _ACTIVE_SESSION_ARMED = False
+        _ACTIVE_SESSION_FIRST_VALID = 0.0
+        return False, "MSFS menu/loading state"
     sim_rate = _num(tel.get("sim_rate"), 1.0) or 1.0
     if sim_rate <= 0.01:
         _ACTIVE_SESSION_ARMED = False
         _ACTIVE_SESSION_FIRST_VALID = 0.0
         return False, "Simulator rate is zero"
-    # MSFS menu/loading defaults to DGTK (Dibba, Oman). Reject when on ground
-    # within 5 NM of that position to prevent false RAAS callouts.
-    if bool(tel.get("on_ground")):
-        dgtk_ft = math.hypot((lat - 25.618) * 60.0 * 6076.12, (lon - 56.242) * 60.0 * 6076.12 * math.cos(math.radians((lat + 25.618) / 2.0)))
-        if dgtk_ft < 30380.0:
-            _ACTIVE_SESSION_ARMED = False
-            _ACTIVE_SESSION_FIRST_VALID = 0.0
-            return False, "MSFS menu/loading position (DGTK)"
+    # MSFS menu/loading defaults to DGTK (Dibba, Oman). Reject UNCONDITIONALLY
+    # (not just when on-ground): in the menu the sim may report not-on-ground,
+    # but the position still sits at DGTK and must never produce RAAS callouts.
+    dgtk_ft = math.hypot((lat - 25.618) * 60.0 * 6076.12, (lon - 56.242) * 60.0 * 6076.12 * math.cos(math.radians((lat + 25.618) / 2.0)))
+    if dgtk_ft < 30380.0:
+        _ACTIVE_SESSION_ARMED = False
+        _ACTIVE_SESSION_FIRST_VALID = 0.0
+        return False, "MSFS menu/loading position (DGTK)"
     if _ACTIVE_SESSION_ARMED:
         return True, "armed"
-    # Arm only after a short period of stable, valid user-aircraft position.
+    # Arm only after a period of stable, valid user-aircraft position. On the
+    # ground this requires a sustained parked dwell so menu/loading positions
+    # and world-map telemetry spikes can never arm ground callouts; airborne
+    # samples keep a short dwell so mid-air spawns still get approach callouts.
     last = _ACTIVE_SESSION_LAST_POS
     if not last:
         _ACTIVE_SESSION_LAST_POS = (lat, lon, now)
@@ -311,9 +322,15 @@ def _session_gate(tel: dict[str, Any], lat: float, lon: float, now: float) -> tu
         _ACTIVE_SESSION_LAST_POS = (lat, lon, now)
         _ACTIVE_SESSION_FIRST_VALID = now
         return False, "Position settling after spawn/location jump"
-    if now - _ACTIVE_SESSION_FIRST_VALID >= 1.25:
+    dwell = now - _ACTIVE_SESSION_FIRST_VALID
+    if bool(tel.get("on_ground")):
+        if dwell >= 3.0:
+            _ACTIVE_SESSION_ARMED = True
+            return True, "armed after stable on-ground position"
+        return False, "Waiting for stable on-ground position"
+    if dwell >= 1.25:
         _ACTIVE_SESSION_ARMED = True
-        return True, "armed after stable position"
+        return True, "armed after stable airborne position"
     return False, "Waiting for active flight session"
 
 
@@ -436,14 +453,27 @@ def _runway_tokens(text_upper: str) -> list[str]:
 
 
 def _runway_matches(token: str, runway: str) -> bool:
-    """Does a NOTAM runway token refer to the same physical runway as ours?"""
+    """Does a NOTAM runway token refer to the same physical runway as ours?
+
+    #93: a designator carrying an L/R/C suffix must match that end EXACTLY.
+    The old ``part.rstrip("LRC") == base`` comparison collapsed parallel
+    runways — ``07L/25R CLOSED`` matched 07R and 25L too, because both ends
+    strip to the same bare base. Only a BARE designator (e.g. ``07`` or
+    ``02/20``) matches every end sharing that base.
+    """
     token = token.upper()
     runway = runway.upper()
     parts = [part.strip() for part in token.split("/") if part.strip()]
-    base = runway.rstrip("LRC")
     if runway in parts:
         return True
-    return any(part.rstrip("LRC") == base for part in parts)
+    for part in parts:
+        if part.rstrip("LRC") != part:
+            # Has an L/R/C designator — exact-only (already handled above).
+            continue
+        # Bare designator (e.g. "07") matches any end with that base.
+        if runway.rstrip("LRC") == part:
+            return True
+    return False
 
 
 def _notam_runway_closed(airport: str, runway: str) -> tuple[bool, str, str]:
@@ -467,14 +497,33 @@ def _notam_runway_closed(airport: str, runway: str) -> tuple[bool, str, str]:
     try:
         package = notam_client.get_notams(airport)
         for row in package.get("notams") or []:
-            text = str(row.get("text") or "").upper()
+            text = str(row.get("text") or "")
             if not notam_translate.is_closure_notam(text):
                 continue
-            if any(_runway_matches(token, runway) for token in _runway_tokens(text)):
-                matched = True
-                notam_id = str(row.get("id") or row.get("number") or row.get("nms_id") or "").strip()
-                detail = str(row.get("text") or "")
-                break
+            # v0.25.79: only a GENUINE direct runway closure counts. The loose
+            # is_closure_notam + _runway_tokens pair matched conditional and
+            # equipment NOTAMs ("CRANE WILL ONLY OPR WHEN RWY 32L IS CLSD",
+            # "ILS RWY 32L U/S") that never close the runway. Reuse the strict
+            # closure parser from the in-sim markers, which rejects WHEN/IF
+            # conditionals and equipment-prefixed outages.
+            try:
+                from .closure_markers import _runway_closure_refs as _strict_closure_refs
+            except Exception:
+                _strict_closure_refs = None
+            if _strict_closure_refs is not None:
+                refs = _strict_closure_refs(text)
+                if not refs:
+                    continue
+                if not any(_runway_matches(str(ref), runway) for ref in refs):
+                    continue
+            else:
+                # Defensive fallback: never looser than the old check.
+                if not any(_runway_matches(token, runway) for token in _runway_tokens(text.upper())):
+                    continue
+            matched = True
+            notam_id = str(row.get("id") or row.get("number") or row.get("nms_id") or "").strip()
+            detail = text
+            break
     except Exception as exc:
         _LOG.debug("RAAS NOTAM check failed for %s: %s", airport, exc)
     with _NOTAM_CLOSURE_LOCK:

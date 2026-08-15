@@ -39,12 +39,76 @@ def registry_path() -> Path:
     return app_data_dir() / REGISTRY_NAME
 
 
+def _recover_registry_from_ini() -> dict[str, Any]:
+    """Rebuild the adapter registry from the FSUIPC.ini block when the registry
+    file is missing but the mappings are still installed in the ini.
+
+    The ini block is the authoritative source of the installed offset map; the
+    registry is only a bookkeeping copy. FSUIPC reformats the block markers to
+    its ``!N=`` prefixed form, so both bare and prefixed markers are accepted
+    here. Returns {} (no recovery possible) when the ini has no OPS ROOM block
+    or the catalog does not match the block.
+    """
+    try:
+        path = fsuipc_ini_path()
+        if not path or not path.exists():
+            return {}
+        lines = path.read_text(encoding="utf-8-sig", errors="replace").split("\n")
+        block: list[str] = []
+        skipping = False
+        for line in lines:
+            norm = re.sub(r"^!\d+=", "", line).strip().upper()
+            if norm.startswith(BEGIN_MARKER.upper()):
+                skipping = True
+                continue
+            if norm.startswith(END_MARKER.upper()):
+                skipping = False
+                break
+            if skipping:
+                block.append(line)
+        if not block:
+            return {}
+        offsets: dict[str, str] = {}
+        for line in block:
+            match = re.match(r"^\s*\d+\s*=\s*L:([^=]+)=\s*F0x([0-9A-Fa-f]+)\s*(?:[;#].*)?$", line)
+            if match:
+                offsets[match.group(1).strip()] = f"0x{int(match.group(2), 16):04X}"
+        if len(offsets) != len(active_specs()) or not offsets:
+            return {}
+        registry = {
+            "version": ADAPTER_VERSION,
+            "installed_utc": _utc_stamp(),
+            "fsuipc_ini": str(path),
+            "offsets": offsets,
+            "sections": ["LvarOffsets"],
+            "mapping_count": len(offsets),
+            "profile_sections": [],
+            "separate_profile_files": [],
+            "patched_files": [],
+        }
+        _atomic_write(registry_path(), json.dumps(registry, indent=2, sort_keys=True) + "\n")
+        return registry
+    except Exception:
+        return {}
+
+
 def load_registry() -> dict[str, Any]:
     global _REGISTRY_CACHE, _REGISTRY_CACHE_AT, _REGISTRY_CACHE_MTIME
     path = registry_path()
     try:
         mtime = path.stat().st_mtime
     except OSError:
+        recovered = _recover_registry_from_ini()
+        if recovered:
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                mtime = None
+            with _REGISTRY_CACHE_LOCK:
+                _REGISTRY_CACHE = dict(recovered)
+                _REGISTRY_CACHE_AT = time.monotonic()
+                _REGISTRY_CACHE_MTIME = mtime
+            return dict(recovered)
         with _REGISTRY_CACHE_LOCK:
             _REGISTRY_CACHE = None
             _REGISTRY_CACHE_AT = 0.0
@@ -122,11 +186,15 @@ def _strip_opsroom_block(lines: list[str]) -> list[str]:
     out: list[str] = []
     skipping = False
     for line in lines:
-        upper = line.strip().upper()
-        if upper.startswith(BEGIN_MARKER.upper()):
+        # FSUIPC rewrites comment lines in its ini to the "!N=" prefixed form
+        # (e.g. "!1=; OPS ROOM BLACK BOX ADAPTERS BEGIN v0.24.106"). Normalise
+        # that prefix away so the block markers are matched either bare or
+        # prefixed, and the old block is always stripped before re-allocation.
+        norm = re.sub(r"^!\d+=", "", line).strip().upper()
+        if norm.startswith(BEGIN_MARKER.upper()):
             skipping = True
             continue
-        if upper.startswith(END_MARKER.upper()):
+        if norm.startswith(END_MARKER.upper()):
             skipping = False
             continue
         if not skipping:

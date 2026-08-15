@@ -484,13 +484,18 @@ def _stable_live_session(t: dict[str, Any]) -> bool:
     if abs(lat) < .001 and abs(lon) < .001:
         _SESSION_GROUND_STABLE_SAMPLES = 0
         return False
-    # MSFS menu/loading defaults to DGTK (Dibba, Oman). Reject when on ground
-    # within 5 NM of that position to prevent false announcement arming.
-    if bool(t.get("on_ground")):
-        dgtk_ft = math.hypot((lat - 25.618) * 60.0 * 6076.12, (lon - 56.242) * 60.0 * 6076.12 * math.cos(math.radians((lat + 25.618) / 2.0)))
-        if dgtk_ft < 30380.0:
-            _SESSION_GROUND_STABLE_SAMPLES = 0
-            return False
+    # v0.25.79: the MSFS main menu / world map / loading screens are not a
+    # flight -- reject them outright so no announcement can ever arm from them.
+    if t.get("simulator_loading") or int(t.get("simulator_menu_state") or 0):
+        _SESSION_GROUND_STABLE_SAMPLES = 0
+        return False
+    # MSFS menu/loading defaults to DGTK (Dibba, Oman). Reject UNCONDITIONALLY
+    # (not just when on-ground): in the menu the sim may report not-on-ground,
+    # but the position still sits at DGTK and must never arm announcements.
+    dgtk_ft = math.hypot((lat - 25.618) * 60.0 * 6076.12, (lon - 56.242) * 60.0 * 6076.12 * math.cos(math.radians((lat + 25.618) / 2.0)))
+    if dgtk_ft < 30380.0:
+        _SESSION_GROUND_STABLE_SAMPLES = 0
+        return False
     # Auto-PA lifecycle starts only from a sane loaded on-ground session. This
     # suppresses MSFS world-map/loading/spawn telemetry spikes.
     if bool(t.get("on_ground")) and agl <= 120.0 and gs <= 35.0:
@@ -710,10 +715,22 @@ def _camera_category() -> str:
     PA volume does not snap while tabbing out.
     """
     global _CAMERA_CATEGORY
+    # #80: prefer the authoritative SimConnect CAMERA_STATE; the FSUIPC 0x026D
+    # offset does not reliably track MSFS2024 external camera states, so it is
+    # only the fallback. Both map through the same category table.
+    state: int | None = None
     try:
-        state = int((read_telemetry(force=False) or {}).get("camera_state") or 0)
+        from .simconnect_position import camera_state_simconnect
+        sc_state = camera_state_simconnect()
+        if sc_state is not None and sc_state in _CAMERA_STATE_CATEGORY:
+            state = int(sc_state)
     except Exception:
-        state = 0
+        state = None
+    if state is None:
+        try:
+            state = int((read_telemetry(force=False) or {}).get("camera_state") or 0)
+        except Exception:
+            state = 0
     category = _CAMERA_STATE_CATEGORY.get(state)
     if category:
         _CAMERA_CATEGORY = category

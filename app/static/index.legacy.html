@@ -1,0 +1,1103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#080706" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="OPS ROOM" />
+  <title>OPS ROOM | Operations Control Centre</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <link rel="manifest" href="/static/manifest.webmanifest" />
+  <link rel="icon" href="/static/icons/opsroom-192.png" />
+  <link rel="apple-touch-icon" href="/static/icons/opsroom-192.png" />
+  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-0" />
+  <link rel="stylesheet" href="/static/opsroom.legacy.css?v=0-25-0" />
+</head>
+<body>
+  <div id="raasGlobalAlert" class="raas-global-alert" aria-live="assertive" hidden></div>
+  <aside id="landingToast" class="landing-toast" aria-live="polite" hidden><button id="landingToastClose" type="button" aria-label="Close landing summary">×</button><div id="landingToastText"></div></aside>
+  <section id="efbHome" class="efb-home" aria-label="OPS ROOM EFB launcher" hidden>
+    <div class="efb-statusbar" aria-label="Tablet status bar">
+      <span id="efbLocalClock">00:00</span>
+      <span id="efbLocalDate">OPS ROOM</span>
+      <span class="efb-status-icons"><i></i><i></i><b>100%</b></span>
+    </div>
+    <div class="efb-home-glass" aria-hidden="true"></div>
+    <header class="efb-header">
+      <button class="efb-brand" type="button" data-page="status" aria-label="Open OPS ROOM status board">
+        <img src="/static/opsroom-brand-mark.svg" alt="" />
+        <span><b>OPS ROOM</b><small>OPERATIONS CONTROL CENTRE</small></span>
+      </button>
+      <div class="efb-header-actions"><a class="discord-button efb-notification-button" href="https://discord.gg/Dv6fNAjhAt" target="_blank" rel="noopener" aria-label="Join Discord" title="Join OPS ROOM Discord"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></span></a><button id="efbNotificationButton" class="notification-button efb-notification-button" type="button" aria-label="Open notifications"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6v3.4L4.2 16v1.2h15.6V16L18 12.4V9a6 6 0 0 0-6-6Zm0 18a3 3 0 0 0 2.7-1.7H9.3A3 3 0 0 0 12 21Z"/></svg></span><b id="efbNotificationBadge" hidden>0</b></button><div class="efb-profile-pill"><span id="efbProfileInitial">O</span><b id="efbProfileLabel">OPS ROOM</b></div></div>
+    </header>
+<main class="efb-launchpad" aria-label="Module launcher">
+      <button class="efb-app" type="button" data-page="status"><span class="efb-icon"><img src="/static/efb-icons/status.png" alt="" loading="lazy" decoding="async" /></span><b>Status</b></button>
+      <button class="efb-app" type="button" data-page="fids"><span class="efb-icon"><img src="/static/efb-icons/fids.png" alt="" loading="lazy" decoding="async" /></span><b>VATSIM FIDS</b></button>
+      <button class="efb-app" type="button" data-page="dispatch"><span class="efb-icon"><img src="/static/efb-icons/dispatch.png" alt="" loading="lazy" decoding="async" /></span><b>Dispatch</b></button>
+      <button class="efb-app" type="button" data-page="briefing"><span class="efb-icon"><img src="/static/efb-icons/briefing.png" alt="" loading="lazy" decoding="async" /></span><b>Briefing</b></button>
+      <button class="efb-app" type="button" data-page="scratchpad"><span class="efb-icon"><img src="/static/efb-icons/scratchpad.png" alt="" loading="lazy" decoding="async" /></span><b>Scratchpad</b></button>
+      <button class="efb-app" type="button" data-page="watch"><span class="efb-icon"><img src="/static/efb-icons/watch.png" alt="" loading="lazy" decoding="async" /></span><b>Flight Watch</b></button>
+      <button class="efb-app" type="button" data-page="performance"><span class="efb-icon"><img src="/static/efb-icons/performance.png" alt="" loading="lazy" decoding="async" /></span><b>Performance</b></button>
+      <button class="efb-app" type="button" data-page="raas"><span class="efb-icon"><img src="/static/efb-icons/raas.png" alt="" loading="lazy" decoding="async" /></span><b>Runway Awareness</b></button>
+      <button class="efb-app efb-app-network" type="button" data-page="network"><span class="efb-icon"><img src="/static/efb-icons/network.png" alt="" loading="lazy" decoding="async" /></span><b>Network</b></button>
+      <button class="efb-app" type="button" data-page="map"><span class="efb-icon"><img src="/static/efb-icons/map.png" alt="" loading="lazy" decoding="async" /></span><b>Live Map</b></button>
+      <button class="efb-app" type="button" data-page="datalink"><span class="efb-icon"><img src="/static/efb-icons/datalink.png" alt="" loading="lazy" decoding="async" /></span><b>Datalink</b></button>
+      <button class="efb-app" type="button" data-page="ground"><span class="efb-icon"><img src="/static/efb-icons/ground.png" alt="" loading="lazy" decoding="async" /></span><b>Ground</b></button>
+      <button class="efb-app" type="button" data-page="announcer"><span class="efb-icon"><img src="/static/efb-icons/announcer.png" alt="" loading="lazy" decoding="async" /></span><b>Announcer</b></button>
+      <button class="efb-app" type="button" data-page="procedures"><span class="efb-icon"><img src="/static/efb-icons/procedures.png" alt="" loading="lazy" decoding="async" /></span><b>Procedures</b></button>
+      <button class="efb-app" type="button" data-page="logbook"><span class="efb-icon"><img src="/static/efb-icons/logbook.png" alt="" loading="lazy" decoding="async" /></span><b>Logbook</b></button>
+      <button class="efb-app" type="button" data-page="blackbox"><span class="efb-icon"><img src="/static/efb-icons/watch.png" alt="" loading="lazy" decoding="async" /></span><b>Black Box</b></button>
+      <button class="efb-app" type="button" data-page="finances"><span class="efb-icon"><img src="/static/efb-icons/logbook.png" alt="" loading="lazy" decoding="async" /></span><b>Finances</b></button>
+      <button class="efb-app" type="button" data-page="obs"><span class="efb-icon"><img src="/static/efb-icons/obs.png" alt="" loading="lazy" decoding="async" /></span><b>OBS Tools</b></button>
+      <button class="efb-app" type="button" data-page="system"><span class="efb-icon"><img src="/static/efb-icons/system.png" alt="" loading="lazy" decoding="async" /></span><b>Settings</b></button>
+    </main>
+    <footer class="efb-dock" aria-label="Launcher controls">
+      <button id="efbFullscreen" type="button">Fullscreen</button>
+      <button id="efbKeepAwake" type="button">KEEP AWAKE</button>
+      <button class="efb-dock-home" type="button" data-page="home"><img src="/static/efb-icons/home.png" alt="" /></button>
+      <button id="efbRefreshOfp" type="button">Refresh OFP</button>
+    </footer>
+    <div class="efb-credit">Made for the community with <span aria-hidden="true">&#10084;&#65039;</span> by Exzonom</div>
+    <div class="efb-home-indicator" aria-hidden="true"></div>
+  </section>
+  <div id="efbModuleBar" class="efb-module-bar" hidden>
+    <button id="efbModuleHome" class="efb-module-home" type="button" data-page="home" aria-label="Back to EFB home">HOME</button>
+    <div class="efb-module-title"><img src="/static/opsroom-brand-mark.svg" alt="" /><span id="efbModuleTitle">OPS ROOM</span></div>
+    <div class="efb-module-actions">
+      <button id="efbModuleNotificationButton" class="notification-button efb-module-notification-button" type="button" aria-label="Open notifications"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6v3.4L4.2 16v1.2h15.6V16L18 12.4V9a6 6 0 0 0-6-6Zm0 18a3 3 0 0 0 2.7-1.7H9.3A3 3 0 0 0 12 21Z"/></svg></span><b id="efbModuleNotificationBadge" hidden>0</b></button>
+      <button id="efbModuleKeepAwake" class="efb-module-keep-awake" type="button">KEEP AWAKE</button>
+      <button id="efbModuleFullscreen" class="efb-module-fullscreen" type="button">Fullscreen</button>
+    </div>
+  </div>
+  <div class="opsroom-credit-global">Made for the community with <span aria-hidden="true">&#10084;&#65039;</span> by Exzonom</div>
+  <div class="app-shell">
+    <header class="masthead">
+      <button id="moduleButton" class="module-button" type="button" aria-label="Toggle sidebar" title="Collapse or expand sidebar">☰ MENU</button>
+      <button class="wordmark" type="button" data-page="home" aria-label="Open module launcher">
+        <img class="app-brand-mark" src="/static/opsroom-brand-mark.svg" alt="" /><strong>OPS ROOM</strong>
+        <span>OPERATIONS CONTROL CENTRE</span>
+      </button>
+      <div class="masthead-status">
+        <a class="discord-button masthead-discord" href="https://discord.gg/Dv6fNAjhAt" target="_blank" rel="noopener" aria-label="Join Discord" title="Join OPS ROOM Discord"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></span></a>
+        <button id="notificationButton" class="notification-button" type="button" aria-label="Open notifications"><span aria-hidden="true" class="notification-glyph"><svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6v3.4L4.2 16v1.2h15.6V16L18 12.4V9a6 6 0 0 0-6-6Zm0 18a3 3 0 0 0 2.7-1.7H9.3A3 3 0 0 0 12 21Z"/></svg></span><b id="notificationBadge" hidden>0</b></button>
+        <span id="dateLine">26 JUN 2026</span>
+        <strong id="utcClock">00:00:00 UTC</strong>
+        <span id="systemNormal" class="system-normal"><i></i><b>SYSTEM NORMAL</b></span>
+      </div>
+    </header>
+
+    <aside class="rail" id="rail">
+      <nav id="mainNav" aria-label="Main modules">
+        <button class="nav-item" data-page="home" aria-label="MODULES">MODULES</button>
+        <button class="nav-item active" data-page="status" aria-label="STATUS BOARD">STATUS BOARD</button>
+        <button class="nav-item" data-page="fids" aria-label="VATSIM FIDS">VATSIM FIDS</button>
+        <button class="nav-item" data-page="dispatch" aria-label="DISPATCH">DISPATCH</button>
+        <button class="nav-item" data-page="briefing" aria-label="BRIEFING">BRIEFING</button>
+        <button class="nav-item" data-page="scratchpad" aria-label="SCRATCHPAD">SCRATCHPAD</button>
+        <button class="nav-item" data-page="watch" aria-label="FLIGHT WATCH">FLIGHT WATCH</button>
+        <button class="nav-item" data-page="performance" aria-label="PERFORMANCE">PERFORMANCE</button>
+        <button class="nav-item" data-page="raas" aria-label="RUNWAY AWARENESS">RUNWAY AWARENESS</button>
+        <button class="nav-item" data-page="network" aria-label="NETWORK / COMMS">NETWORK / COMMS</button>
+        <button class="nav-item" data-page="map" aria-label="MAP">MAP</button>
+        <button class="nav-item" data-page="datalink" aria-label="DATALINK">DATALINK</button>
+        <button class="nav-item" data-page="ground" aria-label="GROUND CONTROL">GROUND CONTROL</button>
+        <button class="nav-item" data-page="announcer" aria-label="ANNOUNCER">ANNOUNCER</button>
+        <button class="nav-item" data-page="procedures" aria-label="PROCEDURES">PROCEDURES</button>
+        <button class="nav-item" data-page="logbook" aria-label="LOGBOOK">LOGBOOK</button>
+        <button class="nav-item" data-page="blackbox" aria-label="BLACK BOX">BLACK BOX</button>
+        <button class="nav-item" data-page="finances" aria-label="FINANCES">FINANCES</button>
+        <button class="nav-item" data-page="obs" aria-label="OBS TOOLS">OBS TOOLS</button>
+        <button class="nav-item" data-page="system" aria-label="SYSTEM">SYSTEM</button>
+      </nav>
+      <div class="rail-footer">
+        <span>OPS ROOM v0.25.0</span>
+      </div>
+    </aside>
+    <button id="railScrim" class="rail-scrim" type="button" aria-label="Close navigation"></button>
+
+    <main class="workspace">
+      <section id="page-home" class="page module-page">
+        <div class="page-heading">
+          <div><span class="kicker">REMOTE OPERATIONS TERMINAL</span><h1>MODULES</h1></div>
+          <span class="page-readout">Choose a module</span>
+        </div>
+        <div class="module-grid" id="moduleGrid">
+          <button class="module-tile" data-page="status"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/status.png" alt="" loading="lazy" decoding="async" /></span><b>STATUS BOARD</b></button>
+          <button class="module-tile" data-page="fids"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/fids.png" alt="" loading="lazy" decoding="async" /></span><b>VATSIM FIDS</b></button>
+          <button class="module-tile" data-page="dispatch"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/dispatch.png" alt="" loading="lazy" decoding="async" /></span><b>DISPATCH</b></button>
+          <button class="module-tile" data-page="briefing"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/briefing.png" alt="" loading="lazy" decoding="async" /></span><b>BRIEFING</b></button>
+          <button class="module-tile" data-page="scratchpad"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/scratchpad.png" alt="" loading="lazy" decoding="async" /></span><b>SCRATCHPAD</b></button>
+          <button class="module-tile" data-page="watch"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/watch.png" alt="" loading="lazy" decoding="async" /></span><b>FLIGHT WATCH</b></button>
+          <button class="module-tile" data-page="performance"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/performance.png" alt="" loading="lazy" decoding="async" /></span><b>PERFORMANCE</b></button>
+          <button class="module-tile" data-page="raas"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/raas.png" alt="" loading="lazy" decoding="async" /></span><b>RUNWAY AWARENESS</b></button>
+          <button class="module-tile" data-page="network"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/network.png" alt="" loading="lazy" decoding="async" /></span><b>NETWORK / COMMS</b></button>
+          <button class="module-tile" data-page="map"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/map.png" alt="" loading="lazy" decoding="async" /></span><b>MAP</b></button>
+          <button class="module-tile" data-page="datalink"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/datalink.png" alt="" loading="lazy" decoding="async" /></span><b>DATALINK</b></button>
+          <button class="module-tile" data-page="ground"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/ground.png" alt="" loading="lazy" decoding="async" /></span><b>GROUND CONTROL</b></button>
+          <button class="module-tile" data-page="announcer"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/announcer.png" alt="" loading="lazy" decoding="async" /></span><b>ANNOUNCER</b></button>
+          <button class="module-tile" data-page="procedures"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/procedures.png" alt="" loading="lazy" decoding="async" /></span><b>PROCEDURES</b></button>
+          <button class="module-tile" data-page="logbook"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/logbook.png" alt="" loading="lazy" decoding="async" /></span><b>LOGBOOK</b></button>
+          <button class="module-tile" data-page="blackbox"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/watch.png" alt="" loading="lazy" decoding="async" /></span><b>BLACK BOX</b></button>
+          <button class="module-tile" data-page="finances"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/logbook.png" alt="" loading="lazy" decoding="async" /></span><b>FINANCES</b></button>
+          <button class="module-tile" data-page="obs"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/obs.png" alt="" loading="lazy" decoding="async" /></span><b>OBS TOOLS</b></button>
+          <button class="module-tile" data-page="system"><span class="module-icon" aria-hidden="true"><img src="/static/efb-icons/system.png" alt="" loading="lazy" decoding="async" /></span><b>SYSTEM</b></button>
+        </div>
+      </section>
+
+      <section id="page-status" class="page active">
+        <div class="page-heading">
+          <div><span class="kicker">CONTROL POSITION 01</span><h1>Status board</h1></div>
+          <div class="heading-actions">
+            <button id="refreshFlight" class="control-button">Refresh OFP</button>
+            <button id="probeMsfs" class="control-button">Reconnect MSFS</button>
+          </div>
+        </div>
+
+        <div class="status-grid">
+          <section class="panel active-flight-panel">
+            <header><span>Active flight</span><span id="flightState">No OFP loaded</span></header>
+            <div id="activeFlight" class="empty-flight">
+              <div class="route-placeholder">---- <b>TO</b> ----</div>
+              <p>Set a SimBrief Pilot ID in the OPS ROOM desktop host, then fetch the latest operational flight plan.</p>
+            </div>
+          </section>
+
+          <section class="panel connections-panel">
+            <header><span>Connections</span><span>Live status</span></header>
+            <div id="connectionRows" class="connection-rows"></div>
+          </section>
+
+          <section class="panel movement-panel">
+            <header><span>Aircraft position</span><span id="positionState">Standby</span></header>
+            <div class="movement-data">
+              <div><span>Nearest airport</span><strong id="nearestAirport">----</strong></div>
+              <div><span>Altitude</span><strong id="aircraftAltitude">----- FT</strong></div>
+              <div><span>Position</span><strong id="aircraftPosition">No data</strong></div>
+            </div>
+          </section>
+
+          <section class="panel advisories-panel">
+            <header><span>Advisories</span><span id="advisoryCount">0 advisories</span></header>
+            <div id="advisories" class="advisories"></div>
+            <div id="advisoryNotams" class="advisory-notams" hidden></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-fids" class="page traffic-page">
+        <div class="page-heading compact-heading">
+          <div><span class="kicker">AIRPORT MOVEMENT DISPLAY</span><h1>VATSIM FIDS</h1></div>
+          <div class="heading-actions">
+            <button id="cameraBridgeFloatToggle" class="control-button" type="button" aria-expanded="true">CAMERA PANEL</button>
+            <a id="openFidsLink" class="control-button" href="/vatsim-fids" target="opsroom-fids">OPEN FIDS</a>
+          </div>
+        </div>
+        <iframe title="VATSIM FIDS" src="/vatsim-fids?embedded=1"></iframe>
+        <aside id="cameraBridgeFloatPanel" class="camera-bridge-float-panel" aria-label="MSFS 2024 Camera Bridge floating controls">
+          <header class="camera-bridge-float-header">
+            <div><span>MSFS 2024</span><b>CAMERA BRIDGE</b></div>
+            <span id="cameraBridgeState">EXPERIMENTAL</span>
+          </header>
+          <div id="cameraBridgeBox" class="maintenance-box"><b>CAMERA FOLLOW</b><p>Select aircraft in FIDS, then tune the view here.</p></div>
+          <div class="camera-control-panel compact-camera-controls">
+            <div class="camera-mode-grid" aria-label="Camera mode">
+              <button class="control-button" type="button" data-camera-mode="front_34">FRONT FOLLOW</button>
+              <button class="control-button primary-control" type="button" data-camera-mode="tail_follow">TAIL FOLLOW</button>
+              <button class="control-button" type="button" data-camera-mode="left_spotter">LEFT SPOTTER</button>
+              <button class="control-button" type="button" data-camera-mode="right_spotter">RIGHT SPOTTER</button>
+              <button class="control-button" type="button" data-camera-mode="runway_end_static">RUNWAY END STATIC</button>
+              <button class="control-button" type="button" data-camera-mode="tower_static">TOWER STATIC</button>
+              <button class="control-button" type="button" data-camera-mode="apron_static">APRON STATIC</button>
+              <button class="control-button" type="button" data-camera-mode="orbit">ORBIT</button>
+            </div>
+            <div class="camera-slider-grid">
+              <label>DISTANCE <input id="cameraDistance" data-camera-control="distance" type="range" min="5" max="300" step="1" value="45" /></label>
+              <label>HEIGHT <input id="cameraHeight" data-camera-control="height" type="range" min="-10" max="120" step="1" value="9" /></label>
+              <label>SIDE OFFSET <input id="cameraSideOffset" data-camera-control="sideOffset" type="range" min="-160" max="160" step="1" value="0" /></label>
+              <label>PITCH <input id="cameraPitch" data-camera-control="pitch" type="range" min="-45" max="20" step="1" value="-7" /></label>
+              <label>ORBIT ANGLE <input id="cameraOrbitAngle" data-camera-control="orbitAngle" type="range" min="0" max="360" step="1" value="180" /></label>
+              <label>SMOOTHING <input id="cameraSmoothing" data-camera-control="smoothing" type="range" min="0" max="0.98" step="0.01" value="0.35" /></label>
+            </div>
+          </div>
+          <div class="inline-actions terminal-maintenance-actions camera-floating-actions">
+            <button id="cameraBridgeStart" class="control-button primary-control" type="button">START</button>
+            <button id="cameraBridgeRelease" class="control-button danger-control" type="button">RELEASE</button>
+            <button id="cameraBridgeResetView" class="control-button" type="button">RESET</button>
+            <button id="cameraBridgeRecenter" class="control-button" type="button">RECENTER</button>
+            <button id="cameraBridgeRefresh" class="control-button" type="button">Refresh</button>
+            <button id="cameraBridgeLog" class="control-button" type="button">LOG</button>
+          </div>
+          <pre id="cameraBridgeLogText" class="camera-bridge-log" hidden></pre>
+        </aside>
+      </section>
+
+
+      <section id="page-performance" class="page performance-page">
+        <div class="page-heading">
+          <div><span class="kicker">SIMULATION PERFORMANCE ASSISTANT</span><h1>PERFORMANCE</h1></div>
+          <span id="performanceState" class="page-readout">PROFILE DATA READY</span>
+        </div>
+        <section class="panel performance-panel">
+          <header><span>TAKEOFF / LANDING</span><span>LIVE SIM SYNC</span></header>
+          <div class="performance-sections">
+            <section class="perf-section">
+              <header class="perf-section-title">AIRCRAFT / WEIGHTS</header>
+              <div class="performance-grid">
+                <label>MODE<select id="perfMode"><option value="takeoff">TAKEOFF</option><option value="landing">LANDING</option></select></label>
+                <label>AIRCRAFT<select id="perfAircraft"></select></label>
+                <label><span>WEIGHT <b id="perfWeightUnit">KG</b></span><input id="perfWeight" type="number" value="65000" min="1" step="100" /></label>
+                <label class="perf-cg-field"><span>ZFW CG % MAC</span><input id="perfCg" type="number" value="" min="0" max="45" step="0.1" placeholder="AUTO" /><small id="perfCgNote">ENTER MANUALLY — everything else auto-fills</small></label>
+                <label>FLAP<select id="perfFlap"></select></label>
+                <label>ANTI-ICE<select id="perfAntiIce"><option value="false">OFF</option><option value="true">ON</option></select></label>
+                <label>PACKS<select id="perfPacks"><option value="true">ON</option><option value="false">OFF</option></select></label>
+              </div>
+              <div id="perfLiveWeightHint" class="perf-live-hint" hidden></div>
+            </section>
+            <section class="perf-section">
+              <header class="perf-section-title">AIRPORT / RUNWAY</header>
+              <div class="performance-grid">
+                <label>RUNWAY LENGTH M<input id="perfRunwayLength" type="number" value="3000" min="1" step="10" /></label>
+                <label>RUNWAY HDG<input id="perfRunwayHeading" type="number" value="250" min="0" max="360" step="1" /></label>
+                <label>ELEV FT<input id="perfElevation" type="number" value="0" step="10" /></label>
+                <label>SLOPE %<input id="perfSlope" type="number" value="0" step="0.1" /></label>
+                <label>RUNWAY STATE<select id="perfCondition"><option value="dry">DRY</option><option value="wet">WET</option><option value="contaminated">CONTAMINATED</option></select></label>
+              </div>
+            </section>
+            <section class="perf-section">
+              <header class="perf-section-title">WEATHER <span id="perfWeatherSource" class="perf-weather-source">SIMBRIEF OFP</span></header>
+              <div class="performance-grid">
+                <label>WIND DIR<input id="perfWindDir" type="number" value="250" min="0" max="360" step="1" /></label>
+                <label>WIND KT<input id="perfWindSpeed" type="number" value="5" min="0" step="1" /></label>
+                <label>OAT °C<input id="perfOat" type="number" value="15" step="1" /></label>
+                <label>QNH HPA<input id="perfQnh" type="number" value="1013" step="1" /></label>
+              </div>
+            </section>
+          </div>
+          <div class="heading-actions performance-actions"><button id="perfCalculate" class="control-button primary" type="button">CALCULATE</button><button id="perfFromSimbrief" class="control-button" type="button">AUTO-FILL FROM SIMBRIEF</button></div>
+          <div id="performanceResult" class="performance-result"><div><span>STATUS</span><b>WAITING</b></div><div><span>REQUIRED</span><b>---</b></div><div><span>MARGIN</span><b>---</b></div><div><span>SPEEDS</span><b>---</b></div></div><div id="performanceTlr" class="performance-tlr" hidden></div>
+          <p class="performance-note">Simulation use only. PERF data/model: <a href="https://flightsim.to/profile/galeair" target="_blank" rel="noopener">galeair</a> · <a href="https://flightsim.to/addon/24722/aircraft-runway-performance-spreadsheet" target="_blank" rel="noopener">spreadsheet</a>. Cross-check with the aircraft EFB when available.</p>
+          <div id="performanceWarnings" class="performance-warnings"></div>
+        </section>
+      </section>
+
+      <section id="page-dispatch" class="page">
+        <div class="dispatch-header-nav">
+          <div class="dispatch-tab-bar">
+            <button class="dispatch-tab-btn active" onclick="switchDispatchTab('active-plan',event)">ACTIVE PLAN</button>
+            <button class="dispatch-tab-btn" onclick="switchDispatchTab('realworld-search',event)">REAL-WORLD SCHEDULES</button>
+          </div>
+        </div>
+        <div id="dispatch-tab-active-plan" class="dispatch-tab-content active">
+          <div class="page-heading">
+            <div><span class="kicker">CONTROL POSITION 03</span><h1>Dispatch</h1></div>
+            <span id="dispatchNetworkState" class="page-readout">VATSIM FLIGHT FINDER</span>
+          </div>
+          <section class="panel dispatch-search-panel">
+            <header><span>Route search</span><span id="dispatchOriginState">Select departure</span></header>
+            <div class="dispatch-form">
+              <label>DEPARTURE ICAO<input id="dispatchOrigin" maxlength="4" autocomplete="off" placeholder="AUTO / ICAO" /></label>
+              <label>FLIGHT TIME<select id="dispatchDuration"><option value="45">00:45</option><option value="60">01:00</option><option value="90">01:30</option><option value="120" selected>02:00</option><option value="180">03:00</option><option value="240">04:00</option><option value="300">05:00</option><option value="360">06:00</option><option value="480">08:00</option></select></label>
+              <label>AIRCRAFT<select id="dispatchAircraft"><option value="ga">General Aviation</option><option value="turboprop">Turboprop</option><option value="regional">Regional Jet</option><option value="narrowbody" selected>Narrowbody</option><option value="widebody">Widebody</option><option value="business">Business Jet</option></select></label>
+              <label>ATC FILTER<select id="dispatchAtc"><option value="prefer" selected>Prefer Online ATC</option><option value="require_arrival">Require Arrival ATC</option><option value="require_both">Require Both Ends</option><option value="any">Any Coverage</option></select></label>
+              <label>WEATHER<select id="dispatchWeather"><option value="any" selected>Any Weather</option><option value="vmc">VMC Preferred</option><option value="avoid_strong_wind">Avoid Strong Wind</option></select></label>
+              <button id="dispatchSearch" class="control-button primary-control" type="button">SEARCH ROUTES</button>
+            </div>
+            <div class="dispatch-source-buttons">
+              <button id="dispatchUseMsfs" class="control-button" type="button">USE MSFS POSITION</button>
+              <button id="dispatchUseSimbrief" class="control-button" type="button">USE SIMBRIEF ORIGIN</button>
+              <span id="dispatchSourceNote">AUTO uses the loaded SimBrief origin first, then the current MSFS position.</span>
+            </div>
+          </section>
+          <section class="panel dispatch-results-panel">
+            <header><span>Suggested flights</span><span id="dispatchResultCount">No search</span></header>
+            <div id="dispatchResults" class="dispatch-results"><div class="dispatch-empty"><strong>ROUTE DESK STANDING BY</strong><p>Select the required flight time and aircraft, then search the live VATSIM network.</p></div></div>
+          </section>
+        </div>
+        <div id="dispatch-tab-realworld-search" class="dispatch-tab-content" style="display:none;">
+          <div class="rw-search-container">
+            <div class="rw-search-bar">
+              <div class="input-group">
+                <label>ORIGIN (ICAO)</label>
+                <input type="text" id="rw-origin" placeholder="e.g. EDDF" maxlength="4">
+              </div>
+              <div class="input-group">
+                <label>DESTINATION (ICAO)</label>
+                <input type="text" id="rw-dest" placeholder="e.g. KJFK" maxlength="4">
+              </div>
+              <div class="input-group">
+                <label>CALLSIGN / AIRLINE</label>
+                <input type="text" id="rw-callsign" placeholder="e.g. DLH400">
+              </div>
+              <div class="input-group">
+                <label>AIRCRAFT TYPE [ICAO]</label>
+                <input type="text" id="rw-aircraft" placeholder="e.g. A320, B77W" maxlength="10">
+              </div>
+              <button class="btn-primary" onclick="performRealworldSearch()">SEARCH SCHEDULES</button>
+            </div>
+            <div class="rw-filter-bar">
+              <label class="rw-filter-label"><input type="checkbox" id="rw-include-ga" /> INCLUDE GENERAL AVIATION</label>
+              <label class="rw-filter-label"><input type="checkbox" id="rw-include-gliders" /> INCLUDE GLIDERS</label>
+            </div>
+            <div id="rw-results-container" class="rw-results-grid"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-briefing" class="page">
+        <div class="page-heading">
+          <div><span class="kicker">FLIGHT PACKAGE</span><h1>BRIEFING</h1></div>
+          <button id="briefingRefresh" class="control-button">REFRESH OFP</button>
+        </div>
+        <div id="briefingContent" class="briefing-layout">
+          <section class="panel briefing-empty">
+            <header><span>Flight briefing</span><span>Not loaded</span></header>
+            <div><strong>NO OPERATIONAL FLIGHT PLAN LOADED</strong><p>Configure a SimBrief Pilot ID in the OPS ROOM desktop host and use Refresh OFP.</p></div>
+          </section>
+        </div>
+      </section>
+
+
+      <section id="page-scratchpad" class="page scratchpad-page">
+        <div class="page-heading">
+          <div><span class="kicker">CONTROL POSITION 04A</span><h1>Scratchpad</h1></div>
+          <div class="heading-actions"><span id="scratchpadState" class="page-readout">AUTOSAVE READY</span><button id="scratchpadAutofill" class="control-button" type="button">AUTOFILL FROM OFP</button></div>
+        </div>
+        <div class="scratchpad-shell">
+          <section class="panel scratchpad-board">
+            <header><span>Current page</span><span id="scratchpadUpdated">Not saved yet</span></header>
+            <div class="scratchpad-toolbar">
+              <div class="scratchpad-tabs" role="tablist" aria-label="Scratchpad pages">
+                <button class="scratchpad-tab active" type="button" data-scratchpad-page="departure">DEPARTURE</button>
+                <button class="scratchpad-tab" type="button" data-scratchpad-page="arrival">ARRIVAL</button>
+                <button class="scratchpad-tab" type="button" data-scratchpad-page="blank">BLANK</button>
+              </div>
+              <div class="scratchpad-tools">
+                <button id="scratchpadType" class="control-button primary-control" type="button">TYPE</button>
+                <button id="scratchpadPen" class="control-button" type="button">PEN</button>
+                <button id="scratchpadEraser" class="control-button" type="button">ERASER</button>
+                <label>SIZE <input id="scratchpadSize" type="range" min="1" max="20" value="4" /></label>
+                <button id="scratchpadUndo" class="control-button" type="button">UNDO</button>
+                <button id="scratchpadClearInk" class="control-button" type="button">CLEAR INK</button>
+                <button id="scratchpadClearPage" class="control-button danger-control" type="button">CLEAR PAGE</button>
+              </div>
+            </div>
+            <div class="scratchpad-paper-wrap">
+              <div id="scratchpadTemplate" class="scratchpad-paper scratchpad-template">
+                <div class="scratch-header"><input data-scratch-field="callsign" placeholder="CALLSIGN" /><div><b>OPS ROOM KNEEBOARD</b><span>SIMULATION USE ONLY</span></div><input data-scratch-field="aircraft" placeholder="AIRCRAFT" /></div>
+                <div class="scratch-route-row"><label>DEP<input data-scratch-field="departure" maxlength="4" /></label><label>DEST<input data-scratch-field="destination" maxlength="4" /></label><label>FL<input data-scratch-field="flight_level" /></label></div>
+                <label class="scratch-wide">ROUTE<textarea data-scratch-field="route" rows="2"></textarea></label>
+                <div class="scratch-grid">
+                  <label>RAMP / STAND<input data-scratch-field="ramp_position" /></label>
+                  <label>ATIS<input data-scratch-field="atis" /></label>
+                  <label>RWY<input data-scratch-field="runway" /></label>
+                  <label>INITIAL ALT<input data-scratch-field="initial_altitude" /></label>
+                  <label>SID / TRANSITION<input data-scratch-field="sid_transition" /></label>
+                  <label>DEP FREQ<input data-scratch-field="departure_frequency" /></label>
+                  <label>SQUAWK<input data-scratch-field="squawk" /></label>
+                  <label>TAXI<textarea data-scratch-field="taxi" rows="2"></textarea></label>
+                </div>
+                <label class="scratch-wide">METAR<textarea data-scratch-field="metar" rows="2"></textarea></label>
+                <label class="scratch-wide scratch-notes">NOTES<textarea data-scratch-field="notes" rows="6"></textarea></label>
+              </div>
+              <div id="scratchpadBlank" class="scratchpad-paper scratchpad-blank" hidden>
+                <textarea data-scratch-field="blank_text" placeholder="Type notes here, or write directly on the page with touch / Apple Pencil / mouse."></textarea>
+              </div>
+              <canvas id="scratchpadCanvas" class="scratchpad-canvas" aria-label="Handwriting layer"></canvas>
+            </div>
+            <p class="field-note scratchpad-note">Typed notes and handwriting are autosaved locally on the OPS ROOM host. iPad, touch and Apple Pencil input are supported through the browser.</p>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-raas" class="page">
+        <div class="page-heading raas-page-heading">
+          <div><span class="kicker">SURFACE AWARENESS SYSTEM</span><h1>RUNWAY AWARENESS</h1></div>
+          <div class="heading-actions raas-control-row">
+            <button id="raasToggle" class="control-button" type="button">DISABLE</button>
+            <div class="raas-unit-toggle" role="group" aria-label="Runway Awareness units">
+              <span>UNITS:</span>
+              <button id="raasUnitFt" class="raas-unit-button" type="button" data-raas-unit="ft" aria-pressed="true">FT</button>
+              <button id="raasUnitM" class="raas-unit-button" type="button" data-raas-unit="m" aria-pressed="false">M</button>
+            </div>
+          </div>
+        </div>
+        <div class="raas-layout raas-clean-layout">
+          <section class="panel raas-display-panel">
+            <div class="raas-display-unit">
+              <div id="raasDisplayText" class="raas-display-text">RAAS-STBY</div>
+              <div class="raas-display-row"><button class="raas-status-pill" type="button"><span id="raasStatusLamp"></span><b id="raasStatusLabel">STATUS</b></button><button id="raasPanelTest" class="raas-test-button" type="button">TEST ALERT</button></div>
+            </div>
+          </section>
+          <section class="panel raas-audio-panel">
+            <header><span>AUDIO PACK</span><span id="raasAudioState">VOICE PACK</span></header>
+            <div class="maintenance-box"><b>VOICE PACK</b><p id="raasVoicePack">Scanning voice pack...</p></div>
+            <div class="raas-voice-path-row">
+              <label>VOICE FOLDER<input id="raasVoicePath" autocomplete="off" placeholder="C:\Users\...\raas_voice\female" /></label>
+              <button id="raasVoicePathSave" class="control-button" type="button">SET FOLDER</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-watch" class="page">
+        <div class="page-heading">
+          <div><h1>Flight watch</h1></div>
+          <div class="heading-actions"><span id="watchStreamState" class="live-readout"><i class="status-lamp lamp-amber"></i>CONNECTING LIVE</span><button id="watchRefresh" class="control-button" type="button">RECONNECT</button></div>
+        </div>
+        <div id="watchStandby" class="panel watch-standby">
+          <header><span>Live flight data</span><span>Standby</span></header>
+          <div><strong>WAITING FOR MSFS</strong><p>Flight Watch starts automatically when live telemetry is available.</p></div>
+        </div>
+        <div id="watchLive" class="watch-layout" hidden>
+          <section class="panel watch-route-panel">
+            <header><span>Active flight</span><span id="watchPhase">ENROUTE</span></header>
+            <div id="watchAirlineIdentity" class="module-airline-identity compact"></div>
+            <div class="watch-route-line"><strong id="watchOrigin">----</strong><span><i id="watchProgressBar"></i><b id="watchProgressText">NO ROUTE DATA</b></span><strong id="watchDestination">----</strong></div>
+            <div class="watch-route-register">
+              <div><span>CALLSIGN</span><b id="watchCallsign">---</b></div>
+              <div><span>REMAINING</span><b id="watchRemaining">--- NM</b></div>
+              <div><span>ETA</span><b id="watchEta">----Z</b></div>
+              <div><span>NEAREST</span><b id="watchNearest">----</b></div>
+            </div>
+          </section>
+          <section class="panel watch-instruments-panel">
+            <header><span>Flight data</span><span id="watchUpdated">LIVE</span></header>
+            <div class="watch-instruments">
+              <div><span>INDICATED ALT</span><b id="watchAltitude">----- FT</b><small id="watchAltitudeDetail">TRUE ALT ---</small></div>
+              <div><span>AIRSPEED</span><b id="watchIas">--- KT</b><small id="watchGs">GS --- KT</small></div>
+              <div><span>MAG HEADING</span><b id="watchHeading">---°</b><small id="watchTrack">TRACK ---°</small></div>
+              <div><span>VERTICAL SPEED</span><b id="watchVs">---- FPM</b><small id="watchGroundState">AIRBORNE</small></div>
+              <div><span>FUEL</span><b id="watchFuel">--- LB</b><small id="watchFuelDetail">ON BOARD</small></div>
+              <div><span>AUTOPILOT</span><b id="watchAp">---</b><small id="watchApModes">NO MODE DATA</small></div>
+            </div>
+          </section>
+          <section class="panel fcu-panel">
+            <header><span>FCU selected values</span><span id="fcuSupportState">Read only</span></header>
+            <div class="fcu-readouts">
+              <div><span>SELECTED ALT</span><b id="fcuAltitudeRead">----- FT</b></div>
+              <div><span>SELECTED HDG</span><b id="fcuHeadingRead">---°</b></div>
+              <div><span>SELECTED SPD</span><b id="fcuSpeedRead">--- KT</b></div>
+              <div><span>SELECTED V/S</span><b id="fcuVsRead">---- FPM</b></div>
+            </div>
+          </section>
+          <section class="panel watch-advisories-panel">
+            <header><span>Advisories</span><span>Live</span></header>
+            <div id="watchNotes" class="watch-notes"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-network" class="page">
+        <div class="page-heading">
+          <div><h1>NETWORK / COMMS</h1></div>
+          <div class="heading-actions"><span id="networkUpdate" class="page-readout">VATSIM LIVE</span><button id="networkRefresh" class="control-button" type="button">Refresh</button></div>
+        </div>
+        <div class="network-layout combined-network-layout">
+          <section class="panel network-identity-panel"><header><span>VATSIM SESSION</span><span id="networkIdentityState">Standby</span></header><div id="networkIdentity" class="network-identity"></div></section>
+          <section class="panel network-vpilot-panel"><header><span>VPILOT LINK</span><span id="networkVpilotState">Checking</span></header><div id="networkVpilot" class="network-vpilot"></div><div class="comms-actions"><button id="commsModeCOn" class="control-button" type="button">MODE C ON</button><button id="commsModeCOff" class="control-button" type="button">MODE C OFF</button><button id="commsIdent" class="control-button" type="button">IDENT</button></div></section>
+          <section class="panel network-radio-panel">
+            <header><span>RADIOS / HANDOFF</span><span id="networkRadioState">SimConnect standby</span></header>
+            <div class="radio-console">
+              <div class="radio-unit" data-radio="1"><div class="radio-title"><b>COM 1</b><span id="com1Tx">RX</span></div><div class="radio-readout"><span>ACTIVE</span><strong id="com1Active">---.---</strong><span>STANDBY</span><strong id="com1Standby">---.---</strong></div><div class="radio-actions"><input id="com1Frequency" inputmode="decimal" placeholder="131.375" maxlength="7" /><button class="control-button radio-tune" data-radio="1" type="button">SET</button><button class="control-button radio-swap" data-radio="1" type="button">SWAP</button></div></div>
+              <div class="radio-unit" data-radio="2"><div class="radio-title"><b>COM 2</b><span id="com2Tx">RX</span></div><div class="radio-readout"><span>ACTIVE</span><strong id="com2Active">---.---</strong><span>STANDBY</span><strong id="com2Standby">---.---</strong></div><div class="radio-actions"><input id="com2Frequency" inputmode="decimal" placeholder="122.800" maxlength="7" /><button class="control-button radio-tune" data-radio="2" type="button">SET</button><button class="control-button radio-swap" data-radio="2" type="button">SWAP</button></div></div>
+              <div class="handoff-unit"><span>CURRENT</span><strong id="currentStation">NOT IDENTIFIED</strong><small id="currentStationDetail"></small><span>NEXT</span><strong id="nextStation">NO SUGGESTION</strong><small id="nextStationDetail"></small><div class="handoff-actions"><button id="nextToCom1" class="control-button" type="button" disabled>TO COM1</button><button id="nextToCom2" class="control-button" type="button" disabled>TO COM2</button></div></div>
+            </div>
+          </section>
+          <section class="panel comms-compose-panel" style="display:none !important"><header><span id="commsComposeTitle">PRIVATE MESSAGE</span><span id="commsLiveState" class="live-readout"><i class="status-lamp lamp-amber"></i>STANDBY</span></header><div class="comms-send-mode"><button id="commsModePrivate" class="active" type="button" data-comms-send-mode="private">PRIVATE MESSAGE</button><button id="commsModeRadio" type="button" data-comms-send-mode="radio">TUNED FREQUENCY</button></div><div id="commsActiveFrequency" class="comms-frequency-pill">ACTIVE FREQUENCY: CHECKING</div><div class="compact-compose"><input id="commsRecipient" autocomplete="off" maxlength="20" placeholder="RECIPIENT CALLSIGN" /><textarea id="commsMessage" maxlength="450" rows="2" placeholder="TYPE MESSAGE"></textarea><button id="commsSend" class="control-button primary-control" type="button">SEND</button></div><div id="commsSendState" class="command-state">VPILOT BRIDGE REQUIRED FOR MESSAGING.</div><span id="commsBridgeLabel" hidden></span><div id="commsBridgeStatus" hidden></div></section>
+          <section class="panel comms-messages-panel"><header><span>Messages</span><span id="commsMessageCount">0 messages</span></header><div id="commsMessages" class="comms-messages"><div class="network-empty">No vPilot messages</div></div></section>
+          <section class="panel vatsim-coc-panel">
+            <header><span>VATSIM CODE OF CONDUCT</span><span>RULE B3(a) COMPLIANCE</span></header>
+            <div class="vatsim-coc-notice">
+              <div class="coc-notice-header">
+                <span class="coc-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+                <span class="coc-title">PILOTS SHALL MONITOR THEIR FLIGHTS AT ALL TIMES</span>
+              </div>
+              <div class="coc-notice-body">
+                <p>It is the responsibility of the pilot to check for, initiate, and make timely contact with appropriate air traffic controllers. This includes making prompt contact when requested to do so. Pilots shall be attentive to their aircraft and ATC, and respond to instructions without delay.</p>
+              </div>
+              <div class="coc-notice-footer">
+                <span>OPS ROOM NETWORK MONITORING · RECEIVE ONLY MODE</span>
+              </div>
+            </div>
+          </section>
+          <section class="panel network-stations-panel"><header><span>FLIGHT STATIONS</span><span id="networkStationCount">0 stations</span></header><div id="networkStations" class="network-stations"></div></section>
+          <section class="panel network-directory-panel"><header><span>CONTROLLER DIRECTORY</span><span id="networkControllerCount">0 online</span></header><div class="network-filter"><input id="networkQuery" autocomplete="off" placeholder="CALLSIGN, NAME OR FREQUENCY" /><button id="networkFilterButton" class="control-button" type="button">FILTER</button></div><div id="networkControllers" class="network-controllers"></div></section>
+        </div>
+      </section>
+
+
+      <section id="page-map" class="page">
+        <div class="page-heading">
+          <div><span class="kicker">CONTROL POSITION 07</span><h1>Live map</h1></div>
+          <div class="heading-actions"><span id="mapLiveState" class="page-readout">MAP STANDBY</span><button id="mapRefresh" class="control-button" type="button">Refresh</button></div>
+        </div>
+        <div class="map-layout">
+          <section class="panel map-display-panel">
+            <header><span id="mapFlight">NO ACTIVE ROUTE</span><span id="mapCounts">0 AIRCRAFT</span></header>
+            <div id="mapAirlineIdentity" class="module-airline-identity compact map-airline-identity"></div>
+            <div class="map-toolbar">
+              <div class="map-mode-buttons"><button class="control-button active" data-map-mode="world" type="button">WORLD</button><button class="control-button" data-map-mode="route" type="button">ROUTE</button><button class="control-button" data-map-mode="follow" type="button">FOLLOW</button><button id="mapResetView" class="control-button" type="button">RESET VIEW</button><button id="mapNorthUp" class="control-button" type="button">NORTH UP</button><button id="mapCenterAircraft" class="control-button map-center-aircraft" type="button" title="Recenter map on your aircraft" aria-label="Recenter map on your aircraft"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="3.2" stroke="currentColor" stroke-width="1.3"/><path d="M6 0v2.6M6 9.4V12M0 6h2.6M9.4 6H12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>AIRCRAFT</button></div>
+              <div class="map-preset-buttons" aria-label="Live map presets"><button class="control-button active" data-map-preset="clean" type="button">CLEAN</button><button class="control-button" data-map-preset="route" type="button">ROUTE</button><button class="control-button" data-map-preset="airport" type="button">AIRPORT</button><button class="control-button" data-map-preset="network" type="button">NETWORK</button><button id="mapNotamToggle" class="control-button" type="button" aria-pressed="false" title="Toggle FAA NMS NOTAM layer">NOTAMS</button></div>
+              <details class="map-filter-menu"><summary>FILTERS</summary><div class="map-filter-grid">
+                <label><input id="mapLayerTraffic" type="checkbox" checked /> TRAFFIC</label><label><input id="mapLayerControllers" type="checkbox" checked /> ATC</label><label><input id="mapLayerCoverage" type="checkbox" /> ATC COVERAGE</label>
+                <label><input id="mapLayerAirports" type="checkbox" checked /> AIRPORTS</label><label><input id="mapLayerRunways" type="checkbox" checked /> RUNWAYS</label><label><input id="mapLayerSurface" type="checkbox" checked /> TAXIWAYS / APRONS / STANDS</label>
+                <label><input id="mapLayerTaxiLabels" type="checkbox" checked /> TAXIWAY LABELS</label><label><input id="mapLayerStandLabels" type="checkbox" checked /> STAND LABELS</label>
+                <label><input id="mapLayerNavaids" type="checkbox" /> NAVAIDS</label><label><input id="mapLayerWaypoints" type="checkbox" /> WAYPOINTS</label><label><input id="mapLayerAirways" type="checkbox" /> AIRWAYS</label><label><input id="mapLayerBoundaries" type="checkbox" /> BOUNDARIES</label>
+                <label><input id="mapLayerNotams" type="checkbox" /> NOTAMS <small>FAA NMS</small></label><label><input id="mapLayerWeather" type="checkbox" /> PRECIPITATION <small>RainViewer</small></label>
+              </div></details>
+              <div class="map-notam-filters" id="mapNotamFilters" hidden aria-label="NOTAM classification filters"><span>NOTAMS</span><button type="button" data-notam-filter="all" class="active">ALL</button><button type="button" data-notam-filter="fdc">FDC/TFR</button><button type="button" data-notam-filter="rwy">RWY</button><button type="button" data-notam-filter="obst">OBST</button><button type="button" data-notam-filter="nav">NAV</button><button type="button" data-notam-filter="airspace">AIRSPACE</button></div>
+            </div>
+            <div class="map-viewport"><div id="liveMap" class="openlayers-map" role="img" aria-label="OPS ROOM online live map"></div></div>
+            <div class="map-provider"><span>ONLINE VECTOR MAP</span><span>© OPENSTREETMAP CONTRIBUTORS · PROTOMAPS · OPENLAYERS</span></div>
+          </section>
+          <aside class="panel map-information-panel">
+            <header><span>Map information</span><span>Live</span></header>
+            <div class="map-legend"><div><i class="legend-own"></i>OWN AIRCRAFT</div><div><i class="legend-route"></i>SIMBRIEF ROUTE</div><div><i class="legend-traffic"></i>VATSIM TRAFFIC</div><div><i class="legend-atc"></i>ONLINE ATC</div><div><i class="legend-coverage"></i>ATC COVERAGE</div><div><i class="legend-airport"></i>AIRPORTS</div><div><i class="legend-surface"></i>LOCAL SURFACE</div><div><i class="legend-notam"></i>NOTAMS (FDC/TFR RED)</div></div>
+            <div class="map-selected"><span>SELECTED ITEM</span><b id="mapSelected">SELECT A MAP SYMBOL</b></div>
+            <div class="map-selected map-aviation-state"><span>AVIATION / SURFACE STATUS</span><b id="mapAviationStatus">AVIATION LAYERS STANDBY</b></div>
+            <div class="map-controller-list"><span>ONLINE CONTROLLERS</span><div id="mapControllerList">NO CONTROLLERS IN VIEW</div></div>
+            <p>Map position and zoom are saved on this device. Centre/FSS coverage uses VATSpy sector boundaries when available; airport ATC uses resolved airport positions and estimated terminal range.</p>
+          </aside>
+        </div>
+      </section>
+
+      <section id="page-datalink" class="page">
+        <div class="page-heading">
+          <div><span class="kicker">CONTROL POSITION 08</span><h1>Datalink</h1></div>
+          <div class="heading-actions"><span id="hoppieLiveState" class="page-readout">HOPPIE STANDBY</span><button id="hoppieLogLink" class="control-button" type="button">VIEW HOPPIE LOG</button><button id="hoppiePing" class="control-button" type="button">LINK TEST</button><button id="hoppiePoll" class="control-button" type="button">POLL NOW</button></div>
+        </div>
+        <div class="datalink-layout">
+          <section class="panel datalink-status-panel"><header><span>ACARS / CPDLC</span><span id="hoppieConfigured">Not configured</span></header><div id="hoppieStatus" class="datalink-status"></div><div class="datalink-warning">USE ONLY ONE HOPPIE CLIENT PER CALLSIGN. DISABLE THE AIRCRAFT CLIENT BEFORE STARTING OPS ROOM POLLING.</div></section>
+          <section class="panel datalink-identity-panel"><header><span>Flight identity</span><span>Host managed</span></header><div class="compact-form"><label>CALLSIGN OVERRIDE<input id="hoppieCallsign" maxlength="16" autocomplete="off" placeholder="AUTO" /></label><div class="inline-actions"><button id="hoppieCallsignApply" class="control-button" type="button">APPLY</button><button id="hoppieCallsignAuto" class="control-button" type="button">AUTO</button><button id="hoppieStop" class="control-button" type="button">STOP POLLING</button></div></div></section>
+          <section class="panel cpdlc-logon-panel"><header><span>CPDLC logon</span><span id="cpdlcAuthority">No data authority</span></header><div class="compact-form horizontal"><label>ATC FACILITY<input id="cpdlcFacility" maxlength="12" placeholder="EDYY" /></label><button id="cpdlcLogon" class="control-button primary-control" type="button">REQUEST LOGON</button></div></section>
+
+          <section class="panel datalink-template-panel"><header><span>PDC / CPDLC templates</span><span id="cpdlcTemplateState">Ready</span></header>
+            <div class="cpdlc-template-grid">
+              <label>CATEGORY<select id="cpdlcCategory"></select></label>
+              <label>TEMPLATE<select id="cpdlcTemplate"></select></label>
+              <label>PHASE<select id="cpdlcPhase"><option value="auto">AUTO</option><option value="ground">ON GROUND</option><option value="departure">DEPARTURE</option><option value="climb">CLIMB</option><option value="cruise">CRUISE</option><option value="descent">DESCENT</option><option value="arrival">ARRIVAL</option><option value="emergency">ABNORMAL</option></select></label>
+            </div>
+            <div id="cpdlcTemplateFields" class="cpdlc-template-fields"></div>
+            <div class="inline-actions"><button id="cpdlcAutofill" class="control-button" type="button">AUTO FILL</button><button id="cpdlcTransfer" class="control-button primary-control" type="button">TRANSFER TO MAILBOX</button><button id="cpdlcClearTemplate" class="control-button" type="button">CLEAR</button></div>
+            <p class="field-note">PDC/DCL defaults to TELEX. CPDLC logon/messages stay separate. Review the mailbox before sending on VATSIM.</p>
+          </section>
+          <section class="panel datalink-compose-panel"><header><span>New message</span><span id="hoppieCommandState">Ready</span></header><div class="datalink-compose"><label>TYPE<select id="hoppieType"><option value="telex" selected>TELEX</option><option value="cpdlc">CPDLC</option></select></label><label>TO<input id="hoppieTo" maxlength="16" placeholder="FACILITY / CALLSIGN" /></label><label class="wide">MESSAGE<textarea id="hoppieMessage" rows="3" maxlength="500" placeholder="TYPE MESSAGE"></textarea></label><button id="hoppieSend" class="control-button primary-control" type="button">SEND</button></div></section>
+          <section class="panel datalink-info-panel"><header><span>Weather request</span><span>Hoppie</span></header><div class="info-request"><input id="hoppieStation" maxlength="4" placeholder="ICAO" /><button class="control-button" data-hoppie-info="metar" type="button">METAR</button><button class="control-button" data-hoppie-info="taf" type="button">TAF</button><button class="control-button" data-hoppie-info="vatatis" type="button">VATSIM ATIS</button></div></section>
+          <section class="panel datalink-messages-panel"><header><span>Datalink messages</span><span id="hoppieMessageCount">0 messages</span></header><div id="hoppieMessages" class="datalink-messages"><div class="network-empty">No datalink messages</div></div></section>
+        </div>
+      </section>
+
+      <section id="page-ground" class="page">
+        <div class="page-heading">
+          <div><span class="kicker">GROUND OPERATIONS</span><h1>GROUND CONTROL</h1></div>
+          <div class="heading-actions"><span id="groundLiveState" class="page-readout">GSX STANDBY</span><button id="groundRefresh" class="control-button" type="button">Refresh</button><button id="groundRelease" class="control-button" type="button">RELEASE GSX</button></div>
+        </div>
+        <div id="groundLayout" class="ground-layout">
+          <section class="panel ground-overview-panel">
+            <header><span>Turnaround status</span><span id="groundConnectionState">Checking</span></header>
+            <div id="groundAirlineIdentity" class="module-airline-identity compact"></div>
+            <div id="groundOverview" class="ground-overview">
+              <div><span>GSX / COUATL</span><b>STANDBY</b></div><div><span>PASSENGERS</span><b>--- / ---</b></div><div><span>BOARD CARGO</span><b>---%</b></div><div><span>DEBOARD CARGO</span><b>---%</b></div>
+            </div>
+          </section>
+          <section class="panel ground-automation-panel">
+            <header><span>Service sequence</span><span id="groundAutoState">Ready</span></header>
+            <div class="ground-auto-console"><div><b id="groundAutoDetail">READY</b><div class="ground-service-options" aria-label="Departure automation options"><label><input id="groundDepartureCatering" type="checkbox" checked /><i></i><span>CATERING</span></label><label><input id="groundDepartureWater" type="checkbox" checked /><i></i><span>POTABLE WATER</span></label><b id="groundPreferenceState">SAVED</b></div></div><div class="ground-auto-actions"><button id="groundDepartureStart" class="control-button primary-control" type="button">BEGIN DEPARTURE SERVICES</button><button id="groundArrivalStart" class="control-button" type="button">BEGIN ARRIVAL SERVICES</button><button id="groundFullTurnaroundStart" class="control-button" type="button">BEGIN FULL TURNAROUND</button><button id="groundAutoStop" class="control-button" type="button" disabled>Stop</button></div></div>
+            <div id="groundAutoTimeline" class="ground-auto-timeline"><div class="network-empty">No recent service activity</div></div>
+          </section>
+          <section class="panel gsx-official-panel">
+            <header><span>GSX panel</span><span id="gsxOfficialState">Connecting</span></header>
+            <div id="gsxOfficialPlaceholder" class="network-empty">The live GSX panel appears here when it is available.</div>
+            <iframe id="gsxOfficialFrame" class="gsx-official-frame" title="GSX Official Remote" loading="lazy" hidden></iframe>
+          </section>
+          <section class="panel ground-services-panel">
+            <header><span>Manual services</span><span>Available when needed</span></header>
+            <div id="groundServices" class="ground-services"></div>
+          </section>
+          <section class="panel gsx-menu-panel">
+            <header><span>GSX menu</span><span id="gsxMenuState">Closed</span></header>
+            <div class="gsx-menu-tools"><button id="groundOpenMenu" class="control-button primary-control" type="button">OPEN GSX MENU</button><span id="groundCommandState">READY</span></div>
+            <div id="gsxMenu" class="gsx-menu"><div class="network-empty">Current GSX menu options appear here when OPS ROOM is controlling GSX or waiting for a pushback direction.</div></div>
+          </section>
+          <section class="panel ground-receipts-panel">
+            <header><span>Service receipts</span><span id="groundReceiptCount">0 receipts</span></header>
+            <div id="groundReceipts" class="ground-receipts"><div class="network-empty">No service receipts yet</div></div>
+          </section>
+          <section class="panel ground-log-panel">
+            <header><span>Recent ground activity</span><span id="groundEventCount">—</span></header>
+            <div id="groundEvents" class="ground-events"><div class="network-empty">No recent ground activity</div></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-announcer" class="page">
+        <div class="page-heading"><div><span class="kicker">CABIN AUDIO</span><h1>ANNOUNCER</h1></div><div class="heading-actions"><a class="control-button" href="https://discord.gg/ZqZSSfeW9W" target="_blank" rel="noreferrer">Cabin audio packs</a><button id="announcerRefresh" class="control-button" type="button">Refresh</button><button id="announcerPause" class="control-button" type="button">Pause</button><button id="announcerMute" class="control-button" type="button">Mute</button><button id="announcerStop" class="control-button" type="button">Stop</button></div></div>
+        <div class="announcer-layout">
+          <section class="panel announcer-status-panel"><header><span>Cabin announcements</span><span id="announcerState">Standby</span></header><div id="announcerAirlineIdentity" class="module-airline-identity compact"></div><div id="announcerStatus" class="announcer-status"></div><div id="announcerHotkeys" class="announcer-hotkeys">Shortcuts · Pause Ctrl+Alt+P · Mute Ctrl+Alt+M</div><div class="announcer-airline-control"><label for="announcerAirlineOverride">Airline</label><input id="announcerAirlineOverride" autocomplete="off" inputmode="text" maxlength="4" placeholder="AUTO" /><button id="announcerAirlineApply" class="control-button" type="button">Use</button><button id="announcerAirlineClear" class="control-button" type="button">Automatic</button><span id="announcerAirlineState">Automatic from flight plan</span></div><div class="announcer-volume-control"><label for="announcerVolume">Volume</label><input id="announcerVolume" type="range" min="0" max="100" step="1" value="80" /><b id="announcerVolumeValue">80%</b></div></section>
+          <section class="panel announcer-manual-panel"><header><span>Play an announcement</span><span>Manual</span></header><div class="announcement-buttons"><button data-boarding-audio="1">Boarding music</button><button data-announcement="BoardingWelcome">Welcome aboard</button><button data-announcement="SafetyBriefing">Safety briefing</button><button data-announcement="CrewSeatsTakeoff">Cabin crew for takeoff</button><button data-announcement="CabinDimTakeoff">Cabin lights for takeoff</button><button data-announcement="AfterTakeoff">After takeoff</button><button data-announcement="FastenSeatbelt">Fasten seat belts</button><button data-announcement="CrewSeatsLanding">Cabin crew for landing</button><button data-announcement="AfterLanding">After landing</button><button data-announcement="DisembarkStarted">Disembarkation</button></div></section>
+          <section class="panel announcer-log-panel"><header><span>Recent announcements</span><span id="announcerEventCount">—</span></header><div id="announcerEvents" class="announcer-events"><div class="network-empty">No recent announcements</div></div></section>
+        </div>
+      </section>
+
+      <section id="page-procedures" class="page">
+        <div class="page-heading">
+          <div><span class="kicker">CONTROL POSITION 11</span><h1>Procedures</h1></div>
+          <div class="heading-actions"><span id="procedureLiveState" class="page-readout">Checklist standby</span><button id="procedureResetPhase" class="control-button" type="button">Reset phase</button><button id="procedureResetAll" class="control-button" type="button">Reset all</button></div>
+        </div>
+        <div class="procedures-layout">
+          <section class="panel procedure-control-panel">
+            <header><span>Aircraft profile</span><span id="procedureAircraft">Detecting</span></header>
+            <div class="procedure-profile-controls"><label>PROFILE<select id="procedureProfile"><option value="">AUTO DETECT</option></select></label><label class="procedure-follow"><input id="procedureFollowPhase" type="checkbox" checked /> FOLLOW FLIGHT PHASE</label><label class="procedure-follow"><input id="procedureAutoAdvance" type="checkbox" checked /> AUTO ADVANCE</label><div id="procedureSource" class="procedure-source">OPS ROOM GENERIC PROFILE</div></div>
+            <div id="procedurePhaseTabs" class="procedure-phase-tabs"></div>
+          </section>
+          <section class="panel procedure-checklist-panel">
+            <header><span id="procedurePhaseTitle">CHECKLIST</span><span id="procedureProgress">0 / 0</span></header>
+            <div id="procedureChecklist" class="procedure-checklist"><div class="network-empty">WAITING FOR AIRCRAFT PROFILE</div></div>
+            <div id="procedureNotice" class="procedure-notice">Simulation aid only. Use the approved checklist for the aircraft being flown.</div>
+          </section>
+          <section class="panel qrh-control-panel">
+            <header><span>Non-normal / QRH</span><span id="qrhState">Simulation aid</span></header>
+            <div class="qrh-search-row"><input id="qrhSearch" placeholder="SEARCH: ENGINE FIRE, SMOKE, GEAR, WINDSHEAR..." autocomplete="off" /><button id="qrhSearchButton" class="control-button" type="button">SEARCH</button></div>
+            <div class="qrh-profile-row"><label>QRH FAMILY<select id="qrhProfile"><option value="">AUTO DETECT</option></select></label><button id="qrhClearSearch" class="control-button" type="button">CLEAR</button></div>
+            <div id="qrhSuggestions" class="qrh-suggestions"><div class="network-empty">NO TELEMETRY SUGGESTIONS</div></div>
+            <div id="qrhConditionList" class="qrh-condition-list"><div class="network-empty">LOADING NON-NORMAL LIBRARY</div></div>
+          </section>
+          <section class="panel qrh-detail-panel">
+            <header><span id="qrhTitle">SELECT NON-NORMAL CHECKLIST</span><span id="qrhSeverity">READY</span></header>
+            <div id="qrhMemory" class="qrh-memory"></div>
+            <div id="qrhChecklist" class="qrh-checklist"><div class="network-empty">OPEN A QRH CONDITION FROM THE LIST.</div></div>
+            <div id="qrhNotice" class="procedure-notice">For flight simulation use only. This is not real-world aviation documentation.</div>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-logbook" class="page">
+        <div class="page-heading">
+          <div><span class="kicker">CONTROL POSITION 12</span><h1>Logbook and debrief</h1></div>
+          <div class="heading-actions"><span id="logbookLiveState" class="page-readout">RECORDER STANDBY</span><button id="logbookRefresh" class="control-button" type="button">Refresh</button><button id="logbookStart" class="control-button primary-control" type="button">Start recording</button><button id="logbookFinalize" class="control-button" type="button">Complete flight</button><button id="logbookScoringRules" class="control-button" type="button">Scoring rules</button></div>
+        </div>
+        <div class="logbook-layout">
+          <section class="panel logbook-statistics-panel">
+            <header><span>Career totals</span><span id="logbookCount">0 flights</span></header>
+            <div id="logbookStatistics" class="logbook-statistics"></div>
+          </section>
+          <section class="panel logbook-active-panel">
+            <header><span>Current flight</span><span id="logbookActiveState">Not recording</span></header>
+            <div id="logbookActive" class="logbook-active"><div class="network-empty">The recorder starts automatically when the aircraft begins operating. Manual start is available at the gate.</div></div>
+            <div class="logbook-active-actions"><button id="logbookDiscard" class="control-button" type="button">Discard active</button></div>
+          </section>
+          <section class="panel logbook-history-panel">
+            <header><span>Flight records</span><span>Saved flights</span></header>
+            <div class="logbook-tools"><input id="logbookQuery" type="search" autocomplete="off" placeholder="CALLSIGN, AIRPORT, AIRCRAFT OR NOTE" /><button id="logbookSearch" class="control-button" type="button">SEARCH</button><a id="logbookExportCsv" class="control-button" href="/api/logbook/export.csv" download>EXPORT CSV</a><a id="logbookExportJson" class="control-button" href="/api/logbook/export.json" download>EXPORT JSON</a><a id="logbookExportPdf" class="control-button" href="/api/logbook/export.pdf" download>EXPORT PDF</a></div>
+            <div id="logbookEntries" class="logbook-entries"><div class="network-empty">NO COMPLETED FLIGHTS</div></div>
+          </section>
+          <section class="panel logbook-detail-panel">
+            <header><span>Flight debrief</span><span id="logbookDetailTitle">Select a flight</span></header>
+            <div id="logbookDetail" class="logbook-detail"><div class="network-empty">Select a flight to inspect its timings, fuel, touchdown and event timeline.</div></div>
+            <div id="logbookCharts" class="logbook-charts" hidden>
+              <article><span>ALTITUDE / PLANNED CRUISE</span><canvas id="chartAltitude"></canvas></article>
+              <article><span>IAS / GROUND SPEED</span><canvas id="chartSpeed"></canvas></article>
+              <article><span>VERTICAL SPEED</span><canvas id="chartVerticalSpeed"></canvas></article>
+              <article><span>FUEL REMAINING</span><canvas id="chartFuel"></canvas></article>
+              <article><span>CROSS-TRACK DEVIATION</span><canvas id="chartCrossTrack"></canvas></article>
+              <article><span>FLIGHT PHASE TIMELINE</span><canvas id="chartPhases"></canvas></article>
+              <article class="wide"><span>PLANNED ROUTE / ACTUAL TRACK</span><canvas id="chartTrack"></canvas></article>
+              <article><span>FINAL APPROACH PROFILE</span><canvas id="chartApproachAltitude"></canvas></article>
+              <article><span>GLIDEPATH DEVIATION</span><canvas id="chartGlidepath"></canvas></article>
+              <article><span>FINAL APPROACH SPEED</span><canvas id="chartApproachSpeed"></canvas></article>
+              <article><span>FINAL APPROACH VERTICAL SPEED</span><canvas id="chartApproachVs"></canvas></article>
+              <article><span>LANDING PITCH / BANK</span><canvas id="chartLandingAttitude"></canvas></article>
+              <article><span>LANDING G-FORCE</span><canvas id="chartLandingG"></canvas></article>
+              <article class="wide"><span>TOUCHDOWN / BOUNCE DETAIL</span><canvas id="chartTouchdown"></canvas></article>
+            </div>
+            <div id="logbookEditor" class="logbook-editor" hidden><label>PERSONAL RATING<select id="logbookRating"><option value="0">NOT RATED</option><option value="1">1 / 5</option><option value="2">2 / 5</option><option value="3">3 / 5</option><option value="4">4 / 5</option><option value="5">5 / 5</option></select></label><label>NOTES<textarea id="logbookNotes" rows="4" maxlength="4000" placeholder="Add debrief notes, errors, lessons or dispatch remarks"></textarea></label><div class="inline-actions"><button id="logbookSave" class="control-button primary-control" type="button">SAVE DEBRIEF</button><a id="logbookOpenPirep" class="control-button primary-control" href="#" target="_blank" rel="noreferrer">OPEN FULL PIREP</a><a id="logbookSelectedPdf" class="control-button" href="#" target="_blank" rel="noreferrer">DOWNLOAD PDF</a><button id="logbookBlackBox" class="control-button" type="button">BLACK BOX REPLAY</button><button id="logbookDelete" class="control-button danger-control" type="button">DELETE RECORD</button></div></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-blackbox" class="page">
+        <div class="page-heading">
+          <div><span class="kicker">FLIGHT DATA RECORDER</span><h1>Black Box and replay</h1></div>
+          <div class="heading-actions"><span id="blackBoxState" class="page-readout">RECORDER STANDBY</span><span id="blackBoxLivePulse" class="blackbox-live-pulse" title="This page refreshes itself automatically while it is the active tab -- no need to click anything"><i></i>AUTO-REFRESH</span><button id="blackBoxRefresh" class="control-button" type="button" title="Force a Black Box refresh now">REFRESH NOW</button></div>
+        </div>
+        <div class="blackbox-layout">
+          <section class="panel blackbox-status-panel">
+            <header><span>Flight-data recorder</span><span>TAXI OUT → TAXI IN</span></header>
+            <div id="blackBoxRecorder" class="blackbox-recorder"><div class="network-empty">Recording starts when engines are running on the ground.</div></div>
+            <div class="blackbox-preferences">
+              <label class="terminal-check"><input id="blackBoxEnabled" type="checkbox" checked /> BLACK BOX ENABLED</label>
+              <label class="terminal-check"><input id="blackBoxAutoRecord" type="checkbox" checked /> AUTO RECORD TAXI OUT → TAXI IN</label>
+              <label>MAX CAPTURE RATE<select id="blackBoxMaxHz"><option value="10">10 Hz</option><option value="20">20 Hz</option><option value="30" selected>30 Hz</option></select></label>
+            </div>
+            <div id="blackBoxAdapterPanel" class="blackbox-adapter-panel">
+              <div id="blackBoxAdapterStatus"><b>AIRCRAFT ADAPTERS</b><span>Checking FSUIPC LVar and PMDG integration...</span></div>
+              <button id="blackBoxInstallAdapters" class="control-button" type="button">INSTALL / REPAIR ADD-ON ADAPTERS</button>
+              <div id="blackBoxFsuipcLog" class="blackbox-fsuipc-log">
+                <div class="blackbox-fsuipc-log-head"><b>FSUIPC LOG</b><span id="blackBoxFsuipcLogSize">Not checked yet</span></div>
+                <p class="field-note">FSUIPC can write huge log files (often several gigabytes during a single flight) if its verbose logging options are switched on. OPS ROOM keeps only the lines needed to spot real errors and turns the noisy options off for you. The "Silence FSUIPC Logs & Trim Now" button above does this on demand; OPS ROOM also does it automatically at start-up.</p>
+                <button id="blackBoxReduceFsuipcLog" class="control-button" type="button">SILENCE FSUIPC LOGS & TRIM NOW</button>
+                <small id="blackBoxFsuipcLogNote"></small>
+              </div>
+              <small>Uses compact FSUIPC LVar mappings. MobiFlight, SPAD.neXt and the FSUIPC WebSocket server are not required.</small>
+            </div>
+          </section>
+          <section class="panel blackbox-library-panel">
+            <header><span>Recordings</span><span id="blackBoxCount">—</span></header>
+            <div id="blackBoxRecordings" class="blackbox-recordings"><div class="network-empty">No Black Box recordings yet.</div></div>
+          </section>
+          <section class="panel blackbox-replay-panel">
+            <header><span id="blackBoxReplayTitle">Flight-data review</span><span id="blackBoxReplayState">READY</span></header>
+            <div id="blackBoxAirlineIdentity" class="module-airline-identity compact"></div>
+            <div id="blackBoxLiveSummary" class="blackbox-live-summary"><div class="network-empty">Select a recording. Active flight data updates automatically.</div></div>
+            <nav class="blackbox-view-tabs" aria-label="Black Box data view">
+              <button type="button" class="active" data-blackbox-view="flight">Flight</button>
+              <button type="button" data-blackbox-view="engines">Engines</button>
+              <button type="button" data-blackbox-view="track">Track</button>
+              <button type="button" data-blackbox-view="events">Events</button>
+            </nav>
+            <div class="blackbox-stage"><canvas id="blackBoxCanvas" width="1200" height="620"></canvas><div id="blackBoxEventsView" class="blackbox-events-view" hidden></div><div id="blackBoxEnginesView" class="blackbox-engines-view" hidden></div></div>
+            <div id="blackBoxInstruments" class="blackbox-instruments"></div>
+            <div id="blackBoxReplayDiagnostics" class="blackbox-replay-diagnostics" hidden></div>
+            <input id="blackBoxTimeline" class="blackbox-timeline" type="range" min="0" max="1" step="0.01" value="0" />
+            <div class="blackbox-controls">
+              <button id="blackBoxPlay" class="control-button primary-control" type="button">PLAY REVIEW</button>
+              <button id="blackBoxStop" class="control-button" type="button">STOP</button>
+              <label>SPEED<select id="blackBoxSpeed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select></label>
+              <label class="terminal-check"><input id="blackBoxLoop" type="checkbox" /> LOOP</label>
+              <button id="blackBoxSimReplay" class="control-button" type="button">START IN-SIM REPLAY</button>
+              <button id="blackBoxSimStop" class="control-button" type="button">TAKE CONTROL</button>
+            </div>
+            <div id="blackBoxDownloads" class="blackbox-downloads"></div>
+            <p class="field-note">In-simulator replay takes control of your user aircraft and moves it through the recorded flight path, attitude and flight surfaces so you can review your own flying from the cockpit. Before starting it, disconnect from any online network and load the same aircraft near where the recording began. While the replay is running, OPS ROOM will not control your camera.</p>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-finances" class="page">
+        <div class="page-heading">
+          <div><h1>Finance & career</h1></div>
+          <div class="heading-actions"><span id="financeState" class="page-readout">Ready</span></div>
+        </div>
+        <div class="finance-dashboard">
+          <section class="panel finance-hero-panel">
+            <header><span>Latest flight and balances</span><span>Finance & career</span></header>
+            <div id="financeAirlineIdentity" class="module-airline-identity"></div>
+            <div id="financeSummary" class="finance-modern-summary"><div class="network-empty">Loading finance records...</div></div>
+          </section>
+          <section class="panel finance-estimate-panel">
+            <header><span>Preflight estimate</span><span>Expected revenue and operating cost</span></header>
+            <div id="financeEstimate" class="finance-estimate"><div class="network-empty">Waiting for an OFP or route...</div></div>
+          </section>
+          <section class="panel finance-setup-panel">
+            <header><span>Finance assumptions</span><span>Currency locks after the first posted flight</span></header>
+            <div class="finance-setup-grid">
+              <label>Currency<select id="financeSetupCurrency"><option value="EUR">EUR</option><option value="USD">USD</option><option value="GBP">GBP</option></select></label>
+              <label>Career pace<select id="financeSetupPace"><option value="relaxed">Relaxed</option><option value="standard">Standard</option><option value="realistic">Realistic</option></select></label>
+              <label class="terminal-check"><input id="financeFareAuto" type="checkbox" checked /> Automatic fares</label>
+              <label>Economy fare<input id="financeEconomyFare" type="number" min="0" step="1" placeholder="AUTO" /></label>
+              <label>Business fare<input id="financeBusinessFare" type="number" min="0" step="1" placeholder="AUTO" /></label>
+              <label>First fare<input id="financeFirstFare" type="number" min="0" step="1" placeholder="AUTO" /></label>
+              <label>Cargo rate / kg<input id="financeCargoRate" type="number" min="0" step="0.01" placeholder="AUTO" /></label>
+              <label>Economy cabin %<input id="financeEconomyPct" type="number" min="0" max="100" step="1" value="90" /></label>
+              <label>Business cabin %<input id="financeBusinessPct" type="number" min="0" max="100" step="1" value="10" /></label>
+              <label>First cabin %<input id="financeFirstPct" type="number" min="0" max="100" step="1" value="0" /></label>
+              <label>Operation type<select id="financeOperationType"><option value="auto">Auto detect</option><option value="passenger">Passenger</option><option value="freighter">Freighter</option><option value="combi">Combi</option><option value="ferry">Ferry</option></select></label>
+              <label>Commercial freight<input id="financeCommercialFreight" type="number" min="0" step="1" placeholder="AUTO" /></label>
+            </div>
+            <p class="field-note">Automatic fares use route distance, cabin mix and payload. GSX receipts are used when available; missing departure or arrival costs are clearly marked as estimates. Existing pilot pay remains unchanged.</p>
+            <div class="inline-actions"><button id="financeSaveSetup" class="control-button primary-control" type="button">SAVE ASSUMPTIONS</button><button id="financeResetCareer" class="control-button danger-control" type="button">Reset career</button></div>
+          </section>
+          <section class="panel finance-rank-panel">
+            <header><span>Pilot record</span><span>Sectors and block hours</span></header>
+            <div id="financeRank" class="finance-rank-current"></div>
+            <div id="financeRanks" class="finance-rank-list"></div>
+          </section>
+          <section class="panel finance-ledger-panel">
+            <header><span>Recent flight statements</span><span>Completed flights</span></header>
+            <div id="financeLedger" class="finance-ledger"><div class="network-empty">No completed flight statements yet.</div></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-obs" class="page">
+        <div class="page-heading"><div><span class="kicker">CONTROL POSITION 13</span><h1>OBS overlay studio</h1></div><span class="page-readout">Browser source setup</span></div>
+        <div class="obs-studio-layout">
+          <section class="panel obs-source-panel"><header><span>Overlay setup</span><span id="obsBrandingState">LOCAL</span></header>
+            <div class="obs-editor">
+              <div class="obs-form-grid">
+                <label>OVERLAY TYPE<select id="obsView"><option value="flight">Flight strip</option><option value="telemetry">Telemetry panel</option><option value="progress">Route progress</option><option value="phase">Flight phase badge</option><option value="messages">ATC / Hoppie messages</option><option value="landing">Landing result</option><option value="status">System status</option><option value="gsx">GSX ground handling</option></select></label>
+                <label>LAYOUT<select id="obsLayout"><option value="strip">Wide strip</option><option value="lower-third">Lower third</option><option value="cards">Metric cards</option><option value="compact">Compact</option><option value="debug">Debug panel</option></select></label>
+                <label>SCREEN POSITION<select id="obsPosition"><option value="center">Centre</option><option value="top-left">Top left</option><option value="top-center">Top centre</option><option value="top-right">Top right</option><option value="bottom-left">Bottom left</option><option value="bottom-center">Bottom centre</option><option value="bottom-right">Bottom right</option></select></label>
+                <label>WIDTH<input id="obsWidth" type="number" min="320" max="3840" value="1280" /></label>
+                <label>HEIGHT<input id="obsHeight" type="number" min="120" max="2160" value="260" /></label>
+                <label>ACCENT<input id="obsAccent" type="color" value="#76c4d3" /></label>
+                <label>BACKGROUND OPACITY<input id="obsOpacity" type="range" min="0" max="100" value="94" /><output id="obsOpacityValue">94%</output></label>
+                <label>TEXT SCALE<input id="obsScale" type="range" min="70" max="160" value="100" /><output id="obsScaleValue">100%</output></label>
+              </div>
+              <div class="obs-toggle-row"><label><input id="obsTransparent" type="checkbox" checked /> TRANSPARENT CANVAS</label><label><input id="obsLabels" type="checkbox" checked /> SHOW FIELD LABELS</label><label><input id="obsShowLogo" type="checkbox" /> SHOW BRANDING</label><label>BRANDING<select id="obsBrandingMode"><option value="active_airline">Active airline</option><option value="custom">Custom logo</option><option value="ops_room">OPS ROOM</option></select></label></div>
+
+              <fieldset id="obsFieldSet" class="obs-fieldset"><legend>VISIBLE DATA</legend>
+                <label><input type="checkbox" value="route" checked /> Route</label><label><input type="checkbox" value="callsign" checked /> Callsign</label><label><input type="checkbox" value="aircraft" /> Aircraft</label><label><input type="checkbox" value="registration" /> Registration</label>
+                <label><input type="checkbox" value="altitude" checked /> Altitude</label><label><input type="checkbox" value="agl" /> AGL</label><label><input type="checkbox" value="ias" /> IAS</label><label><input type="checkbox" value="groundspeed" checked /> Groundspeed</label>
+                <label><input type="checkbox" value="verticalspeed" /> Vertical speed</label><label><input type="checkbox" value="heading" /> Heading</label><label><input type="checkbox" value="track" /> Track</label><label><input type="checkbox" value="phase" checked /> Phase</label>
+                <label><input type="checkbox" value="remaining" /> Distance remaining</label><label><input type="checkbox" value="eta" /> ETA</label><label><input type="checkbox" value="fuel" /> Fuel remaining</label><label><input type="checkbox" value="wind" /> Wind</label>
+                <label><input type="checkbox" value="autopilot" /> Autopilot</label><label><input type="checkbox" value="source" /> Telemetry source</label><label><input type="checkbox" value="zulu" /> UTC clock</label>
+              </fieldset>
+
+              <div class="obs-branding-box">
+                <div><span>OVERLAY LOGO</span><b id="obsLogoName">NO LOGO UPLOADED</b></div>
+                <label class="obs-file-button">SELECT LOGO<input id="obsLogoFile" type="file" accept="image/png,image/jpeg,image/webp" /></label>
+                <button id="obsRemoveLogo" class="control-button" type="button">REMOVE</button>
+                <label>POSITION<select id="obsLogoPosition"><option value="left">Left</option><option value="right">Right</option></select></label>
+                <label>SIZE<input id="obsLogoSize" type="range" min="32" max="160" value="72" /><output id="obsLogoSizeValue">72 px</output></label>
+              </div>
+            </div>
+            <div class="obs-url-box"><span>BROWSER SOURCE URL</span><b id="obsUrl"></b></div>
+            <div class="inline-actions"><button id="obsCopyUrl" class="control-button primary-control" type="button">COPY SOURCE URL</button><button id="obsRefreshPreview" class="control-button" type="button">REFRESH PREVIEW</button><a id="obsOpenSource" class="control-button" href="/obs?view=flight" target="_blank" rel="noreferrer">OPEN SOURCE</a></div>
+            <div class="obs-instructions"><b>OBS SETUP</b><p>Add a Browser Source, paste the generated URL, then use the displayed width and height. All customization is encoded in the URL, while the uploaded logo remains stored locally by the OPS ROOM Host.</p></div>
+          </section>
+          <section class="panel obs-preview-panel"><header><span>Live preview</span><span id="obsPreviewState">FLIGHT STRIP</span></header><div class="obs-preview-stage"><iframe id="obsPreview" title="OPS ROOM OBS overlay preview" src="/obs?view=flight&preview=1"></iframe></div></section>
+        </div>
+      </section>
+
+      <section id="page-system" class="page">
+        <div class="page-heading">
+          <div><span class="kicker">CONTROL POSITION 14</span><h1>Settings</h1></div>
+          <span class="save-state">Host managed</span>
+        </div>
+        <div class="terminal-system-grid">
+          <section class="panel terminal-managed-panel">
+            <header><span>Accounts and integrations</span><span>OPS ROOM host</span></header>
+            <div class="host-managed-notice">
+              <span class="host-symbol">H</span>
+              <div><strong>ACCOUNTS AND INTEGRATIONS ARE MANAGED ON THE HOST PC</strong><p>VATSIM CID, SimBrief identity, Hoppie code, GSX path, LAN access and server port are configured in the OPS ROOM desktop host.</p></div>
+            </div>
+            <div id="hostConfigRows" class="host-config-rows"></div>
+            <div class="inline-actions terminal-host-actions"><a id="openHostSetup" class="control-button" href="/host#settings" target="_blank" rel="noreferrer" hidden>OPEN HOST SETUP</a><button id="reRunSetup" class="control-button" type="button" hidden>RE-RUN SETUP</button><button id="systemDiscordConnect" class="control-button" type="button" hidden>CONNECT DISCORD</button><button id="systemDiscordDisconnect" class="control-button" type="button" hidden>DISCONNECT DISCORD</button><span id="hostAccessNote">Use the desktop host on the simulator computer to change protected settings.</span></div>
+          </section>
+          <section class="panel form-panel terminal-display-panel">
+            <header><span>This display</span><span>Device settings</span></header>
+            <label>DISPLAY SIZE<select id="deviceScale"><option value="auto">Automatic</option><option value="standard">Standard</option><option value="large">Large</option><option value="tv">TV / Long Distance</option></select></label>
+            <label>HOME STYLE<select id="terminalHomeStyle"><option value="efb">EFB / iPad Launcher</option><option value="classic">Classic Console</option><option value="auto">Automatic by device</option></select></label>
+            <label class="terminal-check"><input id="autoFetchOfpToggle" type="checkbox" checked /> AUTO-FETCH OFP ON START / REFRESH</label>
+            <div class="inline-actions terminal-display-actions"><button id="terminalFullscreen" class="control-button" type="button">Fullscreen</button><button class="control-button" type="button" data-page="home">Open home</button></div>
+            <p class="field-note">This browser defaults to the EFB launcher. The choice is stored only on this browser, iPad or TV, so another device can keep the classic console at the same time.</p>
+          </section>
+          <section class="panel terminal-finance-toggle-panel">
+            <header><span>Finance & career</span><span>Optional</span></header>
+            <label class="terminal-check"><input id="financeCareerToggle" type="checkbox" checked /> Enable Finance & Career</label>
+            <p class="field-note">Turning this off hides the Finances module and removes finance, balances, rank and pilot-pay sections from new PIREPs. Existing career history is preserved.</p>
+          </section>
+          <section class="panel terminal-airline-branding-panel">
+            <header><span>Airline branding</span><span>Optional</span></header>
+            <label class="terminal-check"><input id="airlineBrandingToggle" type="checkbox" checked /> ENABLE AIRLINE LOGOS</label>
+            <div class="airline-branding-controls"><label>AIRLINE ICAO OVERRIDE<input id="airlineIcaoOverride" maxlength="4" autocomplete="off" placeholder="AUTO" /></label><button id="airlineIcaoApply" class="control-button" type="button">APPLY</button></div>
+            <div id="airlineBrandingState" class="airline-branding-state"><span>Resolving active airline...</span></div>
+            <div class="inline-actions"><label class="obs-file-button">CUSTOM AIRLINE LOGO<input id="airlineLogoFile" type="file" accept="image/png,image/jpeg,image/webp" /></label><button id="airlineLogoRemove" class="control-button" type="button">REMOVE</button></div>
+            <p class="field-note">Automatic branding uses the SimBrief airline first, then the callsign and packaged airline database. The override and custom logo support virtual airlines. Missing images fall back to an ICAO monogram.</p>
+          </section>
+          <section class="panel module-visibility-panel">
+            <header><span>Visible modules</span><span>Display layout</span></header>
+            <div id="moduleVisibilityGrid" class="module-visibility-grid"></div>
+          </section>
+          <section class="panel terminal-access-panel">
+            <header><span>Local access</span><span class="terminal-access-actions"><span id="lanStateLabel">Checking</span><button id="terminalToggleIp" type="button">Show address</button></span></header>
+            <div id="serverUrls" class="server-urls"><span>Available addresses</span><b>Checking...</b></div>
+            <div class="qr-wrap"><img id="serverQr" class="secret-qr concealed" src="/api/server/qr.png" alt="OPS ROOM LAN QR code" /><div><b>Open on another device</b><p id="qrCaption">The QR code shows the preferred LAN address.</p></div></div>
+          </section>
+
+          <section class="panel terminal-camera-panel">
+            <header><span>MSFS 2024 camera bridge</span><span>FIDS controls</span></header>
+            <div class="maintenance-box"><b>CAMERA FOLLOW</b><p>The live camera controls now float on the VATSIM FIDS page so they stay beside aircraft selection. System keeps integration settings and diagnostics only.</p></div>
+            <div class="inline-actions terminal-maintenance-actions">
+              <button class="control-button primary-control" type="button" data-page="fids">OPEN FIDS CAMERA PANEL</button>
+            </div>
+          </section>
+          <section class="panel terminal-console-panel">
+            <header><span>Startup log</span><span><button id="refreshStartupConsole" type="button">Refresh</button></span></header>
+            <pre id="startupConsoleLog" class="ops-console-log">Loading startup log...</pre>
+          </section>
+          <section class="panel terminal-maintenance-panel">
+            <header><span>APP UPDATES &amp; LOCAL STORAGE</span><span id="updaterState">Checking</span></header>
+            <div id="updaterBox" class="maintenance-box"><b>Software updates</b><p>Update checks use the public OpsRoomApp GitHub release manifest. Source code is not downloaded or published.</p></div>
+            <div id="storageStatus" class="maintenance-box"><b>Local storage</b><p>Checking local log and cache usage...</p></div>
+            <div class="inline-actions terminal-maintenance-actions"><button id="checkUpdates" class="control-button" type="button">Check for updates</button><button id="clearLocalLogs" class="control-button" type="button">Clear logs</button><button id="clearLocalCache" class="control-button" type="button">Clear logs and cache</button></div>
+          </section>
+          <section class="panel terminal-maintenance-panel">
+            <header><span>THERMAL / POS PRINTER</span><span id="printerHeaderState">Hardware configuration</span></header>
+            <div id="printerBox" class="maintenance-box">
+              <p id="printerStatus">Checking printer status...</p>
+              <div class="compact-form">
+                <label>PRINTER<select id="printerSelect" style="width:100%"><option value="">No printer selected</option></select></label>
+                <div class="printer-config-row"><span>PRINTER ENABLED</span><input id="printerEnabled" type="checkbox" /></div>
+                <div class="printer-config-row"><span>AUTO-PRINT CPDLC</span><input id="printerCpdlcAuto" type="checkbox" checked /></div>
+              </div>
+              <div class="inline-actions">
+                <button id="printerTestBtn" class="control-button" type="button">TEST PRINT</button>
+                <label class="printer-preview-kind">PREVIEW<select id="printerPreviewKind" title="Receipt kind to preview"><option value="cpdlc">CPDLC</option><option value="ofp">LIVE OFP</option><option value="test">PRINTER TEST</option><option value="gsx">GSX RECEIPT</option><option value="custom">CUSTOM TEXT</option></select></label>
+                <button id="printerPreviewBtn" class="control-button" type="button">PREVIEW RECEIPT</button>
+                <button id="printerRefreshBtn" class="control-button" type="button">REFRESH</button>
+                <span id="printerResult" class="printer-result"></span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-placeholder" class="page">
+        <div class="page-heading"><div><span class="kicker">MODULE RESERVED</span><h1 id="placeholderTitle">MODULE</h1></div></div>
+        <section class="panel placeholder-panel">
+          <header><span>DEVELOPMENT STATUS</span><span>PLANNED</span></header>
+          <div class="placeholder-mark">POSITION NOT YET COMMISSIONED</div>
+          <p id="placeholderText"></p>
+        </section>
+      </section>
+    </main>
+
+    <footer class="status-strip" id="statusStrip"></footer>
+  </div>
+
+  <div class="support-icon-rail" aria-label="Support and beta feedback">
+    <button id="bugReportButton" class="bug-report-fab support-icon-button" type="button" title="Report a bug" aria-label="Report a bug"><svg class="support-icon-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M20 8h-2.81a5.985 5.985 0 0 0-1.82-1.96L17 4.41 15.59 3l-2.17 2.17a6.002 6.002 0 0 0-2.84 0L8.41 3 7 4.41l1.62 1.63A5.985 5.985 0 0 0 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81a6 6 0 0 0 10.38 0H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg></button>
+    <a id="buyCoffeeButton" class="buy-coffee-fab support-icon-button" href="https://buymeacoffee.com/exzonom" target="_blank" rel="noopener noreferrer" title="Buy me a coffee" aria-label="Buy me a coffee"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg></a>
+  </div>
+  <div id="bugReportOverlay" class="bug-report-overlay" hidden></div>
+  <dialog id="pmdgSdkEulaDialog" class="pmdg-sdk-eula-dialog" aria-labelledby="pmdgSdkEulaTitle">
+    <form method="dialog">
+      <header><div><span>OFFICIAL AIRCRAFT SDK</span><strong id="pmdgSdkEulaTitle">PMDG 777 SDK EULA</strong></div><button id="pmdgSdkEulaClose" class="control-button" type="button">CANCEL</button></header>
+      <p>PMDG requires applications using the 777 SDK to display this agreement and obtain a manual opt-in before first use.</p>
+      <pre id="pmdgSdkEulaText">Loading PMDG 777 SDK terms...</pre>
+      <label class="terminal-check pmdg-sdk-eula-accept"><input id="pmdgSdkEulaCheck" type="checkbox" /> I HAVE READ AND ACCEPT THE PMDG 777 SDK EULA</label>
+      <div class="inline-actions"><button id="pmdgSdkEulaAccept" class="control-button primary-control" type="button" disabled>ACCEPT AND ENABLE PMDG ADAPTER</button><button id="pmdgSdkEulaCancel" class="control-button" type="button">CANCEL</button></div>
+    </form>
+  </dialog>
+  <dialog id="logbookScoringRulesDialog" class="logbook-scoring-dialog"><form method="dialog"><header><strong>Scoring rules</strong><button class="control-button" value="close">Close</button></header><p>Score starts at 100. Landing rate, touchdown g-force, runway alignment, bounce events, unstable approach and recorded violations apply proportional deductions. This is a simulator debrief aid, not an operational safety score.</p></form></dialog>
+  <aside id="bugReportModal" class="bug-report-modal" hidden aria-label="Report a bug">
+    <header>
+      <div><span>PUBLIC BETA</span><strong>Report a bug</strong></div>
+      <button id="bugReportClose" type="button" aria-label="Close bug report">×</button>
+    </header>
+    <div class="bug-report-body">
+      <p class="bug-report-note">Send a useful bug report directly from OPS ROOM. Diagnostics are redacted before export, but review before sending if needed.</p>
+      <div class="bug-report-grid">
+        <label>Module<input id="bugReportModule" readonly /></label>
+        <label>Contact, optional<input id="bugReportContact" placeholder="Email or Discord name" autocomplete="off" /></label>
+      </div>
+      <label>What happened<textarea id="bugReportDescription" rows="4" placeholder="Example: Fenix loading reached fuel target, but boarding stayed at 0/230 and GSX did not start boarding."></textarea></label>
+      <label>What did you expect?<textarea id="bugReportExpected" rows="3" placeholder="Example: OPS ROOM should trigger GSX boarding once and continue monitoring passengers/cargo."></textarea></label>
+      <label>Steps to reproduce<textarea id="bugReportSteps" rows="3" placeholder="Aircraft, airport, add-ons, button clicked, and the exact state before it failed."></textarea></label>
+      <label class="bug-report-check"><input id="bugReportIncludeZip" type="checkbox" checked /> Include diagnostics and recent logs</label>
+      <div id="bugReportPreview" class="bug-report-preview">Ready to generate report.</div>
+    </div>
+    <footer>
+      <button id="bugReportCopy" class="control-button" type="button">Copy report</button>
+      <button id="bugReportDownload" class="control-button" type="button">Download ZIP</button>
+      <button id="bugReportSend" class="control-button primary-control" type="button">Send report</button>
+    </footer>
+  </aside>
+
+  <aside id="notificationDrawer" class="notification-drawer" hidden><header><strong>OPS ROOM NOTIFICATIONS</strong><div class="notification-actions"><button id="notificationClear" type="button">Mark all read</button><button id="notificationClose" type="button" aria-label="Close notifications">Close</button></div></header><div id="notificationHistory" class="notification-history"><div class="network-empty">No notifications</div></div></aside>
+  <div id="opsToast" class="ops-toast" hidden data-priority="operational"><div><span id="opsToastSource">OPS ROOM</span><strong id="opsToastFrom">NOTIFICATION</strong><p id="opsToastText"></p></div><div class="toast-actions"><button id="opsToastOpen" type="button">Open</button><button id="opsToastClose" type="button">Dismiss</button></div></div>
+  <!-- v0.25.60: Thermal receipt preview modal -->
+  <div id="printerPreviewModal"><div class="printer-preview-dialog"><div class="printer-preview-header"><span>80MM RECEIPT PREVIEW</span><button id="printerPreviewClose" type="button" aria-label="Close preview">&times;</button></div><div class="printer-preview-body" id="printerPreviewBody"></div><div class="printer-preview-footer"><button id="printerPreviewCopyBtn" class="printer-preview-btn-copy" type="button">COPY RAW TEXT</button><button id="printerPreviewCloseBtn" class="printer-preview-btn-close" type="button">CLOSE</button></div></div></div>
+  <!-- First-run onboarding wizard -->
+  <div id="onboardingOverlay" class="onboarding-overlay" hidden>
+    <section class="onboarding-dialog" role="dialog" aria-modal="true" aria-labelledby="onbTitle">
+      <header class="onboarding-header">
+        <div class="onboarding-title">
+          <span class="kicker">HOST SETUP</span>
+          <strong id="onbTitle">OPS ROOM</strong>
+        </div>
+        <div class="onboarding-dots" id="onbDots" aria-hidden="true"></div>
+        <button id="onbClose" class="onboarding-close" type="button" aria-label="Close setup">&times;</button>
+      </header>
+      <div class="onboarding-body">
+        <section class="onb-step" data-step="0">
+          <h2>Welcome</h2>
+          <p class="onb-sub">OPS ROOM is your operations console for Microsoft Flight Simulator. Link flight planning and audio in a few steps, or skip and fly now. Everything can be changed later in Host Setup.</p>
+          <h3>Current setup</h3>
+          <div class="onb-status-list" id="onbStatusList"></div>
+        </section>
+        <section class="onb-step" data-step="1" hidden>
+          <h2>Flight planning</h2>
+          <p class="onb-sub">SimBrief loads your flight plan and fills the Performance page automatically.</p>
+          <label class="onb-field">SIMBRIEF PILOT ID OR USERNAME
+            <input id="onbSimbrief" autocomplete="off" placeholder="Pilot ID or username" />
+          </label>
+          <label class="onb-field">VATSIM CID <span class="onb-optional">OPTIONAL</span>
+            <input id="onbVatsim" inputmode="numeric" autocomplete="off" placeholder="1234567" />
+          </label>
+        </section>
+        <section class="onb-step" data-step="2" hidden>
+          <h2>Datalink</h2>
+          <p class="onb-sub">Hoppie adds CPDLC and PDC clearances. Request a free logon code at <a href="https://www.hoppie.nl/acars/system/register.html" target="_blank" rel="noopener">hoppie.nl</a>.</p>
+          <label class="onb-field">HOPPIE LOGON CODE <span class="onb-optional">OPTIONAL</span>
+            <input id="onbHoppie" type="password" autocomplete="new-password" placeholder="Leave blank to skip" />
+          </label>
+        </section>
+        <section class="onb-step" data-step="3" hidden>
+          <h2>Audio</h2>
+          <label class="onb-field">ANNOUNCEMENTS FOLDER
+            <span class="onb-folder-row"><input id="onbAnnouncements" autocomplete="off" placeholder="Path to announcements" /><button class="onb-browse" type="button" data-onb-browse="onbAnnouncements">BROWSE</button></span>
+          </label>
+          <p class="onb-sub onb-link"><a href="https://discord.gg/ZqZSSfeW9W" target="_blank" rel="noopener">Airline announcement packs are shared in our Discord.</a></p>
+          <label class="onb-field">RAAS VOICE PACK FOLDER
+            <span class="onb-folder-row"><input id="onbRaas" autocomplete="off" placeholder="Path to RAAS voice pack" /><button class="onb-browse" type="button" data-onb-browse="onbRaas">BROWSE</button></span>
+          </label>
+          <p class="onb-sub onb-link"><a href="https://gofile.io/d/c12rCznl" target="_blank" rel="noopener">Download a RAAS voice pack.</a></p>
+        </section>
+        <section class="onb-step" data-step="4" hidden>
+          <h2>Community</h2>
+          <p class="onb-sub">Connect Discord to post takeoff and landing events and appear on the leaderboard. Flight data only, and always opt-in.</p>
+          <div class="onb-actions"><button id="onbDiscordConnect" type="button" class="control-button primary-control">CONNECT DISCORD</button><span id="onbDiscordState" class="onb-state">NOT CONNECTED</span></div>
+          <p class="onb-sub onb-link"><a href="https://discord.gg/Dv6fNAjhAt" target="_blank" rel="noopener">Join the OPS ROOM Discord server.</a></p>
+        </section>
+        <section class="onb-step" data-step="5" hidden>
+          <h2>Preferences</h2>
+          <label class="onb-field">WEIGHT UNIT
+            <select id="onbUnitWeight"><option value="kg">KILOGRAMS (KG)</option><option value="lb">POUNDS (LB)</option></select>
+          </label>
+          <label class="onb-check"><input id="onbLan" type="checkbox" checked /><i></i>ALLOW LAN / TABLET ACCESS</label>
+        </section>
+        <section class="onb-step" data-step="6" hidden>
+          <h2>In-sim Tablet</h2>
+          <p class="onb-sub">OPS ROOM ships an in-game tablet panel (MSFS 2020 and 2024) plus NOTAM closure markers. Install them into your Community folder and the OPS ROOM button appears on the sim toolbar.</p>
+          <div class="onb-status-list" id="onbMsfsFolders"></div>
+          <div class="onb-actions">
+            <button id="onbMsfsInstall" type="button" class="control-button primary-control">INSTALL</button>
+            <button id="onbMsfsBrowse" type="button" class="control-button">CHOOSE FOLDER...</button>
+          </div>
+          <p class="onb-sub onb-link" id="onbMsfsState">Detected folders are listed above. Use CHOOSE FOLDER to install into an Addons Linker library or another location.</p>
+        </section>
+      </div>
+      <footer class="onboarding-footer">
+        <button id="onbSkip" type="button" class="control-button">SKIP ALL</button>
+        <span class="onb-footer-spacer"></span>
+        <button id="onbBack" type="button" class="control-button" hidden>BACK</button>
+        <button id="onbNext" type="button" class="control-button primary-control">CONTINUE</button>
+      </footer>
+    </section>
+  </div>
+  <script src="/static/polyfills.legacy.js?v=0-25-0"></script>
+  <script src="/static/ol.legacy.js?v=0-25-0"></script>
+  <script src="/static/opsroom.legacy.js?v=0-25-0"></script>
+  <script>
+    // Signal a hosting MSFS 2024 EFB shell (if this page is inside its iframe)
+    // that OPS ROOM is running, so the shell can reveal the app and stop its
+    // retry loop. Harmless everywhere else (no-op postMessage to parent).
+    (function () {
+      try {
+        var ping = function () { window.parent.postMessage({ type: "opsroom-ready" }, "*"); };
+        window.addEventListener("load", ping);
+        window.setTimeout(ping, 1500);
+        window.setInterval(ping, 2000);
+      } catch (e) {}
+    })();
+  </script>
+</body>
+</html>

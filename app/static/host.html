@@ -9,12 +9,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=B612:ital,wght@0,400;0,700;1,400&family=B612+Mono:wght@400;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/host.css?v=0-25-77" />
+  <link rel="stylesheet" href="/static/host.css?v=0-25-0" />
 </head>
 <body>
   <main class="host-shell">
     <header class="host-masthead">
-      <div class="host-title"><img class="brand-mark" src="/static/opsroom-brand-mark.svg" alt="" /><strong>OPS ROOM</strong><strong class="build">0.25.77</strong><span>HOST AND INTEGRATION CONSOLE</span></div>
+      <div class="host-title"><img class="brand-mark" src="/static/opsroom-brand-mark.svg" alt="" /><strong>OPS ROOM</strong><strong class="build">0.25.0</strong><span>HOST AND INTEGRATION CONSOLE</span></div>
       <div class="host-clock"><b id="hostClock">00:00:00 UTC</b><span id="hostSystemLamp"><i class="lamp green"></i>SYSTEM NORMAL</span></div>
     </header>
 
@@ -26,7 +26,7 @@
     <section id="host-page-status" class="host-page active">
       <section class="host-banner">
         <div><span>LOCAL SERVICE</span><strong id="serverState">RUNNING</strong></div>
-        <div><span>VERSION</span><strong>0.25.77</strong></div>
+        <div><span>VERSION</span><strong>0.25.0</strong></div>
         <div><span>ROLE</span><strong>HOST / BRIDGE</strong></div>
       </section>
 
@@ -70,6 +70,15 @@
           <label>VATSIM CID<input id="hostVatsimCid" inputmode="numeric" autocomplete="off" placeholder="1234567" /></label>
           <label>SIMBRIEF PILOT ID OR USERNAME<input id="hostSimbriefId" autocomplete="off" placeholder="Pilot ID or username" /></label>
           <label class="check-line"><input id="hostSimbriefAuto" type="checkbox" /><i></i>AUTO LOAD LATEST OFP AT START</label>
+        </section>
+
+        <section class="host-panel form-panel">
+          <header><span>DISCORD COMMUNITY</span><span id="hostDiscordState">NOT CONNECTED</span></header>
+          <div id="hostDiscordDetail" class="integration-install-detail">Connect Discord to share takeoff/landing flights and appear on the community leaderboard. Flight data only, opt-in.</div>
+          <div class="panel-actions integration-install-actions"><button id="hostDiscordConnect" type="button">CONNECT DISCORD</button><button id="hostDiscordDisconnect" type="button">DISCONNECT</button></div>
+          <label class="check-line"><input id="hostDiscordShare" type="checkbox" /><i></i>SHARE FLIGHTS TO DISCORD (OPT-IN)</label>
+          <label>VISIBILITY<select id="hostDiscordVisibility"><option value="discord">DISCORD CHANNEL ONLY</option><option value="public">DISCORD + PUBLIC WEBSITE</option><option value="hidden">HIDDEN</option></select></label>
+          <label class="check-line"><input id="hostDiscordPresence" type="checkbox" /><i></i>DISCORD RICH PRESENCE</label>
         </section>
 
         <section class="host-panel form-panel">
@@ -136,7 +145,7 @@
 
 
         <section class="host-panel form-panel">
-          <header><span>NOTAM CLOSURE ALERTS</span><span>v0.25.77</span></header>
+          <header><span>NOTAM CLOSURE ALERTS</span><span>v0.25.0</span></header>
           <label class="check-line"><input id="hostRaasNotamCallouts" type="checkbox" /><i></i>RAAS SPOKEN CALL-OUT FOR NOTAM CLOSURES</label>
           <label class="check-line"><input id="hostNotamNotifications" type="checkbox" /><i></i>PROXIMITY POP-UP WHEN NEAR A CLOSED RUNWAY / TAXIWAY</label>
           <p>Amber for closed taxiways and barriers, red for closed runways. Both channels use only active NOTAMs and respect the marker radius.</p>
@@ -223,6 +232,6 @@
 
     <footer><span>The desktop host is the primary configuration and integration manager.</span><span>Flight operations remain available from browser, iPad, tablet, TV and OBS.</span></footer>
   </main>
-  <script src="/static/host.js?v=0-25-77"></script>
+  <script src="/static/host.js?v=0-25-0"></script>
 </body>
 </html>

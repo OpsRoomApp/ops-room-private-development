@@ -34,6 +34,11 @@ def main() -> int:
     parser.add_argument("--zip", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--repo", default="https://github.com/OpsRoomApp/ops-room-releases")
+    parser.add_argument(
+        "--site",
+        default="https://opsroom.live",
+        help="Primary download base (default: https://opsroom.live). Pass an empty string to emit GitHub-only URLs.",
+    )
     parser.add_argument("--channel", default=RELEASE_CHANNEL)
     # #78 bridge: dual-publish. When --installer is given, the manifest gains
     # the additive installer_url/installer_sha256 fields. Old updaters ignore
@@ -48,8 +53,13 @@ def main() -> int:
     digest = sha256(zip_path)
     sha_path = zip_path.with_suffix(zip_path.suffix + ".sha256")
     sha_path.write_text(f"{digest}  {zip_path.name}\n", encoding="ascii")
-    # version already includes the 'v' prefix (e.g. '0.25.60')
-    download_url = f"{args.repo}/releases/download/{version}/{zip_path.name}"
+    # The release tag is the plain version (no 'v' prefix).
+    repo_download = f"{args.repo}/releases/download/{version}/{zip_path.name}"
+    site = (args.site or "").strip()
+    # Website (opsroom.live /downloads/) is the primary download host; the
+    # GitHub Releases copy is the fallback when the site is unreachable. With
+    # --site "" the manifest keeps the historical GitHub-only URLs.
+    download_url = f"{site}/downloads/{zip_path.name}" if site else repo_download
     manifest = {
         "latest_version": version,
         "version": version,
@@ -64,15 +74,22 @@ def main() -> int:
         "message": RELEASE_MESSAGE.format(version=version),
         "notes": RELEASE_NOTES.format(version=version),
     }
+    if site and download_url != repo_download:
+        manifest["fallback_download_url"] = repo_download
     installer = str(args.installer or "").strip()
     if installer:
         installer_path = Path(installer)
         if not installer_path.is_file():
             raise SystemExit(f"Installer file not found: {installer}")
         installer_digest = sha256(installer_path)
-        installer_url = f"{args.repo}/releases/download/{version}/{installer_path.name}"
+        installer_name = installer_path.name
+        installer_url = f"{site}/downloads/{installer_name}" if site else f"{args.repo}/releases/download/{version}/{installer_name}"
         manifest["installer_url"] = installer_url
         manifest["installer_sha256"] = installer_digest
+        if site:
+            # Same bytes on GitHub Releases, so the checksum is identical.
+            manifest["fallback_installer_url"] = f"{args.repo}/releases/download/{version}/{installer_name}"
+            manifest["fallback_installer_sha256"] = installer_digest
     out_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return 0
 

@@ -1673,6 +1673,17 @@ _SIMCONNECT_LVAR_REQUESTS: dict[str, Any] = {}
 _SIMCONNECT_LVAR_CACHE_KEY: tuple[tuple[str, str], ...] = ()
 _SIMCONNECT_LVAR_CACHE_VALUES: list[Any] = []
 _SIMCONNECT_LVAR_CACHE_AT = 0.0
+# #98 T1: LVar probe churn suppression. Probes of LVars that do not exist on
+# the loaded aircraft return all-None; counting those as session failures and
+# re-reading them at the enricher cadence drives SimConnect's dispatch into
+# UNRECOGNIZED_ID churn and native heap corruption (0xC0000374). After a few
+# consecutive all-None batches we stop probing for the window and refuse to
+# re-register the request set until it changes (new aircraft) or the window
+# expires.
+_SIMCONNECT_LVAR_PROBE_SUPPRESS_UNTIL = 0.0
+_SIMCONNECT_LVAR_ALLCLEAN_STRIKES = 0
+_SIMCONNECT_LVAR_PROBE_SUPPRESS_SECONDS = 120.0
+_SIMCONNECT_LVAR_PROBE_ALLOWED_STRIKES = 3
 
 def _read_simconnect_lvars(requests: list[tuple[str, str]], force: bool = False) -> list[Any]:
     """Read L:Vars directly through SimConnect, bypassing FSUIPC WASM offsets.
@@ -1687,13 +1698,33 @@ def _read_simconnect_lvars(requests: list[tuple[str, str]], force: bool = False)
     """
     global _SIMCONNECT_LVAR_SESSION, _SIMCONNECT_LVAR_REQUESTS
     global _SIMCONNECT_LVAR_CACHE_KEY, _SIMCONNECT_LVAR_CACHE_VALUES, _SIMCONNECT_LVAR_CACHE_AT
+    global _SIMCONNECT_LVAR_ALLCLEAN_STRIKES, _SIMCONNECT_LVAR_PROBE_SUPPRESS_UNTIL
+    from .simconnect_position import _ensure_session, simconnect_diagnostics, _note_session_read_result
     if not requests:
         return []
     key = tuple((str(name), str(fmt)) for name, fmt in requests)
     now = time.monotonic()
     if not force and key == _SIMCONNECT_LVAR_CACHE_KEY and now - _SIMCONNECT_LVAR_CACHE_AT < 0.2:
         return list(_SIMCONNECT_LVAR_CACHE_VALUES)
-    from .simconnect_position import _ensure_session, simconnect_diagnostics, _note_session_read_result
+    # #98 T3: probe reads (litmus + enricher) run through the isolated worker
+    # process first. The worker owns the crash-prone native dispatch for LVar
+    # reads, so probe churn can never corrupt the main process heap. Any worker
+    # failure falls back to the in-process path below (never a hard dependency).
+    if force:
+        try:
+            from .simconnect_probe_client import read_lvars as _worker_read_lvars
+            worker_values = _worker_read_lvars(list(key))
+            if worker_values is not None:
+                if any(v is not None for v in worker_values):
+                    _note_session_read_result(True)
+                else:
+                    _note_session_read_result(False)
+                _SIMCONNECT_LVAR_CACHE_KEY = key
+                _SIMCONNECT_LVAR_CACHE_VALUES = list(worker_values)
+                _SIMCONNECT_LVAR_CACHE_AT = time.monotonic()
+                return worker_values
+        except Exception:
+            pass
     try:
         diagnostics = simconnect_diagnostics()
         sm, _aq = _ensure_session(diagnostics)
@@ -1728,11 +1759,26 @@ def _read_simconnect_lvars(requests: list[tuple[str, str]], force: bool = False)
     # v0.25.60: session self-heal — every L:Var read coming back None (broken
     # SimConnect dispatch thread) counts as a session failure so the shared
     # session is rebuilt instead of serving a dead connection forever.
+    # #98 T1: but a healthy session reading LVars the aircraft simply does not
+    # have also returns all-None. Suppress those probes after a few strikes so
+    # a non-Fenix aircraft cannot churn UNRECOGNIZED_ID reads forever.
     if requests:
         if any(v is not None for v in values):
+            _SIMCONNECT_LVAR_ALLCLEAN_STRIKES = 0
             _note_session_read_result(True)
         else:
+            _SIMCONNECT_LVAR_ALLCLEAN_STRIKES += 1
             _note_session_read_result(False)
+            if (
+                _SIMCONNECT_LVAR_ALLCLEAN_STRIKES >= _SIMCONNECT_LVAR_PROBE_ALLOWED_STRIKES
+                and not _SESSION_DISPATCH_DEAD
+            ):
+                _SIMCONNECT_LVAR_PROBE_SUPPRESS_UNTIL = time.monotonic() + _SIMCONNECT_LVAR_PROBE_SUPPRESS_SECONDS
+                _SIMCONNECT_LVAR_ALLCLEAN_STRIKES = 0
+                try:
+                    _ENRICHER_LVAR_REQUESTS.clear()
+                except Exception:
+                    pass
     _SIMCONNECT_LVAR_CACHE_KEY = key
     _SIMCONNECT_LVAR_CACHE_VALUES = list(values)
     _SIMCONNECT_LVAR_CACHE_AT = time.monotonic()
@@ -1794,6 +1840,8 @@ def _read_simconnect_lvars_cached(requests: list[tuple[str, str]]) -> list[Any]:
     if key == _SIMCONNECT_LVAR_CACHE_KEY and time.monotonic() - _SIMCONNECT_LVAR_CACHE_AT < _ENRICHER_CACHE_MAX_AGE:
         return list(_SIMCONNECT_LVAR_CACHE_VALUES)
     global _ENRICHER_LVAR_REQUESTS
+    if time.monotonic() < _SIMCONNECT_LVAR_PROBE_SUPPRESS_UNTIL:
+        return []
     if list(_ENRICHER_LVAR_REQUESTS) != list(requests):
         _ENRICHER_LVAR_REQUESTS = list(requests)
     return []

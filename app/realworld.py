@@ -471,7 +471,7 @@ async def _enrich_batch(flights: list[dict[str, Any]]) -> list[dict[str, Any]]:
                             aircraft_success = True
                             aircraft_ok += 1
                             succeeded += 1
-                            _log.info("[RealWorld] AIRCRAFT ENRICH cs=%%s hex=%%s key=%%s type=%%s reg=%%s",
+                            _log.info("[RealWorld] AIRCRAFT ENRICH cs=%s hex=%s key=%s type=%s reg=%s",
                                       cs, mode_s, ac_key,
                                       flight.get("aircraft_type"), flight.get("registration"))
                         _update_provider_health("adsbdb", True)

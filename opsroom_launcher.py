@@ -4,6 +4,7 @@ import ctypes
 import json
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -124,6 +125,162 @@ def _clear_crash_sentinel() -> None:
     except Exception:
         pass
 
+
+
+_MAX_AUTO_RESTARTS = 3
+_AUTO_RESTART_BACKOFF_SECONDS = 6.0
+
+
+def _launch_command() -> list[str]:
+    """Command used to relaunch the app (works frozen and from source)."""
+    return [sys.executable, os.path.abspath(sys.argv[0])]
+
+
+def _sentinel_pid() -> int | None:
+    """PID recorded in the crash sentinel, if any (None = sentinel absent/broken)."""
+    try:
+        sentinel = app_data_dir() / _CRASH_SENTINEL_NAME
+        if not sentinel.exists():
+            return None
+        data = json.loads(sentinel.read_text(encoding="utf-8"))
+        pid = data.get("pid")
+        return int(pid) if pid else None
+    except Exception:
+        return None
+
+
+def _wait_pid_exit(pid: int, poll_seconds: float = 1.0) -> None:
+    while True:
+        try:
+            if os.name == "nt":
+                import ctypes as _ct
+
+                handle = _ct.windll.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+                if not handle:
+                    return  # process is gone
+                _ct.windll.kernel32.CloseHandle(handle)
+            else:
+                os.kill(pid, 0)
+        except Exception:
+            return  # process is gone
+        time.sleep(poll_seconds)
+
+
+def _wait_port_free(port: int, timeout: float = 15.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if port_available(LOCAL_HOST, port):
+            return True
+        time.sleep(0.5)
+    return port_available(LOCAL_HOST, port)
+
+
+def _wait_port_served(port: int, timeout: float = 30.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((LOCAL_HOST, port), timeout=1.0):
+                return True
+        except Exception:
+            time.sleep(0.5)
+    return False
+
+
+def run_watchdog(watched_pid: int, port: int, restarts: int = 0) -> int:
+    """#98 T2 -- external crash watchdog.
+
+    Watches the main process. If it dies unexpectedly (crash sentinel still
+    present for that PID = native crash, e.g. the SimConnect heap corruption),
+    relaunches the app so a crash becomes a ~10 s blip instead of a dead
+    server. Stops silently on a clean exit (sentinel cleared). Gives up after
+    _MAX_AUTO_RESTARTS to avoid a crash-loop. The relaunched instance spawns
+    its own watchdog, so this one exits once the new instance serves the port.
+    """
+    while True:
+        _wait_pid_exit(watched_pid)
+        if _sentinel_pid() != watched_pid:
+            # Clean shutdown (sentinel removed) or the sentinel belongs to
+            # another instance -- nothing to restart.
+            return 0
+        if restarts >= _MAX_AUTO_RESTARTS:
+            print("OPS ROOM watchdog: auto-restart limit reached; not relaunching.")
+            return 1
+        restarts += 1
+        print(
+            f"OPS ROOM watchdog: process {watched_pid} crashed; relaunching "
+            f"(restart {restarts}/{_MAX_AUTO_RESTARTS})..."
+        )
+        time.sleep(_AUTO_RESTART_BACKOFF_SECONDS)
+        _wait_port_free(port)
+        try:
+            proc = subprocess.Popen(
+                _launch_command(),
+                creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                if os.name == "nt"
+                else 0,
+            )
+        except Exception as exc:
+            print(f"OPS ROOM watchdog: relaunch failed: {type(exc).__name__}: {exc}")
+            return 1
+        # The relaunched instance writes a fresh sentinel + spawns its own
+        # watchdog. Wait for it to serve the port, then hand over.
+        if _wait_port_served(port):
+            return 0
+        watched_pid = proc.pid
+        # New instance never came up -- loop and watch its pid instead.
+
+
+_WATCHDOG_PID: int | None = None
+
+
+def _spawn_watchdog(port: int) -> None:
+    """Detached watchdog subprocess watching THIS process (best-effort)."""
+    global _WATCHDOG_PID
+    try:
+        proc = subprocess.Popen(
+            _launch_command() + ["--watchdog", str(os.getpid()), str(port)],
+            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            if os.name == "nt"
+            else 0,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        _WATCHDOG_PID = proc.pid
+        print("OPS ROOM watchdog armed (auto-restart on native crash).")
+    except Exception as exc:
+        print(f"OPS ROOM watchdog spawn failed safely: {type(exc).__name__}: {exc}")
+
+
+def _terminate_children(reason: str = "") -> None:
+    """Force-clean the detached child processes on shutdown.
+
+    The app normally runs three OPS ROOM.exe processes: the launcher, the
+    crash watchdog (--watchdog) and the isolated SimConnect probe worker
+    (--probe-worker). Both children are detached subprocesses: the watchdog
+    exits once the crash sentinel is cleared, and the worker is stopped by
+    uvicorn's on_event('shutdown') handler. Any exit path that skips those
+    handoffs -- the launcher's os._exit force-kill, a native crash, or a
+    second launch during teardown -- orphans them. Explicitly terminating
+    them here closes that leak so "Exit" really closes every process.
+    """
+    global _WATCHDOG_PID
+    if reason:
+        print(f"OPS ROOM: terminating child processes ({reason})")
+    # Probe worker: idempotent (safe even if uvicorn already ran its shutdown).
+    try:
+        from app.simconnect_probe_client import shutdown as _probe_worker_shutdown
+
+        _probe_worker_shutdown()
+    except Exception:
+        pass
+    # Watchdog: kill only the one THIS process spawned.
+    pid = _WATCHDOG_PID
+    if pid:
+        try:
+            os.kill(pid, 9)
+        except Exception:
+            pass
+        _WATCHDOG_PID = None
 
 
 def enable_high_dpi() -> None:
@@ -300,9 +457,10 @@ def _tray_image():
 def run_tray(url: str, server: ServerThread) -> None:
     import pystray
 
-    settings = load_settings()
-    start_url = f"{url}/host#settings" if not settings.get("interface", {}).get("setup_completed", False) else url
-    webbrowser.open(start_url)
+    # Always open the main app. The first-run onboarding wizard lives there and
+    # fires automatically when setup is incomplete; routing fresh installs to
+    # /host#settings skipped the wizard entirely (v0.25.79).
+    webbrowser.open(url)
 
     def open_ops(icon, item=None):
         webbrowser.open(url)
@@ -400,6 +558,28 @@ def run_self_test() -> int:
 def main() -> int:
     if "--self-test" in sys.argv:
         return run_self_test()
+    if "--probe-worker" in sys.argv:
+        # #98 T3: isolated SimConnect LVar probe process (see simconnect_probe_worker).
+        try:
+            from app.simconnect_probe_worker import run as run_probe_worker
+
+            return run_probe_worker()
+        except Exception as exc:
+            print(f"Probe worker failed to start: {type(exc).__name__}: {exc}")
+            return 1
+    if "--watchdog" in sys.argv:
+        # #98 T2: external crash watchdog. Usage: --watchdog <pid> <port> [restarts]
+        try:
+            watched_pid = int(sys.argv[sys.argv.index("--watchdog") + 1])
+            port = int(sys.argv[sys.argv.index("--watchdog") + 2])
+        except Exception:
+            return 1
+        restarts = 0
+        try:
+            restarts = int(sys.argv[sys.argv.index("--watchdog") + 3])
+        except Exception:
+            pass
+        return run_watchdog(watched_pid, port, restarts)
     enable_high_dpi()
     log_path = enable_log_file()
     previous_crash = _check_crash_sentinel()
@@ -419,7 +599,7 @@ def main() -> int:
     url = f"http://{LOCAL_HOST}:{port}"
 
     print("\n" + "=" * 72)
-    print(f"Starting OPS ROOM 0.25.77 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Starting OPS ROOM 0.25.0 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Log file: {log_path}")
     print(f"Server bind: {'0.0.0.0' if lan_access else 'localhost'}:{port}")
 
@@ -430,6 +610,10 @@ def main() -> int:
             error=True,
         )
         return 1
+
+    # #98 T2: arm the external crash watchdog before starting the server so a
+    # native SimConnect heap crash auto-restarts the app instead of killing it.
+    _spawn_watchdog(port)
 
     # Start/attach FSUIPC7 before the FastAPI app imports its background
     # engines. Flight Watch, Logbook and Announcer should see FSUIPC7 first,
@@ -481,22 +665,24 @@ def main() -> int:
     except Exception as exc:
         print(f"Automatic vPilot bridge installation failed safely: {type(exc).__name__}: {exc}")
 
-    # First-run convenience: copy the NOTAM closure-marker package into every
-    # detected MSFS Community folder (MSFS 2020 Store/Steam + MSFS 2024) so
-    # NOTAM -> SimObject deployments work without manual setup. Best-effort.
+    # First-run convenience: copy the OPS ROOM MSFS Community packages (NOTAM
+    # closure markers + the in-game tablet panel) into every detected MSFS
+    # Community folder (2020 Store/Steam + 2024 Store/Steam) so they work
+    # without manual setup. Best-effort, idempotent (version-checked).
     try:
         from app.simobjects_installer import install_package as install_simobjects_package
 
         result = install_simobjects_package()
-        print(f"Closure-marker Community package: {result.get('reason') or 'no-op'}")
+        print(f"MSFS Community packages: {result.get('reason') or 'no-op'}")
     except Exception as exc:
-        print(f"Closure-marker Community package install failed safely: {type(exc).__name__}: {exc}")
+        print(f"MSFS Community package install failed safely: {type(exc).__name__}: {exc}")
     if lan_access:
         # Do not write the user's private LAN IP into logs. The UI can reveal addresses only on explicit request.
         print(f"LAN interface: http://*:{port} (private address hidden)")
 
-    settings = load_settings()
-    start_url = f"{url}/host#settings" if not settings.get("interface", {}).get("setup_completed", False) else url
+    # Always open the main app: the first-run onboarding wizard fires from there
+    # when setup is incomplete (v0.25.79). /host#settings never ran the wizard.
+    start_url = url
     force_browser = "--browser" in sys.argv or os.getenv("OPSROOM_FORCE_BROWSER") == "1"
     force_native = "--native" in sys.argv or os.getenv("OPSROOM_NATIVE_WINDOW") == "1"
     try:
@@ -554,7 +740,18 @@ def main() -> int:
                 pass
         if server.is_alive():
             print("OPS ROOM server did not exit cleanly after 5 seconds; forcing process shutdown.")
+            # Clear the crash sentinel BEFORE the hard exit so the external
+            # watchdog (#98 T2) treats this as a clean user-initiated shutdown,
+            # not a crash to auto-restart. os._exit skips uvicorn's shutdown
+            # handler entirely, so the detached children MUST be terminated
+            # here or the probe worker outlives the app.
+            _clear_crash_sentinel()
+            _terminate_children("launcher force-exit")
             os._exit(0)
+        # Normal path: uvicorn already stopped the worker via its shutdown
+        # handler, but terminate explicitly anyway so no detached child can
+        # outlive the launcher (idempotent).
+        _terminate_children("clean shutdown")
         _clear_crash_sentinel()
     return 0
 

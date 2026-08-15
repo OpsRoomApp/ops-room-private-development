@@ -1,0 +1,390 @@
+/*
+ * OPS ROOM legacy stylesheet for the in-game tablet panel.
+ *
+ * The in-sim webview (Coherent GT) is a Chromium-era engine that cannot parse
+ * several modern CSS features used by opsroom.css:
+ *   - `inset` shorthand          (Chrome 87+)
+ *   - `dvh`/`lvh`/`svh` units    (Chrome 108+)
+ *   - `clamp()`, `min()`, `max()`(Chrome 79+)
+ *   - `env()`                    (Chrome 69+)
+ *   - flex/grid `gap`            (Chrome 57+/84+)
+ *   - `place-items`              (Chrome 59+)
+ *
+ * When any of those appear in a declaration the whole declaration is dropped,
+ * which is why the EFB home collapsed to a small box in the top-left corner
+ * instead of filling the panel.
+ *
+ * This file is loaded AFTER opsroom.css (see index.legacy.html) and restates
+ * the EFB/tablet layout using only widely-supported properties (fixed offsets,
+ * 100vh/100vw, flexbox, rem). It only affects the in-game panel build; the
+ * desktop and normal browser clients never load it.
+ */
+
+/* ------------------------------------------------------------------ */
+/* EFB home fills the whole panel and covers the classic shell         */
+/* ------------------------------------------------------------------ */
+
+/* position:fixed with explicit offsets replaces `inset:0`. */
+.efb-home {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  display: block;
+}
+
+/* The decorative gradient overlays must also cover the full panel. */
+.efb-home::before,
+.efb-home::after {
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+/* While the EFB home is open, the classic masthead/rail/workspace must be
+   gone entirely (the modern build relies on the fixed overlay covering it). */
+body.efb-home-open {
+  overflow: hidden;
+}
+body.efb-home-open .app-shell,
+body.efb-home-open .masthead,
+body.efb-home-open .rail,
+body.efb-home-open .rail-scrim,
+body.efb-home-open .workspace {
+  display: none !important;
+}
+body.efb-home-open .opsroom-credit-global {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* EFB home chrome: status bar, glass, header, launchpad, dock         */
+/* ------------------------------------------------------------------ */
+
+/* Replaces height:calc(env(...)+1.9rem) and padding:0 clamp(...). */
+.efb-statusbar {
+  height: 2.1rem;
+  min-height: 2.1rem;
+  padding: 0 1.4rem 0.35rem;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: flex-end;
+  align-items: flex-end;
+  font-family: "B612 Mono", Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* Replaces inset:calc(env(...)) clamp(...). */
+.efb-home-glass {
+  position: absolute;
+  top: 2.9rem;
+  left: 1.1rem;
+  right: 1.1rem;
+  bottom: 4.1rem;
+  border-radius: 28px;
+}
+
+/* Replaces padding:clamp(...). */
+.efb-header {
+  position: relative;
+  z-index: 4;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+  -webkit-justify-content: space-between;
+  justify-content: space-between;
+  padding: 0.9rem 1.4rem 0.5rem;
+}
+
+.efb-brand {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+}
+.efb-brand img {
+  width: 2.4rem;
+  height: 2.4rem;
+}
+.efb-brand span {
+  display: block;
+}
+.efb-brand b {
+  display: block;
+  font-family: "B612", sans-serif;
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: #e6e4df;
+}
+.efb-brand small {
+  display: block;
+  font-family: "B612 Mono", Consolas, monospace;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  color: #8ed2e1;
+}
+
+.efb-profile-pill {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+}
+.efb-profile-pill span {
+  display: block;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  line-height: 1.7rem;
+  text-align: center;
+  background: rgba(111, 184, 209, 0.18);
+  color: #a8d7e2;
+}
+
+/* The app launcher grid. `display:grid` + `gap` are not safe in this engine,
+   so the launchpad is laid out with flexbox and wrapping. */
+.efb-launchpad {
+  position: relative;
+  z-index: 4;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-flex-wrap: wrap;
+  flex-wrap: wrap;
+  -webkit-justify-content: center;
+  justify-content: center;
+  -webkit-align-content: flex-start;
+  align-content: flex-start;
+  width: 100%;
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.1rem 0 0;
+}
+.efb-app {
+  display: -webkit-flex;
+  display: flex;
+  -webkit-flex-direction: column;
+  flex-direction: column;
+  -webkit-align-items: center;
+  align-items: center;
+  -webkit-justify-content: flex-start;
+  justify-content: flex-start;
+  width: 6.1rem;
+  margin: 0 0.6rem 1.1rem;
+  padding: 0.18rem 0.12rem 0.28rem;
+  border: 0;
+  background: transparent;
+  color: #e6e4df;
+  cursor: pointer;
+  text-align: center;
+}
+.efb-app b {
+  display: block;
+  margin-top: 0.55rem;
+  font-family: "B612", sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: rgba(230, 228, 223, 0.95);
+  max-width: 8.5rem;
+}
+.efb-icon {
+  width: 4.4rem;
+  height: 4.4rem;
+  display: block;
+  position: relative;
+  border-radius: 24%;
+  overflow: hidden;
+}
+.efb-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 24%;
+}
+
+/* Replaces bottom:calc(env(...)). */
+.efb-dock {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: 2.1rem;
+  -webkit-transform: translateX(-50%);
+  transform: translateX(-50%);
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+  padding: 0.46rem 0.55rem;
+  border-radius: 1.2rem;
+  background: rgba(16, 22, 27, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+.efb-dock button {
+  min-height: 2.55rem;
+  border: 1px solid rgba(168, 215, 226, 0.16);
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.055);
+  color: #e6e4df;
+  padding: 0 0.95rem;
+  font-family: "B612 Mono", Consolas, monospace;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.efb-dock .efb-dock-home {
+  width: 3rem;
+  padding: 0;
+  border-radius: 1rem;
+  background: rgba(111, 184, 209, 0.1);
+}
+.efb-dock .efb-dock-home img {
+  width: 2rem;
+  height: 2rem;
+}
+
+.efb-credit {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  bottom: 0.8rem;
+  -webkit-transform: translateX(-50%);
+  transform: translateX(-50%);
+  font-family: "B612 Mono", Consolas, monospace;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: rgba(230, 228, 223, 0.74);
+  text-align: center;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.efb-home-indicator {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  bottom: 0.35rem;
+  width: 8.4rem;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(230, 228, 223, 0.7);
+  -webkit-transform: translateX(-50%);
+  transform: translateX(-50%);
+}
+
+/* ------------------------------------------------------------------ */
+/* Module shell (when a module is opened from the EFB home)            */
+/* ------------------------------------------------------------------ */
+
+.efb-module-bar {
+  position: fixed;
+  z-index: 900;
+  top: 0.65rem;
+  left: 50%;
+  -webkit-transform: translateX(-50%);
+  transform: translateX(-50%);
+  width: 44rem;
+  max-width: 94%;
+  min-height: 3.35rem;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+  -webkit-justify-content: space-between;
+  justify-content: space-between;
+  padding: 0.42rem 0.55rem;
+  border-radius: 1rem;
+  background: rgba(15, 19, 24, 0.82);
+  border: 1px solid rgba(168, 215, 226, 0.18);
+  font-family: "B612 Mono", Consolas, monospace;
+  color: #e6e4df;
+}
+.efb-module-bar button {
+  min-height: 2.45rem;
+  border: 1px solid rgba(168, 215, 226, 0.18);
+  border-radius: 0.78rem;
+  background: rgba(255, 255, 255, 0.055);
+  color: #e6e4df;
+  padding: 0 0.9rem;
+  font-family: "B612 Mono", Consolas, monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  cursor: pointer;
+}
+.efb-module-title {
+  min-width: 0;
+  display: -webkit-flex;
+  display: flex;
+  -webkit-align-items: center;
+  align-items: center;
+  -webkit-justify-content: center;
+  justify-content: center;
+  font-family: "B612 Mono", Consolas, monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #e6e4df;
+}
+.efb-module-title img {
+  width: 1.8rem;
+  height: 1.8rem;
+  margin-right: 0.55rem;
+}
+.efb-module-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+/* Replaces height:100dvh + padding:calc(env(...)) on the workspace. */
+body.efb-module-open {
+  overflow: hidden;
+  background: #0f1318;
+}
+body.efb-module-open .app-shell {
+  display: block;
+  width: 100%;
+  height: 100vh;
+  min-height: 100%;
+}
+body.efb-module-open .masthead,
+body.efb-module-open .rail,
+body.efb-module-open .rail-scrim {
+  display: none !important;
+}
+body.efb-module-open .workspace {
+  display: block;
+  width: 100%;
+  height: 100vh;
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 4.6rem 1rem 1rem;
+  overflow: auto;
+}
+body.efb-module-open .workspace::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* App shell height fallback (the modern value uses 100dvh)            */
+/* ------------------------------------------------------------------ */
+
+.app-shell {
+  height: 100vh;
+}

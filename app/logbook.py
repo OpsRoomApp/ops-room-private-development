@@ -28,6 +28,7 @@ from .telemetry_provider import read_telemetry, telemetry_diagnostics, reset_sou
 from .pirep_analysis import analyse_pirep
 from .aircraft_adapters import detect_adapter
 from .airline_branding import resolve_airline_branding, logo_data_uri
+from .community import notify_flight_event
 
 _LOCK = threading.RLock()
 _STOP = threading.Event()
@@ -298,16 +299,66 @@ def _ofp_plan_nested(p: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _op_snapshot(sample: dict[str, Any], at: str, estimated: bool = False) -> dict[str, Any]:
+def _fenix_snapshot_extras() -> dict[str, Any]:
+    """Best-effort Fenix EFB FINAL loadsheet + loading values for snapshots.
+
+    Cheap cache reads only - the GSX Fenix probe thread warms both
+    (``loadsheet_final_cached`` is a dict copy, ``automation_status`` is
+    in-memory), so this never blocks a recorder tick and never raises.  Lets a
+    completed entry carry the exact TOW/ZFW/LDW and PAX/cargo the Live OFP
+    showed, so the Full PIREP OFP-completion section is not blank for Fenix
+    flights after the in-memory EFB cache goes cold (the #113 fix).
+    """
+    extras: dict[str, Any] = {}
+    try:
+        from .fenix_adapter import loadsheet_final_cached as _sheet_cached
+        sheet = _sheet_cached()
+        if isinstance(sheet, dict) and sheet.get("ok"):
+            for target, key in (
+                ("fenix_zfw_kg", "zfw_kg"),
+                ("fenix_tow_kg", "tow_kg"),
+                ("fenix_ldw_kg", "law_kg"),
+                ("fenix_max_zfw_kg", "max_zfw_kg"),
+                ("fenix_max_tow_kg", "max_tow_kg"),
+                ("fenix_max_ldw_kg", "max_law_kg"),
+            ):
+                value = _number(sheet.get(key))
+                if value is not None:
+                    extras[target] = value
+    except Exception:
+        pass
+    try:
+        from .gsx_remote import automation_status as _auto_status
+        state = _auto_status()
+        loading = ((state or {}).get("fenix_loading") or {}).get("last_progress") if isinstance(state, dict) else {}
+        if isinstance(loading, dict) and loading:
+            fenix = loading.get("fenix") if isinstance(loading.get("fenix"), dict) else {}
+            pax = _number(fenix.get("pax_loaded"))
+            cargo = _number(fenix.get("cargo_loaded_kg"))
+            if pax is not None:
+                extras["fenix_pax_loaded"] = pax
+            if cargo is not None:
+                extras["fenix_cargo_loaded_kg"] = cargo
+    except Exception:
+        pass
+    return extras
+
+
+def _op_snapshot(sample: dict[str, Any], at: str, estimated: bool = False, fenix: dict[str, Any] | None = None) -> dict[str, Any]:
     """Immutable operational snapshot captured at an event moment.
 
     Reads only what the sample carries at that instant; missing optional
     weights stay None (never fabricated).  Once stored, a snapshot is never
     overwritten by later samples.
+
+    ``fenix`` optionally carries the Fenix EFB FINAL loadsheet / loading
+    values captured at the same moment (``_fenix_snapshot_extras``), so a
+    completed Fenix flight retains its TOW/ZFW/LDW and PAX/cargo in the entry
+    even after the in-memory EFB cache goes cold.
     """
     fuel_lb = _number(sample.get("fuel_total_lb"))
     gross = _number(sample.get("gross_weight_lb"))
-    return {
+    snap = {
         "time_utc": at,
         "telemetry_source": _text(sample.get("source")),
         "fuel_lb": fuel_lb,
@@ -321,6 +372,16 @@ def _op_snapshot(sample: dict[str, Any], at: str, estimated: bool = False) -> di
         "estimated": bool(estimated),
         "confidence": "estimated" if estimated else "verified",
     }
+    if isinstance(fenix, dict):
+        for key in (
+            "fenix_zfw_kg", "fenix_tow_kg", "fenix_ldw_kg",
+            "fenix_max_zfw_kg", "fenix_max_tow_kg", "fenix_max_ldw_kg",
+            "fenix_pax_loaded", "fenix_cargo_loaded_kg",
+        ):
+            value = fenix.get(key)
+            if value is not None:
+                snap[key] = value
+    return snap
 
 
 def _plan_snapshot(plan: dict[str, Any] | None) -> dict[str, Any]:
@@ -746,7 +807,7 @@ def _new_meta(t: dict[str, Any], plan: dict[str, Any] | None, manual: bool) -> d
     }
     _event(meta, "RECORDING", "Manual flight recording started" if manual else "Automatic flight recording started", now)
     snapshots = meta["operational_snapshots"]
-    snapshots["start"] = _op_snapshot(t, now)
+    snapshots["start"] = _op_snapshot(t, now, fenix=_fenix_snapshot_extras())
     if _telemetry_confirms_airborne(t):
         meta["hot_start"] = True
         meta["_state"]["airborne_seen"] = True
@@ -755,8 +816,9 @@ def _new_meta(t: dict[str, Any], plan: dict[str, Any] | None, manual: bool) -> d
             meta["times"]["block_out"] = now; meta["times"]["takeoff"] = now
             meta["positions"]["takeoff"] = _position(t); meta["airports"]["takeoff"] = airport; meta["fuel"]["takeoff_lb"] = fuel
             # Manual mid-air starts: departure values are estimated, never exact.
-            snapshots["out"] = _op_snapshot(t, now, estimated=True)
-            snapshots["off"] = _op_snapshot(t, now, estimated=True)
+            _fenix_at_start = _fenix_snapshot_extras()
+            snapshots["out"] = _op_snapshot(t, now, estimated=True, fenix=_fenix_at_start)
+            snapshots["off"] = _op_snapshot(t, now, estimated=True, fenix=_fenix_at_start)
             _event(meta, "AIRBORNE", "Manual recording began after confirmed airborne telemetry; departure times are estimated", now, "warning")
         else:
             # #69: automatic hot start (app launched mid-flight / recorder joined
@@ -932,12 +994,62 @@ def _update_fuel_accounting(meta: dict[str, Any], current: dict[str, Any]) -> No
     source_prev = str(state.get("fuel_last_source") or "")
     last_fuel = _number(state.get("fuel_last_lb"))
     if not times.get("block_out") and current.get("on_ground") is not False:
-        candidates = (
-            _number(fuel.get("departure_baseline_lb")),
-            _number(fuel.get("start_lb")),
-            current_fuel,
-        )
-        baseline = max(value for value in candidates if value is not None)
+        # #97: the departure baseline must never be ratcheted by a transient
+        # spike (a bogus FSUIPC/EFB read during refuel once reported 9,545 kg
+        # for ~3,000 kg real fuel). Anchor the ceiling on the SimBrief planned
+        # ramp fuel when known (real refuels land within a few % of it), and
+        # reject implausible per-sample jumps against the previous read.
+        plan = meta.get("flight") if isinstance(meta.get("flight"), dict) else {}
+        planned_ramp_units = _number(plan.get("planned_ramp_fuel"))
+        ceiling_lb: float | None = None
+        if planned_ramp_units is not None:
+            # planned_ramp_fuel is in the plan's own fuel unit (KG for the
+            # public simbrief pipeline); convert to lb for comparison.
+            try:
+                plan_fuel_unit = str(plan.get("fuel_units") or "KG").upper()
+                planned_ramp_lb = _number(planned_ramp_units)
+                if plan_fuel_unit == "KG":
+                    planned_ramp_lb = planned_ramp_lb * 2.2046226218
+            except Exception:
+                planned_ramp_lb = None
+            if planned_ramp_lb is not None:
+                # Legit refuels can exceed the plan a little (extra fuel); a
+                # spike is several multiples of it. 1.25x + 500 lb headroom.
+                ceiling_lb = max(planned_ramp_lb * 1.25, planned_ramp_lb + 500.0)
+        existing = [
+            v
+            for v in (
+                _number(fuel.get("departure_baseline_lb")),
+                _number(fuel.get("start_lb")),
+            )
+            if v is not None
+        ]
+        base = max(existing) if existing else None
+        candidate_ok = True
+        if ceiling_lb is not None and current_fuel > ceiling_lb:
+            # A plausible ramp fuel is known and this read is way above it.
+            candidate_ok = False
+        elif last_fuel is not None and current_fuel > last_fuel + max(400.0, last_fuel * 0.10):
+            # #97: a single-sample jump of >10% (or 400 lb) vs the previous
+            # read is a spike at normal refuel rates; require it to persist
+            # across consecutive samples before trusting it.
+            spike = state.get("fuel_spike_candidate")
+            if isinstance(spike, dict) and _number(spike.get("value")) == current_fuel:
+                spike["count"] = int(spike.get("count") or 0) + 1
+            else:
+                spike = {"value": current_fuel, "count": 1}
+            state["fuel_spike_candidate"] = spike
+            candidate_ok = spike["count"] >= 3
+        else:
+            state.pop("fuel_spike_candidate", None)
+        if base is None:
+            baseline = current_fuel if candidate_ok else None
+        elif candidate_ok and current_fuel > base:
+            baseline = current_fuel
+        else:
+            baseline = base
+        if baseline is None:
+            baseline = base if base is not None else current_fuel
         fuel["departure_baseline_lb"] = baseline
         fuel["start_lb"] = baseline
         state["fuel_used_accum_lb"] = 0.0
@@ -992,7 +1104,7 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
             and not times.get("block_out")
             and current.get("on_ground") is not False
             and (gs or 0.0) >= 1.5
-            and (previous_phase == "PARKED" or previous_phase is None)):
+            and (previous_phase in ("PARKED", "PUSHBACK") or previous_phase is None)):
         pushback_latched = True
         state["pushback_positive_latch"] = True
         state["pushback_active"] = True
@@ -1137,6 +1249,14 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
         recent[-1]["phase"] = phase
     if phase != previous_phase:
         state["phase"] = phase; _event(meta, phase, f"Flight phase changed to {phase}", now)
+    # #104: one-shot DESCENT event at top-of-descent so the Discord bot can DM
+    # the destination briefing (METAR/TAF/NOTAMs) at the busiest moment.
+    if phase == "DESCENT" and not state.get("descent_event_sent"):
+        state["descent_event_sent"] = True
+        try:
+            notify_flight_event(meta, "descent")
+        except Exception:
+            pass
     if phase == "APPROACH": state["approach_seen"] = True
     if state.get("approach_seen") and phase in {"GO-AROUND", "MISSED APPROACH", "CLIMB", "INITIAL CLIMB"} and not times.get("landing") and vs > 500:
         if not state.get("go_around_recorded"):
@@ -1174,12 +1294,17 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
     # and the phase-ordering invariant guarantees "taxi out" can never precede
     # it. The confirmed_airborne branch is intentionally never gated here.
     if not times.get("block_out") and ((current.get("confirmed_airborne") and not _gsx_predeparture_active()) or (current.get("on_ground") is True and gs >= 1.5 and systems_moving)):
-        times["block_out"] = now; _out_snapshots = meta.setdefault("operational_snapshots", {}); _out_snapshots.setdefault("out", _op_snapshot(current, now)); _event(meta, "BLOCK OUT", f"Movement began near {(airport or {}).get('icao','unknown station')}", now)
+        # #113: the out snapshot template ships with an EMPTY "out" key, so
+        # setdefault never filled it (ZFW actual stayed blank for every flight).
+        # Direct assignment is safe here - the branch is guarded by
+        # ``not times.get("block_out")`` so it fires exactly once.
+        times["block_out"] = now; _out_snapshots = meta.setdefault("operational_snapshots", {}); _out_snapshots["out"] = _op_snapshot(current, now, fenix=_fenix_snapshot_extras()); _event(meta, "BLOCK OUT", f"Movement began near {(airport or {}).get('icao','unknown station')}", now)
     previous_ground = previous.get("on_ground") if previous else None
     previous_airborne = bool(previous and previous.get("confirmed_airborne"))
     if not times.get("takeoff") and current.get("confirmed_airborne"):
-        times["takeoff"] = now; meta["positions"]["takeoff"] = {"lat": current.get("lat"), "lon": current.get("lon"), "altitude_ft": current.get("altitude_ft")}; meta["airports"]["takeoff"] = airport; fuel["takeoff_lb"] = current.get("fuel_total_lb"); meta["operational_snapshots"]["off"] = _op_snapshot(current, now); state["airborne_seen"] = True; state["confirmed_airborne_seen"] = True
+        times["takeoff"] = now; meta["positions"]["takeoff"] = {"lat": current.get("lat"), "lon": current.get("lon"), "altitude_ft": current.get("altitude_ft")}; meta["airports"]["takeoff"] = airport; fuel["takeoff_lb"] = current.get("fuel_total_lb"); meta["operational_snapshots"]["off"] = _op_snapshot(current, now, fenix=_fenix_snapshot_extras()); state["airborne_seen"] = True; state["confirmed_airborne_seen"] = True
         _event(meta, "TAKEOFF", f"Airborne near {(airport or {}).get('icao','departure')}", now)
+        notify_flight_event(meta, "takeoff")
     if current.get("confirmed_airborne"):
         state["airborne_seen"] = True; state["confirmed_airborne_seen"] = True
     if times.get("landing") and not current.get("on_ground"):
@@ -1218,7 +1343,7 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
             }
             meta["airports"]["landing"] = airport
             fuel["landing_lb"] = current.get("fuel_total_lb")
-            meta["operational_snapshots"]["on"] = _op_snapshot(current, now)
+            meta["operational_snapshots"]["on"] = _op_snapshot(current, now, fenix=_fenix_snapshot_extras())
             touchdown_speed = (_number(previous.get("raw_ground_speed_kts")) or previous.get("ground_speed_kts")) if previous else (_number(current.get("raw_ground_speed_kts")) or gs)
             metrics["landing_rate_fpm"] = rate
             metrics["touchdown_speed_kts"] = touchdown_speed
@@ -1235,6 +1360,7 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
                 "ground_speed_kts": touchdown_speed,
             }
             _event(meta, "LANDING", f"Touchdown near {(airport or {}).get('icao','destination')} at {round(rate or 0)} fpm", now)
+            notify_flight_event(meta, "landing")
         else:
             peak_agl = float(state.pop("post_touchdown_airborne_peak_agl_ft", 0.0) or 0.0)
             wow_confirmed = previous.get("weight_on_wheels") is False if previous else False
@@ -1269,7 +1395,27 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
         _violation(meta, "speed-below-10k", "SPEED BELOW 10,000 FT", f"IAS reached {round(ias)} kt", 4, now)
     elif not _altitude_reliable(current) and ias is not None and ias > 255 and agl_for_speed is not None and agl_for_speed > 10000:
         state["last_suppressed_deviation"] = "speed-below-10k suppressed because altitude source was unreliable but AGL was above 10,000 ft"
-    if current.get("on_ground") and gs > 35 and phase not in {"TAKEOFF ROLL", "LANDING ROLL", "PUSHBACK"}: _violation(meta, "taxi-speed", "EXCESSIVE TAXI SPEED", f"Ground speed reached {round(gs)} kt", 3, now)
+    # #89: EXCESSIVE TAXI SPEED must be sustained. A takeoff run passes through
+    # 35-40 kt in under a second and the landing rollout decelerates through the
+    # same band, so a transient overshoot is not a taxi violation. Fire only
+    # after the condition holds continuously for >= 3 s, and suppress entirely
+    # within 90 s of touchdown (rollout + initial taxi-in can legitimately stay
+    # above 35 kt on a long runway).
+    taxi_over_35 = bool(
+        current.get("on_ground")
+        and gs > 35
+        and phase not in {"TAKEOFF ROLL", "LANDING ROLL", "PUSHBACK"}
+    )
+    taxi_epoch = now_epoch if now_epoch else time.time()
+    if taxi_over_35 and (landing_epoch is None or taxi_epoch - landing_epoch > 90):
+        taxi_since = state.get("taxi_over_35_since")
+        if taxi_since is None:
+            state["taxi_over_35_since"] = taxi_epoch
+        elif taxi_epoch - taxi_since >= 3.0:
+            _violation(meta, "taxi-speed", "EXCESSIVE TAXI SPEED", f"Ground speed exceeded 35 kt for {round(gs)} kt", 3, now)
+            state["taxi_over_35_since"] = taxi_epoch
+    else:
+        state.pop("taxi_over_35_since", None)
     if current.get("overspeed_warning"): _violation(meta, "overspeed", "OVERSPEED WARNING", "Simulator overspeed warning was active", 10, now)
     if current.get("stall_warning"): _violation(meta, "stall", "STALL WARNING", "Simulator stall warning was active", 20, now)
     if current.get("slew_active"): _violation(meta, "slew", "SLEW MODE", "Slew mode was used during the recording", 20, now)
@@ -1295,7 +1441,7 @@ def _analyse(meta: dict[str, Any], current: dict[str, Any], previous: dict[str, 
     state["last_sample"] = current
     if times.get("landing") and current.get("on_ground") and gs < 1 and current.get("parking_brake") is True and current.get("engines_running") is False:
         if not times.get("block_in"):
-            times["block_in"] = now; meta["airports"]["end"] = airport; meta["positions"]["end"] = {"lat": current.get("lat"), "lon": current.get("lon"), "altitude_ft": current.get("altitude_ft")}; fuel["end_lb"] = current.get("fuel_total_lb"); meta["operational_snapshots"]["in"] = _op_snapshot(current, now)
+            times["block_in"] = now; meta["airports"]["end"] = airport; meta["positions"]["end"] = {"lat": current.get("lat"), "lon": current.get("lon"), "altitude_ft": current.get("altitude_ft")}; fuel["end_lb"] = current.get("fuel_total_lb"); meta["operational_snapshots"]["in"] = _op_snapshot(current, now, fenix=_fenix_snapshot_extras())
             _event(meta, "BLOCK IN", f"Aircraft parked at {(airport or {}).get('icao','destination')}", now)
         return True
     return False

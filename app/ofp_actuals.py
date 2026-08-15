@@ -349,6 +349,26 @@ def _weights_section(
         cell["actual_lb"] = lb
         return cell
 
+    def snapshot_fenix(kg_key: str, *snaps: dict[str, Any]) -> Any:
+        """#113: first non-None recorded Fenix EFB value across snapshots.
+
+        The completed-entry path never has the live Fenix loadsheet (the
+        in-memory EFB cache goes cold after landing / restart), so the builder
+        falls back to the Fenix values captured into the immutable operational
+        snapshots at each event (``_op_snapshot(fenix=...)``).
+        """
+        plan_key = weight_unit_key(weight_unit) or "KGS"
+        for snap in snaps:
+            if not isinstance(snap, dict):
+                continue
+            kg = _num(snap.get(kg_key))
+            if kg is None:
+                continue
+            converted = convert_weight_value(kg, "KGS", plan_key)
+            if converted and converted.get("converted_value") is not None:
+                return converted["converted_value"]
+        return None
+
     rows: dict[str, Any] = {}
     if manual_pax is not None:
         pax_n = _num(manual_pax)
@@ -378,14 +398,29 @@ def _weights_section(
                 "note": "live boarding count",
             }
         else:
-            rows["passengers"] = {
-                "planned": flight.get("passengers"),
-                "actual": None,
-                "max": None,
-                "availability": "unavailable",
-                "source": "no trusted measured source",
-                "note": "planned PAX is never presented as a measured actual",
-            }
+            # #113: completed-entry path - fall back to the Fenix loading
+            # progress captured into the operational snapshots at the event.
+            snap_pax = _num(out.get("fenix_pax_loaded"))
+            if snap_pax is None:
+                snap_pax = _num(off.get("fenix_pax_loaded"))
+            if snap_pax is not None:
+                rows["passengers"] = {
+                    "planned": flight.get("passengers"),
+                    "actual": int(round(snap_pax)),
+                    "max": None,
+                    "availability": "available",
+                    "source": "fenix loading (recorded snapshot)",
+                    "note": "boarding count captured at event",
+                }
+            else:
+                rows["passengers"] = {
+                    "planned": flight.get("passengers"),
+                    "actual": None,
+                    "max": None,
+                    "availability": "unavailable",
+                    "source": "no trusted measured source",
+                    "note": "planned PAX is never presented as a measured actual",
+                }
     # BAG/CARGO actual from Fenix cargo loaded (kg) when available; otherwise
     # from GSX cargo percent applied to the planned hold total.
     fenix_cargo_kg = _num(fenix_loading.get("cargo_loaded_kg"))
@@ -393,11 +428,19 @@ def _weights_section(
     planned_cargo = _num(flight.get("cargo_hold_total"))
     cargo_actual = None
     cargo_source = ""
+    if fenix_cargo_kg is None:
+        # #113: completed-entry path - Fenix cargo loaded captured at the event.
+        snap_cargo_kg = _num(out.get("fenix_cargo_loaded_kg"))
+        if snap_cargo_kg is None:
+            snap_cargo_kg = _num(off.get("fenix_cargo_loaded_kg"))
+        if snap_cargo_kg is not None:
+            fenix_cargo_kg = snap_cargo_kg
+            cargo_source = "fenix loading (recorded snapshot)"
     if fenix_cargo_kg is not None:
         plan_key = weight_unit_key(weight_unit) or "KGS"
         converted = convert_weight_value(fenix_cargo_kg, "KGS", plan_key)
         cargo_actual = converted.get("converted_value") if converted else None
-        cargo_source = "gsx/fenix loading"
+        cargo_source = cargo_source or "gsx/fenix loading"
     elif cargo_percent is not None and planned_cargo is not None:
         cargo_actual = round(planned_cargo * cargo_percent / 100.0, 4)
         cargo_source = "gsx/fenix loading"
@@ -471,7 +514,17 @@ def _weights_section(
                 max_value=sheet_plan_value("max_zfw_kg"), source="fenix final loadsheet",
             )
         else:
-            rows["zfw"] = snapshot_cell(flight.get("planned_zfw"), actual_for("calculated_zfw_lb", out), out, source_name="out-snapshot calculation")
+            # #113: recorded Fenix EFB values captured into the snapshots at
+            # the event (durable across the EFB cache going cold / restarts).
+            snap_zfw = snapshot_fenix("fenix_zfw_kg", out, off, on)
+            if snap_zfw is not None:
+                rows["zfw"] = _value_cell(
+                    flight.get("planned_zfw"), snap_zfw, weight_unit, display_unit,
+                    max_value=snapshot_fenix("fenix_max_zfw_kg", out, off, on) or sheet_plan_value("max_zfw_kg"),
+                    source="fenix final loadsheet (recorded snapshot)",
+                )
+            else:
+                rows["zfw"] = snapshot_cell(flight.get("planned_zfw"), actual_for("calculated_zfw_lb", out), out, source_name="out-snapshot calculation")
     if "tow" in manual_weights:
         rows["tow"] = manual_cell(flight.get("planned_tow"), manual_weights["tow"], max_value=flight.get("planned_max_tow"))
     else:
@@ -483,7 +536,15 @@ def _weights_section(
                 source="fenix final loadsheet",
             )
         else:
-            rows["tow"] = snapshot_cell(flight.get("planned_tow"), actual_for("gross_weight_lb", off), off, max_value=flight.get("planned_max_tow"), source_name="off-snapshot")
+            snap_tow = snapshot_fenix("fenix_tow_kg", off, out)
+            if snap_tow is not None:
+                rows["tow"] = _value_cell(
+                    flight.get("planned_tow"), snap_tow, weight_unit, display_unit,
+                    max_value=snapshot_fenix("fenix_max_tow_kg", off, out) or flight.get("planned_max_tow"),
+                    source="fenix final loadsheet (recorded snapshot)",
+                )
+            else:
+                rows["tow"] = snapshot_cell(flight.get("planned_tow"), actual_for("gross_weight_lb", off), off, max_value=flight.get("planned_max_tow"), source_name="off-snapshot")
     if "ldw" in manual_weights:
         rows["ldw"] = manual_cell(flight.get("planned_ldw"), manual_weights["ldw"], max_value=flight.get("planned_max_ldw"))
     else:
@@ -495,7 +556,15 @@ def _weights_section(
                 source="fenix final loadsheet",
             )
         else:
-            rows["ldw"] = snapshot_cell(flight.get("planned_ldw"), actual_for("gross_weight_lb", on), on, max_value=flight.get("planned_max_ldw"), source_name="on-snapshot")
+            snap_ldw = snapshot_fenix("fenix_ldw_kg", on, off)
+            if snap_ldw is not None:
+                rows["ldw"] = _value_cell(
+                    flight.get("planned_ldw"), snap_ldw, weight_unit, display_unit,
+                    max_value=snapshot_fenix("fenix_max_ldw_kg", on, off) or flight.get("planned_max_ldw"),
+                    source="fenix final loadsheet (recorded snapshot)",
+                )
+            else:
+                rows["ldw"] = snapshot_cell(flight.get("planned_ldw"), actual_for("gross_weight_lb", on), on, max_value=flight.get("planned_max_ldw"), source_name="on-snapshot")
     return rows
 
 

@@ -20,7 +20,11 @@ from .settings_store import app_data_dir, load_settings
 BASE_DIR = Path(__file__).resolve().parent.parent
 APP_DIR = Path(__file__).resolve().parent
 
-DEFAULT_ENDPOINT = "https://script.google.com/macros/s/AKfycbww__VDAulz5xGlg40osNfNjoho_Xus0TcFK6HUk_mbIOrsBlxrYDt_5d_sUOfboxaJ/exec"
+# Bug reports now go to the OPS ROOM admin server (admin.opsroom.live) instead
+# of the old Google Apps Script endpoint. The POST contract is unchanged (secret
+# + report + optional base64 diagnostics ZIP), so the in-app UI needs no
+# structural changes. Keep in sync with app/settings_store.py BUG_REPORT_ENDPOINT.
+DEFAULT_ENDPOINT = "https://admin.opsroom.live/api/v1/bug-reports"
 DEFAULT_SECRET = "e7eb1adf7e094220a3f5ad89fcf6d01ce4194a0fe4b2452f9415b97d808bbbab"
 MAX_TEXT_CHARS = 200_000
 MAX_ZIP_BYTES = 8 * 1024 * 1024
@@ -61,7 +65,7 @@ def config() -> dict[str, Any]:
         max_log_lines = 500
     return {
         "enabled": enabled,
-        "provider": cfg.get("provider") or "google_apps_script",
+        "provider": cfg.get("provider") or "opsroom_server",
         "endpoint": str(endpoint or "").strip(),
         "secret": str(secret or "").strip(),
         "max_log_lines": max(50, min(max_log_lines, 2000)),
@@ -406,7 +410,7 @@ def send_report(payload: dict[str, Any] | None = None) -> dict[str, Any]:
             return {
                 "ok": False,
                 "reportId": report.get("reportId"),
-                "error": "Bug endpoint did not return JSON. Check Apps Script deployment and access settings.",
+                "error": "Bug endpoint did not return JSON. Check the bug report server endpoint and access settings.",
                 "responsePreview": text[:240],
                 "localDiagnosticsZip": str(zip_path) if zip_path else "",
             }

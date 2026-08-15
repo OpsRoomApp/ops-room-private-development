@@ -252,8 +252,18 @@ def simbrief() -> dict[str, Any]:
 
 
 def loadsheet() -> dict[str, Any]:
+    # #87: the Fenix portal requires loadsheetType. Preliminary is the correct
+    # type for the loading-progress path (it reflects in-progress boarding);
+    # the weights path uses loadsheet_final() which passes loadsheetType=Final.
+    # #114: Fenix emits Preliminary once a loadsheet is generated (dispatch /
+    # loading start) and Final only after pax/cargo boarding and refuelling
+    # complete. HTTP 204 (or an empty body) therefore means "no loadsheet of
+    # this type generated yet" -- a soft, retryable state, never a failure.
     try:
-        status_code, _text, parsed = _request("GET", "/fenix/loadsheet", timeout=2.0)
+        status_code, _text, parsed = _request("GET", "/fenix/loadsheet?loadsheetType=Preliminary", timeout=2.0)
+        if status_code == 204 or parsed in (None, "", [], {}):
+            return {"ok": True, "status_code": status_code, "data": None,
+                    "pending": True, "base_url": _base_url()}
         return {"ok": True, "status_code": status_code, "data": parsed, "base_url": _base_url()}
     except Exception as exc:
         return {"ok": False, "reason": f"{type(exc).__name__}: {exc}", "base_url": _base_url()}
@@ -331,6 +341,44 @@ def loadsheet_final_cached() -> dict[str, Any]:
     if _LOADSHEET_FINAL_CACHE is not None:
         return dict(_LOADSHEET_FINAL_CACHE)
     return {"ok": False, "reason": "Fenix loadsheet not cached yet; background refresh in progress", "base_url": _base_url()}
+
+
+_EFB_ACTIVE_CACHE: tuple[float, bool] | None = None
+_EFB_ACTIVE_TTL = 10.0
+
+
+def fenix_efb_active() -> bool:
+    """#94: SimConnect-independent Fenix signal for ground handling.
+
+    Returns True when the Fenix EFB portal (8083) is reachable AND answers
+    with a Fenix-shaped loadsheet. This is the fallback detection source for
+    GSX arrival/boarding door/GPU/chocks commands: those commands go through
+    the EFB GraphQL portal anyway, so they never need SimConnect — only the
+    old identity probe did, and it silently disabled Fenix handling whenever
+    SimConnect was degraded.
+    """
+    global _EFB_ACTIVE_CACHE
+    now = time.monotonic()
+    if _EFB_ACTIVE_CACHE and now - _EFB_ACTIVE_CACHE[0] < _EFB_ACTIVE_TTL:
+        return _EFB_ACTIVE_CACHE[1]
+    active = False
+    try:
+        st = status(force=False)
+        if st.get("efb_online"):
+            final = loadsheet_final_cached()
+            if final.get("ok"):
+                active = True
+            else:
+                prelim = loadsheet()
+                data = prelim.get("data") if prelim.get("ok") else {}
+                if isinstance(data, dict) and (
+                    data.get("aircraftTailNumber") or data.get("zfw") is not None or data.get("tow") is not None
+                ):
+                    active = True
+    except Exception:
+        active = False
+    _EFB_ACTIVE_CACHE = (now, active)
+    return active
 
 
 def status(force: bool = False) -> dict[str, Any]:
@@ -765,6 +813,14 @@ def loading_progress(plan: dict[str, Any] | None = None) -> dict[str, Any]:
     result: dict[str, Any] = {"ok": False, "targets": targets, "source": "fenix_loadsheet"}
     sheet = loadsheet()
     result["loadsheet"] = {k: v for k, v in sheet.items() if k != "data"}
+    if sheet.get("pending"):
+        # #114: the portal answered but has not generated a loadsheet yet
+        # (Preliminary appears at dispatch/loading start; Final after loading
+        # completes). Soft state -- consumers wait on the numeric fields and
+        # never treat "not generated yet" as a hard failure.
+        result.update({"ok": True, "pending": True,
+                       "reason": sheet.get("reason") or "Fenix Preliminary loadsheet not generated yet"})
+        return result
     data = sheet.get("data") if sheet.get("ok") else None
     if data is None:
         result["reason"] = sheet.get("reason") or "Fenix loadsheet unavailable"

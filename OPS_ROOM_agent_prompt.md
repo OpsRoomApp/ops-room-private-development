@@ -221,7 +221,7 @@ is an Electron-style host; match whatever pattern is already used).
 `#efbNotificationButton` (i.e. "next to the notification bell" — confirm with the user's phrasing whether
 they want it left or right of the bell; default to left of the bell, before the notification button, matching
 typical top-bar icon ordering, and easy to swap either way). Link target:
-`https://discord.gg/tNscx7C64b`. Use a proper Discord glyph (inline SVG, consistent with how the bell icon
+`https://discord.gg/Dv6fNAjhAt`. Use a proper Discord glyph (inline SVG, consistent with how the bell icon
 is done inline as SVG in the same file — do not pull in an external icon font/image dependency for this).
 Match the existing button's sizing, hover state, and accessibility attributes
 (`aria-label="Join Discord"`, keyboard-focusable, same as the notification button's `aria-label` pattern).
