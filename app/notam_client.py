@@ -69,7 +69,7 @@ def _config() -> dict[str, str]:
 
 def _headers() -> dict[str, str]:
     cfg = _config()
-    version = "0.25.0"
+    version = "0.25.1"
     try:
         raw = (Path(__file__).resolve().parent.parent / "version.json").read_text(encoding="utf-8")
         version = str(json.loads(raw).get("version") or version)

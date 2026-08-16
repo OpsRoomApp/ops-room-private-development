@@ -35,7 +35,7 @@ from pathlib import Path
 
 PACKAGE_NAME = "ops-room-tablet"
 PACKAGE_TITLE = "OPS ROOM Tablet"
-PACKAGE_VERSION = "0.25.0"
+PACKAGE_VERSION = "0.25.1"
 _MIN_GAME_VERSION_2024 = "1.0.0"
 
 #: Windows FILETIME epoch offset: 1601-01-01 -> 1970-01-01 in 100ns units.

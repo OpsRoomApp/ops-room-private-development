@@ -149,21 +149,60 @@ def _sentinel_pid() -> int | None:
         return None
 
 
-def _wait_pid_exit(pid: int, poll_seconds: float = 1.0) -> None:
+def _wait_pid_exit(pid: int, poll_seconds: float = 1.0) -> int | None:
+    """Wait for a child to exit and return its Windows exit code when possible."""
+    if os.name == "nt":
+        try:
+            import ctypes as _ct
+
+            kernel32 = _ct.windll.kernel32
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                return None
+            try:
+                exit_code = _ct.c_ulong(259)  # STILL_ACTIVE
+                while True:
+                    if not kernel32.GetExitCodeProcess(handle, _ct.byref(exit_code)):
+                        return None
+                    if exit_code.value != 259:
+                        return int(exit_code.value)
+                    time.sleep(poll_seconds)
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return None
+
     while True:
         try:
-            if os.name == "nt":
-                import ctypes as _ct
-
-                handle = _ct.windll.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-                if not handle:
-                    return  # process is gone
-                _ct.windll.kernel32.CloseHandle(handle)
-            else:
-                os.kill(pid, 0)
+            os.kill(pid, 0)
         except Exception:
-            return  # process is gone
+            return None
         time.sleep(poll_seconds)
+
+
+def _record_native_crash(pid: int, exit_code: int | None) -> None:
+    """Record watchdog evidence after a process dies outside Python cleanup.
+
+    The crashed process cannot append to its own log, so the detached watchdog
+    writes this marker. Windows Event Viewer remains the authority for the
+    faulting module and stack, but this preserves the exact PID, timestamp and
+    process exit code beside the normal OPS ROOM log.
+    """
+    try:
+        log_path = app_data_dir() / "logs" / "opsroom.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        code = "unknown" if exit_code is None else f"0x{int(exit_code) & 0xFFFFFFFF:08X}"
+        line = (
+            f"{time.strftime('%Y-%m-%d %H:%M:%S')} ERROR opsroom.watchdog: "
+            f"NATIVE CRASH SUSPECTED; pid={pid}; process_exit_code={code}; "
+            "the process ended before Python cleanup. Check Windows Event Viewer "
+            "Application Error 1000 for the faulting module and exception code.\n"
+        )
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(line)
+            stream.flush()
+    except Exception:
+        pass
 
 
 def _wait_port_free(port: int, timeout: float = 15.0) -> bool:
@@ -197,11 +236,12 @@ def run_watchdog(watched_pid: int, port: int, restarts: int = 0) -> int:
     its own watchdog, so this one exits once the new instance serves the port.
     """
     while True:
-        _wait_pid_exit(watched_pid)
+        exit_code = _wait_pid_exit(watched_pid)
         if _sentinel_pid() != watched_pid:
             # Clean shutdown (sentinel removed) or the sentinel belongs to
             # another instance -- nothing to restart.
             return 0
+        _record_native_crash(watched_pid, exit_code)
         if restarts >= _MAX_AUTO_RESTARTS:
             print("OPS ROOM watchdog: auto-restart limit reached; not relaunching.")
             return 1
@@ -599,7 +639,7 @@ def main() -> int:
     url = f"http://{LOCAL_HOST}:{port}"
 
     print("\n" + "=" * 72)
-    print(f"Starting OPS ROOM 0.25.0 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Starting OPS ROOM 0.25.1 at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Log file: {log_path}")
     print(f"Server bind: {'0.0.0.0' if lan_access else 'localhost'}:{port}")
 

@@ -1,11 +1,17 @@
-# OPS ROOM v0.25.0 — Release Notes
+# OPS ROOM v0.25.1 Release Notes
+
+## Hotfix
+
+- Fixed a Windows startup crash affecting some systems when OPS ROOM enumerated printers through the native spooler API.
+- Printer discovery now runs only when requested and uses a safer Windows fallback path.
+- Added watchdog logging for unexpected native process exits, including the Windows process exit code.
 
 ## Bug reports go straight to OPS ROOM
 
 - The in-app **Report Bug** flow now sends reports (and optional diagnostic
   files) directly to the OPS ROOM server instead of a third-party script,
   where the team can review and act on them.
-- Existing installs switch over automatically on next launch — nothing to
+- Existing installs switch over automatically on next launch, nothing to
   configure.
 
 Everything new in this release. OPS ROOM has grown from an
@@ -18,10 +24,10 @@ telemetry backbone.
 
 ## Highlights
 
-- **Black Box** — a continuous flight data recorder with in-sim replay.
+- **Black Box**: a continuous flight data recorder with in-sim replay.
 - **First-party performance calculator** for the whole supported fleet.
-- **Live OFP** — planned vs actual times, fuel and weights, with signing.
-- **Smoother, consistent telemetry** — the simulator is read once and every
+- **Live OFP**: planned vs actual times, fuel and weights, with signing.
+- **Smoother, consistent telemetry**: the simulator is read once and every
   module shares the same data, so what you see always matches Flight Watch.
 - **NOTAM closure markers** rendered in the simulator (runway/taxiway X mats).
 - **In-game tablet panel** for MSFS 2020 and 2024: the whole OPS ROOM in a
@@ -29,17 +35,17 @@ telemetry backbone.
 - **Native EFB app** for MSFS 2024: the whole OPS ROOM inside the cockpit
   tablet, alongside the toolbar panel.
 - **RainViewer precipitation layer** and live FAA NOTAMs on the map.
-- **Discord community integration** — Rich Presence, flight sharing and a
+- **Discord community integration**: Rich Presence, flight sharing and a
   public leaderboard.
 - **Hundreds of stability and quality fixes** across every module.
 
 ---
 
-## Black Box — flight data recorder (new module)
+## Black Box: flight data recorder (new module)
 
 - Continuous recording at up to **30 Hz** on the takeoff roll / approach /
   landing, 20 Hz in taxi / climb / descent and 10 Hz in cruise.
-- **In-sim replay** that puts your real flight back into the simulator —
+- **In-sim replay** that puts your real flight back into the simulator, with
   scrubbing, pause, resume, loop and replay speed controls.
 - Full flight-path and motion capture: position, attitude, speeds, controls,
   engines, flaps, gear, autopilot and aircraft systems.
@@ -51,17 +57,17 @@ telemetry backbone.
   taxi-in; interrupted recordings are recovered and orphaned recordings
   finalise on-blocks.
 
-## Telemetry — smoother and more reliable
+## Telemetry: smoother and more reliable
 
 - The simulator is now read through a single shared data path, so Flight
   Watch, Black Box, RAAS, announcements and PIREP all work from the same
   consistent picture.
-- **No more sim stutters** when modules poll — the sim is read once.
+- **No more sim stutters** when modules poll, since the sim is read once.
 - FSUIPC remains the primary data source; SimConnect steps in automatically
   when FSUIPC is unavailable.
 - If both sources are lost the UI shows **STALE / TELEMETRY LOST** instead of
   silently replaying the last good data.
-- Black Box recordings always match what Flight Watch shows — the values you
+- Black Box recordings always match what Flight Watch shows, so the values you
   see on screen are exactly what gets recorded.
 - Fenix data enrichment no longer slows recording through takeoff and landing.
 
@@ -76,11 +82,11 @@ telemetry backbone.
   assumed temperature, runway-required distance, pitch trim and takeoff /
   landing modes.
 - Auto-fills ZFW, ZFW CG, runway, wind, temperature and QNH from SimBrief and
-  a live METAR; the only manual field — ZFW CG % MAC — is highlighted.
+  a live METAR; the only manual field, ZFW CG % MAC, is highlighted.
 - Live simulator weight (gross + derived ZFW) fills with a note when it
   deviates from the plan; weights follow the Host KG/LB preference.
 
-## Live OFP — dispatch board (new)
+## Live OFP: dispatch board (new)
 
 - Planned vs actual **times, fuel and weights** with a delta column.
 - Auto-fills actuals from the simulator, GSX and the Fenix EFB loadsheet:
@@ -92,7 +98,7 @@ telemetry backbone.
 ## Electronic crew sign-off (new)
 
 - Pre-departure **Loadsheet sign-off** after weights sync.
-- Post-arrival **Flight Completion sign-off** — review the whole flight
+- Post-arrival **Flight Completion sign-off**: review the whole flight
   (times, fuel, weights) and sign before the logbook closes; the PIREP builds
   after signing.
 - Both signatures are stored per flight and shown in the logbook detail and
@@ -102,11 +108,11 @@ telemetry backbone.
 
 - Full PIREP rebuilt: runway profiles, stability gates, touchdown metrics,
   score breakdown and passenger satisfaction.
-- **Passenger satisfaction** now reacts to hard landings, not just schedule —
+- **Passenger satisfaction** now reacts to hard landings, not just schedule;
   landing rate, comfort, schedule and operations are scored honestly.
 - Airline and pilot economy with GSX service receipts, revenue, costs and
   opening/closing balances.
-- Fixed the "insufficient telemetry" on departure/approach/landing — analysis
+- Fixed the "insufficient telemetry" on departure/approach/landing, so analysis
   now completes whenever the recording is complete.
 - Landing/approach charts (glidepath, speed, vertical speed) fixed so they no
   longer show random peaks.
@@ -117,7 +123,7 @@ telemetry backbone.
   briefing enrichment and Status Board live rows.
 - **In-sim closure markers**: runway threshold X mats, taxiway X mats placed
   on the real taxiway geometry, alternating Type III barricades and a portable
-  lighted X trailer — shipped as an MSFS Community package for 2020 and 2024.
+  lighted X trailer, shipped as an MSFS Community package for 2020 and 2024.
 - **TFR/FDC proximity alerting** (opt-in).
 - NOTAMs are served through the OPS ROOM server, so airport lookups never
   hit FAA request limits.
@@ -167,7 +173,7 @@ telemetry backbone.
 
 - Operator selection priority is now **airline match → [GSX choice] → any
   operator**, so a Lufthansa flight always tries Lufthansa first.
-- **Pushback is no longer mislabelled as taxi-out** — movement before
+- **Pushback is no longer mislabelled as taxi-out**: movement before
   off-blocks is classified as pushback, off-blocks records at first movement,
   and taxi-out only begins after genuine forward taxi is proven.
 - Boarding / catering / water requests and completion are monitored and
@@ -178,7 +184,7 @@ telemetry backbone.
 
 ## Announcements & RAAS
 
-- **Announcer volume now follows the camera live** — switching cockpit /
+- **Announcer volume now follows the camera live**: switching cockpit /
   cabin / external re-applies the volume mid-announcement.
 - Hotkeys (pause / mute) and automatic boarding-service triggers.
 - RAAS global overlay, with NOTAM closure callouts de-duplicated so they fire
@@ -187,7 +193,7 @@ telemetry backbone.
 ## Community & Discord (new)
 
 - **Discord Rich Presence** shows your live flight on your profile
-  (callsign, route, phase, altitude) — no OAuth needed.
+  (callsign, route, phase, altitude), no OAuth needed.
 - One-click **Connect Discord** in Host Setup and System.
 - Opt-in **takeoff / landing posts** to your community channel, with landing
   rate and G.
@@ -197,15 +203,15 @@ telemetry backbone.
 
 ## Integrations
 
-- **ChartFox** — optional chart catalogue rendering inside Briefing; chart
+- **ChartFox**: optional chart catalogue rendering inside Briefing; chart
   downloads behave like a normal browser, so providers that block automated
   downloads load correctly.
-- **CPDLC over Hoppie** — full controller-pilot datalink (logon, uplink /
+- **CPDLC over Hoppie**: full controller-pilot datalink (logon, uplink /
   downlink, PDC requests) beyond the old template view.
-- **Fenix A320** — EFB loadsheet sync (PAX, cargo, MACZFW / MACTOW), GSX
+- **Fenix A320**: EFB loadsheet sync (PAX, cargo, MACZFW / MACTOW), GSX
   loading coordination and takeoff-performance probe.
-- **PMDG 777** — SDK integration with EULA handling.
-- **Aircraft adapters** — installable adapter catalogue for add-on aircraft.
+- **PMDG 777**: SDK integration with EULA handling.
+- **Aircraft adapters**: installable adapter catalogue for add-on aircraft.
 - **GSX receipts** and thermal/POS printer support with a preview dropdown for
   every wired receipt type (CPDLC, Live OFP, printer test, GSX receipt).
 
@@ -215,7 +221,7 @@ telemetry backbone.
   pinned, and the Status tab shows a compact strip.
 - Checkboxes show proper **ticks**, text lifted onto a readable scale, and the
   dimmest colours now meet contrast guidelines.
-- **No more "?" glyphs** — arrows, minus and greater-or-equal symbols render
+- **No more "?" glyphs**: arrows, minus and greater-or-equal symbols render
   correctly across the logbook, finance, PIREP, OBS and PDF surfaces.
 - OBS overlays fixed: real route arrows, resilient when a data source is
   unavailable, no clipping, correct scale anchoring and true source aspect ratio.
@@ -227,7 +233,7 @@ telemetry backbone.
 
 ## Reliability & performance
 
-- **App reloads are fast again** — shutdown completes cleanly instead of
+- **App reloads are fast again**: shutdown completes cleanly instead of
   being force-killed.
 - Fixed a crash caused by simulator connection error storms.
 - Chart downloads behave like a normal browser, so providers that block

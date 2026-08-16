@@ -461,7 +461,7 @@ async function safeJsonResponse(response){
 
 function reportFrontendError(source, detail){
   try{
-    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.0', ts:new Date().toISOString()};
+    const payload = {source:String(source||'frontend'), detail:String(detail||'').slice(0,800), page:activePage, href:location.href,    version:'0.25.1', ts:new Date().toISOString()};
     lastFrontendError = payload.detail;
     navigator.sendBeacon?.('/api/frontend/log', new Blob([JSON.stringify(payload)], {type:'application/json'})) || fetch('/api/frontend/log',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true}).catch(()=>{});
   }catch(_){ }
@@ -822,7 +822,7 @@ function showPage(name){
   if(name === 'finances') runModuleStart('finances', startFinances);
   if(name === 'obs') runModuleStart('obs', ()=>{updateObsTools();loadObsBranding()});
   if(name === 'scratchpad') runModuleStart('scratchpad', startScratchpad);
-  if(name === 'system') runModuleStart('system', ()=>{loadStorageStatus();checkUpdates(false,true);loadStartupConsole();renderModuleVisibilityGrid();loadSystemDiscordStatus()});
+  if(name === 'system') runModuleStart('system', ()=>{loadStorageStatus();checkUpdates(false,true);loadStartupConsole();renderModuleVisibilityGrid();loadSystemDiscordStatus();loadPrinterStatus()});
   if(name === 'fids') runModuleStart('fids', loadCameraBridgeStatus);
   if(name === 'network') runModuleStart('network', ()=>{loadNetwork(false);loadComms(false);if(settings?.interface?.notifications&&'Notification' in window&&Notification.permission==='default')Notification.requestPermission().catch(()=>{})});
 }
@@ -4752,7 +4752,7 @@ function saveSettingsWithDebounce(){
     _printerSaveTimer = null;
     try{
       const payload = { printing: settings.printing || {} };
-      const res = await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const res = await fetch('/api/printer/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const data = await safeJsonResponse(res);
       settings = data.settings || settings;
     }catch(error){
@@ -4779,7 +4779,9 @@ function initPrinterSettings(){
       saveSettingsWithDebounce();
     });
   });
-  loadPrinterStatus();
+  // Printer discovery is intentionally lazy. The Windows spooler API is a
+  // native ctypes boundary and must never run during application startup;
+  // users who need printer support can open the System page explicitly.
 }
 
 // v0.25.60: Virtual thermal receipt preview
@@ -5679,7 +5681,7 @@ function saveMapView(){
   renderMapControllerList();
   scheduleAviationRefresh(260);
 }
-// ── v0.25.0: server-cached RainViewer precipitation layer ─────────────────
+// ── v0.25.1: server-cached RainViewer precipitation layer ─────────────────
 // Tiles are served by opsroom.live (our own nginx + admin-api proxy), never
 // fetched from RainViewer by the client. The frame key comes from the
 // /api/v1/rainviewer/status endpoint and is embedded in the tile URL, so a
@@ -5734,7 +5736,7 @@ function initOnlineMap(){
   olBoundaryLayer=makeVectorLayer(boundaryStyle,7);
   olNotamLayer=makeVectorLayer(notamStyle,8);
   olNotamLayer.setVisible(mapLayerChecked('mapLayerNotams',false));
-  // v0.25.0: server-cached RainViewer precipitation layer. Rendered between
+  // v0.25.1: server-cached RainViewer precipitation layer. Rendered between
   // the basemap and the vector layers; attribution stays visible in the map's
   // attribution control (RainViewer free-tier requirement).
   olWeatherLayer=new ol.layer.Tile({source:new ol.source.XYZ({url:mapWeatherTileUrl('__none__'),opacity:.75,attributions:'Weather data by <a href="https://www.rainviewer.com" target="_blank" rel="noopener noreferrer">RainViewer</a>'}),opacity:.75,zIndex:5,visible:mapWeatherVisible()});
@@ -8244,7 +8246,7 @@ async function savePrinterSettings() {
     }
   };
   try {
-    const res = await fetch('/api/settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const res = await fetch('/api/printer/settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     const data = await safeJsonResponse(res);
     settings = data.settings || settings;
     $('printerResult').textContent = 'SAVED';

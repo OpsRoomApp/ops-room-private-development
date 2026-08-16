@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
-title Build OPS ROOM 0.25.0 Public Release Windows App Only
+title Build OPS ROOM 0.25.1 Public Release Windows App Only
 
  echo ================================================================
- echo OPS ROOM 0.25.0 Public Release - Windows app only build
+ echo OPS ROOM 0.25.1 Public Release - Windows app only build
  echo ================================================================
  echo.
 
@@ -226,15 +226,15 @@ echo Verifying public package contents...
 rem Public release folder cleanup: keep user-facing dist clean.
 rem Developer/admin files such as build validation notes, Google Apps Script setup,
 rem old release notes and helper batch files are intentionally not copied.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -LiteralPath '%DIST_DIR%\OPS ROOM' -DestinationPath '%DIST_DIR%\OPS_ROOM_v0_25_0_Public_Windows_x64.zip' -Force -ErrorAction Stop" || goto :fail
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -LiteralPath '%DIST_DIR%\OPS ROOM' -DestinationPath '%DIST_DIR%\OPS_ROOM_v0_25_1_Public_Windows_x64.zip' -Force -ErrorAction Stop" || goto :fail
 
-"%VENV_DIR%\Scripts\python.exe" tools\write_update_manifest.py --version 0.25.0 --channel stable --site https://opsroom.live --zip "%DIST_DIR%\OPS_ROOM_v0_25_0_Public_Windows_x64.zip" --out "%DIST_DIR%\update.json" || goto :fail
+"%VENV_DIR%\Scripts\python.exe" tools\write_update_manifest.py --version 0.25.1 --channel stable --site https://opsroom.live --zip "%DIST_DIR%\OPS_ROOM_v0_25_1_Public_Windows_x64.zip" --out "%DIST_DIR%\update.json" || goto :fail
 
 echo.
 echo Build complete:
 echo   %DIST_DIR%\OPS ROOM\OPS ROOM.exe
-echo   %DIST_DIR%\OPS_ROOM_v0_25_0_Public_Windows_x64.zip
-echo   %DIST_DIR%\OPS_ROOM_v0_25_0_Public_Windows_x64.zip.sha256
+echo   %DIST_DIR%\OPS_ROOM_v0_25_1_Public_Windows_x64.zip
+echo   %DIST_DIR%\OPS_ROOM_v0_25_1_Public_Windows_x64.zip.sha256
 echo   %DIST_DIR%\update.json
 echo.
 pause

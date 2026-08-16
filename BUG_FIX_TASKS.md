@@ -1415,3 +1415,68 @@ if(data.loadsheet_ready === true && !data.signed && !_signoffLoadsheetModalShown
 **Verified**: the real EZY8563 completed entry, with the recorded-Fenix snapshots injected as the new capture would store them, now renders PAX 163 / BAG 2,445 / PAYLOAD 15,485 / ZFW 59,514 / TOW 65,093 / LDW 62,631 (source "fenix ... (recorded snapshot)"). New regression test `test_recorded_fenix_snapshots_fill_completed_entry` in `test_ofp_overrides.py` (76/76 pass). Existing flights recorded before this fix keep their blank actuals (the values were never captured); the next flight captures them.
 
 **Acceptance**: next Fenix flight (or any aircraft) — open the Full PIREP after block-in; WEIGHTS ACTUAL column must show the same values the Live OFP panel displayed, even after an app restart.
+
+## #114 — LAN EFB printer list is empty and shows “Printer check unavailable” (LOGGED 2026-08-15)
+
+- **Severity**: High for hardware-EFB users (the host browser can print, but the remote EFB cannot select or trigger a printer).
+- **Symptom**: A hardware EFB connected to the MSFS PC over LAN shows the System printer card, but the dropdown is empty and the status reads `Printer check unavailable`. The same printer is visible and configured in the OPS ROOM browser on the MSFS PC.
+- **Root cause**: `/api/printer/status`, `/api/printer/list`, and `/api/printer/test` all called `_require_local_host(request)`. That guard correctly protects full host settings, but it also rejected every request from the EFB with HTTP 403. The frontend converted that non-2xx response into the generic “Printer check unavailable” message. Printer settings were also saved through the host-only `/api/settings` endpoint, so remote selection could never persist.
+- **Fix**: Keep `/api/settings` host-only, but allow the narrow printer status/list/test routes through the existing LAN/device-security middleware. Add `/api/printer/settings`, which accepts only the normalized `printing` section, and expose the non-secret printer selection state through `/api/settings/public`. When device pairing is enabled, the existing paired-device gate still protects all remote printer operations.
+- **Acceptance**: From a paired or otherwise enabled LAN EFB, System shows the host printer list, selecting a printer saves successfully, and TEST PRINT is executed by the MSFS PC. The desktop host settings flow remains host-only.
+- **Status**: Implemented source-side (2026-08-15); pending legacy bundle rebuild, packaged-app rebuild, and hardware-EFB verification.
+
+## #115 — Thermal receipt printers: send auto paper-cut (Esc/POS) after print (FEATURE, for v0.26.0) (LOGGED 2026-08-15)
+
+- **Source**: Peter (hardware EFB beta tester) — printing now works, but many thermal/receipt printers support a paper-cut command, and users currently have to tear manually at the printed `snip here` marker.
+- **Request**: after a receipt finishes printing, send the Esc/POS cut sequence (`GS V`, bytes `0x1D 0x56 0x42` for a full cut, `0x41` for partial) so the printer cuts the paper itself.
+- **Design sketch**: in `app/printer_client.py`, append the cut bytes to the raw print payload in `print_receipt` (and offer it in `print_text`), behind a per-printer **auto-cut** toggle (default OFF so printers without cut support are unaffected; store with the existing printer settings). Keep printing the `snip here` marker as a visual fallback for non-cut printers. The EFB/legacy bundle must pick up the toggle via the public settings endpoint (#114 pattern).
+- **Acceptance**: with auto-cut ON on a cut-capable thermal printer, the receipt emerges already cut (no manual tear); with it OFF, behavior is unchanged.
+- **Status**: LOGGED — not started (scheduled for v0.26.0).
+
+## #116 — UI feedback: home grid density, tile reorder/favorites, cleaner font, softer borders, readability + dark scrollbars (FEATURE, for v0.26.0) (LOGGED 2026-08-16)
+
+- **Source**: community beta tester feedback (experienced pilot, mid-flight context). Decision: implement as requested, no theme toggle offered. The monospace look stays only where it belongs (data readouts); labels and subheadings move to a cleaner standard font.
+- **Items (verified against code)**:
+  1. **Home grid fits on screen without scrolling** — sidebar (`--rail`, `.nav-item` list) already lists the same modules as `.module-grid`, so it is redundant; shrink `.module-tile` min-height (currently 10.5rem, plus inset `3px` shadow) and enlarge `.module-icon` (4.8rem box / 3.6rem SVG) so the whole grid is visible.
+  2. **Drag-and-drop reordering + favoriting of home tiles** — module list is a JS array in `opsroom.js`; persist order + favorites in settings store / localStorage, pinned tiles first. v1: star/favorite pin (touch-safe); drag-reorder later. Must survive the legacy CoherentGT bundle.
+  3. **Font**: `body` uses `--terminal` (Cascadia Mono/Consolas) everywhere; headers use `--condensed` with uppercase + wide letter-spacing; labels go as small as 0.48rem. Plan: keep monospace for data values only, move labels/subheadings to a cleaner sans, bump the 0.48–0.58rem text up so key metrics contrast.
+  4. **Reduce heavy white/grey outlines** — borders come from `--line` / `--line-bright` plus inset shadows (`inset 0 0 0 3px #080a07` on tiles, Camera Bridge overlay similar). Soften via the CSS vars + targeted rules; do not wash out panel legibility.
+  5. **Small grey text + dark scrollbars** — METAR strings are `--muted` at ~0.6rem; brighten `--muted` slightly and add global `::-webkit-scrollbar` + `scrollbar-color` dark styling. Note: custom scrollbars may not render in in-sim CoherentGT, but will work in desktop/browser/iPad.
+- **Acceptance**: on a fresh install the home screen shows all modules without scrolling on a typical desktop; favorites stay pinned at top across restarts; table data stays monospace while labels/subheadings are a clean sans; METAR and muted text is readable; scrollbars follow the dark theme; the legacy EFB/tablet build matches.
+- **Status**: LOGGED — not started (scheduled for v0.26.0).
+
+## #117 — Website live map: aircraft markers all point North; heading glyph and junk-position issues (LOGGED 2026-08-16)
+
+- **Symptom**: on opsroom.live's community map every aircraft marker appears to point North regardless of its actual heading.
+- **Investigation (2026-08-16)**: the heading pipeline is fully wired and live — app `_live_payload()` (opsroom-app/source/app/community.py:368) reads `heading`/`heading_deg`/`true_heading_deg` and POSTs it; admin-api stores it in `community_live.heading` (idempotent migration) and returns it in GET /live; the DEPLOYED bundle on opsroom.live contains `rotate(${n}deg)` and re-applies it via `setIcon` on every 15s poll (verified in the live JS, not a stale build). FSUIPC heading math is correct per SDK (*360/(65536*65536)).
+- **Root causes**:
+  1. **Glyph orientation**: `PLANE_SVG` in `CommunityMap.jsx` is the Material "send" paper-plane icon, whose nose points NE (45°) at zero rotation — so every marker renders 45° clockwise of its true heading.
+  2. **Junk test rows pollute the feed**: the live feed currently has two DLH9535 rows with heading ≈ 0/360; one is parked at lat 0.0004 / lon 0.0139 (≈ 0,0 — Gulf of Guinea), which the telemetry validator only rejects when BOTH |lat|<0.001 AND |lon|<0.001 (0.0139 slips through). With all headings ≈ 0/360, every marker renders in the same default orientation, reading as "everything points North."
+- **Fix proposal**:
+  1. Replace the plane glyph with a proper top-down aircraft that points straight up at 0°, or rotate the existing glyph by −45° so heading 0 = North.
+  2. Server-side ingest filter: reject live-feed rows within ~0.1° of (0,0) (and any PARKED position far from a known airport) so junk/test data stops reaching the public map.
+  3. When `heading` is null, fall back to `track_deg` or omit rotation rather than rendering a misleading fixed orientation.
+- **Acceptance**: an airborne flight flying East renders pointing East; parked test rows near (0,0) never appear on the public map; real flights show varied rotations.
+- **Status**: LOGGED — not started (website repo change; verify a real airborne row's `heading` in the VPS DB before building to confirm data variety).
+
+## #118 — Bot descent briefing DM: include ATIS (VATSIM first, ATIS.guru fallback) alongside METAR/TAF/NOTAMs (FEATURE, for v0.26.0) (LOGGED 2026-08-16)
+
+- **Source**: user feedback — at top of descent the bot DM already sends METAR, TAF and NOTAMs; ATIS should be included too.
+- **Investigation (2026-08-16)**: `_descent_briefing_dm` (ops-control-bot/src/bot/services/community.py) already builds the DM with METAR + TAF (NOAA) and NOTAMs (notam_service), triggered by the app's `descent` event (app/logbook.py:1257). VATSIM ATIS fetch already exists (`bot/api/__init__.py` → `fetch_vatsim_atis`, returns `atis_message`/`atis_type`/`atis_code`). ATIS.guru has NO public API (Blazor/SignalR app) — but the desktop app already ships a working scraper: `fetch_realworld_atis` (opsroom-app/source/app/weather_client.py:367) hits `https://atis.guru/atis/{icao}`, extracts Arrival/Departure sections, and falls back to a METAR-generated ATIS.
+- **Fix proposal (bot-only)**:
+  1. Mirror the app's `fetch_realworld_atis` ATIS.guru scraper + METAR fallback into the bot (e.g. `bot/api/atisguru.py`).
+  2. In `_descent_briefing_dm`, add an **ATIS section at the top**: VATSIM first (`fetch_vatsim_atis`), ATIS.guru scrape fallback, then "ATIS unavailable" — keeping the existing best-effort pattern (one source failing never blanks the others).
+  3. Final DM order: ATIS → METAR → TAF → NOTAMs.
+- **Acceptance**: at TOD, the DM includes an ATIS section (VATSIM when a controller broadcasts one, real-world D-ATIS from ATIS.guru otherwise, or a clear unavailable line) above the existing METAR/TAF/NOTAMs, and a failed ATIS source never suppresses the other weather data.
+- **Status**: LOGGED — not started (scheduled for v0.26.0; bot repo change only).
+
+## #119 — Website leaderboard: sort by flight hours (descending default) + per-column sortable columns (FEATURE, for v0.26.0) (LOGGED 2026-08-16)
+
+- **Source**: user feedback — the developer (exzonom) is always at the top because the leaderboard ranks by flight count first (`ORDER BY flights DESC, hours DESC` in opsroom-website/admin-api/community.py:509), and the community is brand new (all rows are < 7 days old). Not a bug or bias — real data, tiny sample. The owner must NOT be excluded from the board (decision: keep exzonom visible).
+- **Decision**: change the ranking so time flown is the primary signal, and let visitors re-sort the columns themselves.
+- **Fix proposal**:
+  1. **API default sort** (`opsroom-website/admin-api/community.py` `community_leaderboard`): change to `ORDER BY hours DESC, flights DESC` — flight hours first, flights as tiebreaker. Both the Home page (`Home.jsx` → `useCommunityLeaderboard('alltime')`, top 5) and the full `/leaderboard` page (`Leaderboard.jsx`) consume the same hook, so this single server-side change sets the default for both.
+  2. **Sortable columns on the full leaderboard** (`Leaderboard.jsx`): make FLIGHTS, HOURS, AVG LANDING and BEST LANDING headers clickable to toggle ascending/descending, with a visual sort indicator (arrow on the active column). Default = HOURS descending (matches the API). Keep RANK and PILOT fixed.
+  3. Sort state can be client-side (the API already returns the full top-50 list, so no new endpoint or query params strictly needed) — simplest: sort the already-fetched array in the component.
+- **Acceptance**: exzonom stays on the board; a pilot with more hours but fewer flights ranks above a pilot with more flights but fewer hours by default; clicking a column header re-sorts immediately with a clear active-column arrow; default state shows hours descending on both Home and /leaderboard.
+- **Status**: LOGGED — not started (website repo change only; no app/bot changes needed).

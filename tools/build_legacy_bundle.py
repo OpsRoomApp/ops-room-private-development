@@ -33,22 +33,22 @@ from pathlib import Path
 #: Head block to strip from the legacy HTML (OpenLayers CSS + pdf.js).
 _HEAD_REMOVE = """\
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@10.9.0/ol.css" />
-  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-0" />
-  <script src="/static/pdf.min.js?v=0-25-0"></script>
-  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js?v=0-25-0';</script>"""
+  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-1" />
+  <script src="/static/pdf.min.js?v=0-25-1"></script>
+  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = '/static/pdf.worker.min.js?v=0-25-1';</script>"""
 
 _HEAD_KEEP = """\
-  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-0" />
-  <link rel="stylesheet" href="/static/opsroom.legacy.css?v=0-25-0" />"""
+  <link rel="stylesheet" href="/static/opsroom.css?v=0-25-1" />
+  <link rel="stylesheet" href="/static/opsroom.legacy.css?v=0-25-1" />"""
 
 _BODY_OLD = """\
   <script src="https://cdn.jsdelivr.net/npm/ol@10.9.0/dist/ol.js"></script>
-  <script src="/static/opsroom.js?v=0-25-0"></script>"""
+  <script src="/static/opsroom.js?v=0-25-1"></script>"""
 
 _BODY_NEW = """\
-  <script src="/static/polyfills.legacy.js?v=0-25-0"></script>
-  <script src="/static/ol.legacy.js?v=0-25-0"></script>
-  <script src="/static/opsroom.legacy.js?v=0-25-0"></script>
+  <script src="/static/polyfills.legacy.js?v=0-25-1"></script>
+  <script src="/static/ol.legacy.js?v=0-25-1"></script>
+  <script src="/static/opsroom.legacy.js?v=0-25-1"></script>
   <script>
     // Signal a hosting MSFS 2024 EFB shell (if this page is inside its iframe)
     // that OPS ROOM is running, so the shell can reveal the app and stop its

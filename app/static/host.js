@@ -236,7 +236,7 @@ function setupCollapsiblePanels(){
     });
   });
 }
-// --- Discord community (v0.25.0) ---
+// --- Discord community (v0.25.1) ---
 async function loadCommunityStatus(){
   try{const data=await fet('/api/community/status',{cache:'no-store'}).then(r=>r.json());renderCommunityStatus(data)}catch{}
 }

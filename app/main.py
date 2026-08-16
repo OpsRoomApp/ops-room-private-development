@@ -121,7 +121,7 @@ from .ofp_overrides import get_overrides, set_overrides, remove_override, clear_
 
 BASE_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="OPS ROOM", version="0.25.0")
+app = FastAPI(title="OPS ROOM", version="0.25.1")
 app.include_router(realworld_router)
 app.include_router(realworld_debug_router)
 app.include_router(community.router)
@@ -653,6 +653,7 @@ def _require_local_host(request: Request) -> None:
 
 def _public_settings() -> dict:
     current = load_settings()
+    printing = current.get("printing", {}) if isinstance(current.get("printing", {}), dict) else {}
     return {
         "identity": {
             "vatsim_configured": bool(current.get("identity", {}).get("vatsim_cid")),
@@ -668,6 +669,15 @@ def _public_settings() -> dict:
         },
         "server": {k: v for k, v in dict(current.get("server", {})).items() if k != "pairing_code"},
         "interface": dict(current.get("interface", {})),
+        # Printer configuration is hardware-local but safe to expose to a
+        # paired LAN EFB: it needs the host printer name to render/select it.
+        "printing": {
+            "enabled": bool(printing.get("enabled", False)),
+            "printer_name": str(printing.get("printer_name", "") or ""),
+            "cpdlc_auto_print": bool(printing.get("cpdlc_auto_print", True)),
+            "network_auto_print": bool(printing.get("network_auto_print", False)),
+            "paper_width_mm": printing.get("paper_width_mm", 80),
+        },
         "updates": {
             "enabled": bool(current.get("updates", {}).get("enabled", True)),
             "check_on_startup": bool(current.get("updates", {}).get("check_on_startup", True)),
@@ -758,20 +768,42 @@ def updater_apply(payload: dict | None, request: Request) -> dict:
 
 @app.get("/api/printer/status")
 def printer_status_endpoint(request: Request) -> dict:
-    _require_local_host(request)
+    # LAN access is authenticated by _PureASGITrustedDeviceGate when pairing
+    # is enabled. Do not apply the host-only guard here: the EFB must be able
+    # to query the Windows printer list from the simulator PC.
     return printer_status()
 
 
 @app.get("/api/printer/list")
 def printer_list_endpoint(request: Request) -> dict:
-    _require_local_host(request)
     printers = printer_list()
     return {"ok": True, "printers": printers, "count": len(printers)}
 
 
+@app.put("/api/printer/settings")
+def printer_settings_endpoint(payload: dict | None, request: Request) -> dict:
+    """Save only the printer settings from a LAN EFB.
+
+    The full /api/settings endpoint remains host-only because it contains
+    account, integration, and server configuration. This narrow endpoint is
+    safe for the already-paired LAN device gate and lets the EFB choose the
+    printer that belongs to the OPS ROOM host.
+    """
+    data = payload or {}
+    incoming = data.get("printing")
+    if not isinstance(incoming, dict):
+        raise HTTPException(status_code=400, detail="Printing settings are required")
+    current = load_settings()
+    printing = current.setdefault("printing", {})
+    for key in ("enabled", "printer_name", "cpdlc_auto_print", "network_auto_print", "paper_width_mm"):
+        if key in incoming:
+            printing[key] = incoming[key]
+    saved = save_settings(current)
+    return {"ok": True, "settings": saved}
+
+
 @app.post("/api/printer/test")
 def printer_test_endpoint(payload: dict | None, request: Request) -> dict:
-    _require_local_host(request)
     data = payload or {}
     printer_name = str(data.get("printer_name") or "").strip()
     if not printer_name:
@@ -3375,7 +3407,7 @@ def server_qr(request: Request) -> Response:
 def health() -> dict:
     return {
         "ok": True,
-        "version": "0.25.0",
+        "version": "0.25.1",
         "product": "OPS ROOM",
         "refresh_seconds": CACHE_SECONDS,
         "simconnect": simconnect_diagnostics(),

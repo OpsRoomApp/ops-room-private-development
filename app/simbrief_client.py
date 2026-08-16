@@ -17,9 +17,9 @@ def _app_version() -> str:
     """v0.25.67: user-agent version comes from version.json, never a stale literal."""
     try:
         raw = (Path(__file__).resolve().parent.parent / "version.json").read_text(encoding="utf-8")
-        return str(json.loads(raw).get("version") or "0.25.0")
+        return str(json.loads(raw).get("version") or "0.25.1")
     except Exception:  # pragma: no cover - defensive version read
-        return "0.25.0"
+        return "0.25.1"
 
 
 _USER_AGENT = f"OPS ROOM/{_app_version()} (+flight-simulation utility)"

@@ -1,13 +1,13 @@
 {
-  "latest_version": "0.25.0",
-  "version": "0.25.0",
+  "latest_version": "0.25.1",
+  "version": "0.25.1",
   "codename": "Release Migration",
   "channel": "stable",
   "minimum_supported_version": "0.22.0",
   "mandatory": false,
-  "release_notes_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/tag/0.25.0",
-  "download_url": "https://opsroom.live/downloads/OPS_ROOM_v0_25_0_Public_Windows_x64.zip",
-  "url": "https://opsroom.live/downloads/OPS_ROOM_v0_25_0_Public_Windows_x64.zip",
-  "fallback_download_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/download/0.25.0/OPS_ROOM_v0_25_0_Public_Windows_x64.zip",
+  "release_notes_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/tag/0.25.1",
+  "download_url": "https://opsroom.live/downloads/OPS_ROOM_v0_25_1_Public_Windows_x64.zip",
+  "url": "https://opsroom.live/downloads/OPS_ROOM_v0_25_1_Public_Windows_x64.zip",
+  "fallback_download_url": "https://github.com/OpsRoomApp/ops-room-releases/releases/download/0.25.1/OPS_ROOM_v0_25_1_Public_Windows_x64.zip",
   "sha256": "TO_BE_FILLED_BY_BUILD_SCRIPT"
 }

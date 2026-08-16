@@ -23,7 +23,7 @@ FALLBACK_MANIFEST_URL = "https://raw.githubusercontent.com/OpsRoomApp/ops-room-r
 DEFAULT_MANIFEST_URL = PRIMARY_MANIFEST_URL
 STATE_FILE = "update_state.json"
 DOWNLOAD_TIMEOUT = 25
-DEFAULT_VERSION = "0.25.0"
+DEFAULT_VERSION = "0.25.1"
 
 
 @dataclass(frozen=True)

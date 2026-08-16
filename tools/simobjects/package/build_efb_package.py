@@ -32,7 +32,7 @@ from pathlib import Path
 
 PACKAGE_NAME = "ops-room-efb"
 PACKAGE_TITLE = "OPS ROOM EFB"
-PACKAGE_VERSION = "0.25.0"
+PACKAGE_VERSION = "0.25.1"
 _MIN_GAME_VERSION = "1.0.0"
 
 #: Windows FILETIME epoch offset: 1601-01-01 -> 1970-01-01 in 100ns units.

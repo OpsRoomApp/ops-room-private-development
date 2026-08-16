@@ -110,7 +110,15 @@ def _fallback_list_printers_powershell() -> list[dict[str, Any]]:
 
 
 def list_printers() -> list[dict[str, Any]]:
-    """Enumerate installed Windows printers. Works without pywin32."""
+    """Enumerate installed Windows printers without touching native spooler code.
+
+    Printer discovery is optional, so the status path deliberately uses the
+    PowerShell PrintManagement cmdlet instead of ctypes/winspool. A malformed
+    or third-party printer driver must never be able to crash the OPS ROOM
+    process during startup or when the System page is opened.
+    """
+    if os.name == "nt":
+        return _fallback_list_printers_powershell()
     ws = _get_winspool()
     if ws is None:
         _LOGGER.warning("winspool not available, falling back to Get-Printer")
